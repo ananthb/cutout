@@ -113,6 +113,11 @@ async fn fetch(req: Request, env: Env, _ctx: Context) -> Result<Response> {
     let method = req.method();
 
     match path {
+        "/" => {
+            let headers = Headers::new();
+            headers.set("Location", "/manage")?;
+            Ok(Response::empty()?.with_status(302).with_headers(headers))
+        }
         "/health" => Response::ok("OK"),
         p if p.starts_with("/manage") => manage::handle_manage(req, env, p, method).await,
         _ => Response::error("Not Found", 404),
