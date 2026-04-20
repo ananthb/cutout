@@ -1,0 +1,33 @@
+name = "cutout"
+main = "build/worker/shim.mjs"
+compatibility_date = "2024-01-01"
+
+[build]
+command = "worker-build --release"
+
+# ============================================================================
+# KV Namespace for routing config (aliases → destination mappings)
+# ============================================================================
+[[kv_namespaces]]
+binding = "KV"
+
+# ============================================================================
+# Email Routing — send_email binding for outbound forwarding
+# ============================================================================
+[[send_email]]
+name = "EMAIL"
+
+[vars]
+ENVIRONMENT = "development"
+CF_ACCESS_TEAM = ""             # Your Cloudflare Access team name
+CF_ACCESS_AUD = ""              # Application Audience (AUD) tag from Access
+
+[observability.logs]
+enabled = true
+invocation_logs = true
+
+# ============================================================================
+# Required Secrets (set via wrangler secret put <NAME>)
+# ============================================================================
+#
+# CF_DNS_API_TOKEN - Cloudflare API token scoped to DNS edit on the email zone
