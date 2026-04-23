@@ -98,6 +98,13 @@ async fn execute_action(
             let mut emails = Vec::with_capacity(destinations.len());
 
             for destination in destinations {
+                if !kv::is_verified(kv_store, destination).await? {
+                    console_log!(
+                        "Skipping unverified destination {destination} (rule: {rule_label})"
+                    );
+                    continue;
+                }
+
                 let reverse_addr = forward::generate_reverse_address(domain);
 
                 // Save reverse alias for reply routing

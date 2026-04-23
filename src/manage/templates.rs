@@ -1,5 +1,7 @@
 //! HTML templates for the management UI.
 
+use std::collections::HashSet;
+
 use crate::helpers::html_escape;
 use crate::types::{Action, Rule};
 
@@ -110,11 +112,11 @@ pub fn base_html(title: &str, email: &str, content: &str) -> String {
 }
 
 /// Full rules management page.
-pub fn rules_page(rules: &[Rule], email: &str) -> String {
+pub fn rules_page(rules: &[Rule], email: &str, verified: &HashSet<String>) -> String {
     let rows: String = rules
         .iter()
         .enumerate()
-        .map(|(i, rule)| rule_row(rule, i))
+        .map(|(i, rule)| rule_row(rule, i, verified))
         .collect();
 
     let content = format!(
@@ -124,6 +126,7 @@ pub fn rules_page(rules: &[Rule], email: &str) -> String {
 </div>
 <p style="color:var(--muted);font-size:0.85rem;margin-bottom:1.5rem">
   Rules are evaluated top-to-bottom. The first match wins. The <code>*@*</code> catch-all is always last.
+  Forwarding to a destination requires the address to be verified — check the inbox for a confirmation link.
 </p>
 <div id="toast"></div>
 <div id="rules-list" class="rule-list">
@@ -140,8 +143,22 @@ pub fn rules_page(rules: &[Rule], email: &str) -> String {
     base_html("Rules", email, &content)
 }
 
+/// Render a single Forward destination with its verification status.
+fn render_destination(email: &str, verified: &HashSet<String>) -> String {
+    let esc = html_escape(email);
+    if verified.contains(email) {
+        format!(r#"<span style="color:var(--ok)" title="Verified">{esc} ✓</span>"#)
+    } else {
+        let vals_json = serde_json::json!({ "email": email }).to_string();
+        let vals_attr = html_escape(&vals_json);
+        format!(
+            r##"<span style="color:var(--warn)" title="Not verified">{esc} <button class="btn sm" style="padding:1px 6px;font-size:0.7rem;margin-left:2px" hx-post="/manage/verify/resend" hx-vals='{vals_attr}' hx-target="#rules-list" hx-swap="innerHTML" hx-ext="json-enc">resend</button></span>"##
+        )
+    }
+}
+
 /// Single rule row.
-pub fn rule_row(rule: &Rule, index: usize) -> String {
+pub fn rule_row(rule: &Rule, index: usize, verified: &HashSet<String>) -> String {
     let pattern = format!(
         "{}@{}",
         html_escape(&rule.local_pattern),
@@ -149,15 +166,14 @@ pub fn rule_row(rule: &Rule, index: usize) -> String {
     );
 
     let (action_class, action_label, action_detail) = match &rule.action {
-        Action::Forward { destinations } => (
-            "action-forward",
-            "Forward",
-            destinations
+        Action::Forward { destinations } => {
+            let detail = destinations
                 .iter()
-                .map(|d| html_escape(d))
+                .map(|d| render_destination(d, verified))
                 .collect::<Vec<_>>()
-                .join(", "),
-        ),
+                .join(", ");
+            ("action-forward", "Forward", detail)
+        }
         Action::Drop => ("action-drop", "Drop", String::new()),
     };
 
@@ -199,7 +215,7 @@ pub fn rule_row(rule: &Rule, index: usize) -> String {
         format!(r#"<span class="action-tag {action_class}">{action_label}</span>"#)
     } else {
         format!(
-            r#"<span class="action-tag {action_class}">{action_label}</span> <span style="font-size:0.8rem;color:var(--muted)">{action_detail}</span>"#,
+            r#"<span class="action-tag {action_class}">{action_label}</span> <span style="font-size:0.8rem">{action_detail}</span>"#,
         )
     };
 
@@ -223,18 +239,19 @@ pub fn rule_row(rule: &Rule, index: usize) -> String {
 }
 
 /// Rules list partial (just the rows, for HTMX swap).
-pub fn rules_list_partial(rules: &[Rule]) -> String {
+pub fn rules_list_partial(rules: &[Rule], verified: &HashSet<String>) -> String {
     let rows: String = rules
         .iter()
         .enumerate()
-        .map(|(i, rule)| rule_row(rule, i))
+        .map(|(i, rule)| rule_row(rule, i, verified))
         .collect();
 
     format!(
         r#"<div class="rule-head">
   <div>#</div><div>Label</div><div>Pattern</div><div>Action</div><div></div>
 </div>
-{rows}"#,
+{rows}
+<div id="edit-area" hx-swap-oob="true"></div>"#,
     )
 }
 

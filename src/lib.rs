@@ -15,6 +15,12 @@
 //! - All config lives in KV — no database needed
 //! - `email` — Inbound/outbound email handling and MIME rewriting
 //! - `manage` — HTMX-based management UI behind Cloudflare Access
+//! - `verify` — Destination email verification (public `/verify/{token}` route)
+//!
+//! ## Routes
+//!
+//! Only `/manage/*` is protected by the Cloudflare Access application.
+//! Everything else (`/`, `/health`, `/verify/{token}`) is public.
 
 use wasm_bindgen::prelude::*;
 use worker::*;
@@ -24,6 +30,7 @@ mod helpers;
 pub mod kv;
 mod manage;
 mod types;
+mod verify;
 
 // --- Email event handler via wasm_bindgen ---
 
@@ -42,11 +49,6 @@ extern "C" {
 
     #[wasm_bindgen(method, js_name = "setReject")]
     fn set_reject(this: &IncomingEmailMessage, reason: &str);
-
-    pub type SendEmailBinding;
-
-    #[wasm_bindgen(method)]
-    fn send(this: &SendEmailBinding, message: &JsValue) -> js_sys::Promise;
 }
 
 #[wasm_bindgen]
@@ -75,22 +77,10 @@ pub async fn email(
 
     match result {
         types::EmailResult::Send(emails) => {
-            let email_binding = js_sys::Reflect::get(&worker_env.into(), &"EMAIL".into())
-                .map_err(|_| JsValue::from_str("Missing EMAIL binding"))?;
-            let send_email: SendEmailBinding = email_binding.unchecked_into();
-
-            for outbound in emails {
-                let obj = js_sys::Object::new();
-                js_sys::Reflect::set(&obj, &"from".into(), &outbound.from.into())
-                    .map_err(|_| JsValue::from_str("Failed to set from"))?;
-                js_sys::Reflect::set(&obj, &"to".into(), &outbound.to.into())
-                    .map_err(|_| JsValue::from_str("Failed to set to"))?;
-                let uint8 = js_sys::Uint8Array::from(outbound.raw.as_slice());
-                js_sys::Reflect::set(&obj, &"raw".into(), &uint8.into())
-                    .map_err(|_| JsValue::from_str("Failed to set raw"))?;
-
-                let send_promise = send_email.send(&obj.into());
-                wasm_bindgen_futures::JsFuture::from(send_promise).await?;
+            for outbound in &emails {
+                email::send::send_outbound(&worker_env, outbound)
+                    .await
+                    .map_err(|e| JsValue::from_str(&format!("send_outbound: {e}")))?;
             }
         }
         types::EmailResult::Reject(reason) => {
@@ -119,6 +109,14 @@ async fn fetch(req: Request, env: Env, _ctx: Context) -> Result<Response> {
             Ok(Response::empty()?.with_status(302).with_headers(headers))
         }
         "/health" => Response::ok("OK"),
+        // Public — the Access application is scoped to /manage/* only.
+        p if p.starts_with("/verify/") => {
+            let token = p.strip_prefix("/verify/").unwrap_or("");
+            if token.is_empty() || token.contains('/') {
+                return Response::error("Not Found", 404);
+            }
+            verify::handle_verify(&env, token).await
+        }
         p if p.starts_with("/manage") => manage::handle_manage(req, env, p, method).await,
         _ => Response::error("Not Found", 404),
     }

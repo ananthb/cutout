@@ -25,9 +25,3 @@ CF_ACCESS_AUD = ""              # Application Audience (AUD) tag from Access
 [observability.logs]
 enabled = true
 invocation_logs = true
-
-# ============================================================================
-# Required Secrets (set via wrangler secret put <NAME>)
-# ============================================================================
-#
-# CF_DNS_API_TOKEN - Cloudflare API token scoped to DNS edit on the email zone
