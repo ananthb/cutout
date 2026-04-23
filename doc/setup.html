@@ -40,14 +40,12 @@ footer { margin-top: 3rem; padding-top: 1rem; border-top: 1px solid var(--border
 </nav>
 
 <h1>Setup Guide</h1>
-<p>Deploy your own Cutout instance in a few minutes.</p>
+<p>Deploy your own Cutout instance. Roughly half the steps are in the Cloudflare dashboard, half in code.</p>
 
 <h2>Prerequisites</h2>
 <ul>
-  <li>A <a href="https://dash.cloudflare.com">Cloudflare account</a> with a domain</li>
-  <li><a href="https://nixos.org/download">Nix</a> installed (for the dev environment)</li>
-  <li>Email Routing enabled on your domain</li>
-  <li>Cloudflare Access configured (protects the management UI)</li>
+  <li>A <a href="https://dash.cloudflare.com">Cloudflare account</a> with at least one domain on it</li>
+  <li><a href="https://nixos.org/download">Nix</a> installed (or Rust + wrangler + <code>worker-build</code> manually)</li>
 </ul>
 
 <h2>1. Clone and enter the dev shell</h2>
@@ -55,22 +53,38 @@ footer { margin-top: 3rem; padding-top: 1rem; border-top: 1px solid var(--border
 cd cutout
 nix develop</code></pre>
 
-<h2>2. Create Cloudflare resources</h2>
-<pre><code># Create KV namespace
-wrangler kv namespace create KV</code></pre>
-<p>Copy the namespace ID into your wrangler config.</p>
+<h2>2. Create the KV namespace</h2>
+<pre><code>wrangler kv namespace create KV</code></pre>
+<p>Put the returned <code>id</code> into the <code>[[kv_namespaces]]</code> block of <code>wrangler.toml</code>.</p>
 
-<h2>3. Configure Email Routing</h2>
-<p>In your Cloudflare dashboard, set up a <strong>catch-all rule</strong> that sends all email to the Cutout worker.</p>
+<h2>3. Enable Cloudflare Email Routing (inbound) on each domain</h2>
+<p>In the dashboard for every email domain you want Cutout to handle:</p>
+<ol>
+  <li>Open <strong>Email &rarr; Email Routing</strong> and click <strong>Enable</strong>. Accept the MX and SPF DNS records Cloudflare offers to add.</li>
+  <li>Under <strong>Routes</strong>, edit the <strong>catch-all address</strong>, set the action to <strong>Send to a Worker</strong>, and pick the <code>cutout</code> worker. Save and enable the rule.</li>
+</ol>
+<p>Cutout is domain-agnostic — one worker can serve any number of zones. Just repeat this step per domain.</p>
 
-<h2>4. Configure Cloudflare Access</h2>
-<p>Create an Access application for the <code>/manage</code> path to protect the management UI. Set <code>CF_ACCESS_TEAM</code> and <code>CF_ACCESS_AUD</code> in your wrangler config.</p>
+<h2>4. Onboard each domain to Cloudflare Email Service (outbound)</h2>
+<p>Email Routing's <code>send_email</code> binding on its own only delivers to pre-verified destinations. To let Cutout forward to anyone, onboard each sender domain to <strong>Email Service</strong>:</p>
+<ol>
+  <li>Dashboard &rarr; <strong>Email &rarr; Email Sending &rarr; Onboard Domain</strong></li>
+  <li>Accept the DNS records (MX / SPF / DKIM / DMARC) on the <code>cf-bounce.&lt;yourdomain&gt;</code> subdomain. These are independent from any existing root-domain SPF/DKIM records you may use for another SMTP provider.</li>
+</ol>
 
-<h2>5. Deploy</h2>
+<h2>5. Configure Cloudflare Access on <code>/manage</code></h2>
+<p>Create an Access application whose policy covers <code>cutout.&lt;yourdomain&gt;/manage/*</code>. Only <code>/manage</code> should be protected — <code>/verify/&lt;token&gt;</code> must stay public so destination confirmation links work.</p>
+<p>Set <code>CF_ACCESS_TEAM</code> (your Access team slug) and <code>CF_ACCESS_AUD</code> (the application AUD tag) in <code>wrangler.toml</code>.</p>
+
+<h2>6. Deploy</h2>
 <pre><code>wrangler deploy</code></pre>
+<p>Attach the worker's HTTP handler to whichever hostname you want <code>/manage</code> reachable on (Workers &rarr; your worker &rarr; Triggers &rarr; Custom Domain).</p>
 
-<h2>6. Manage aliases</h2>
-<p>Visit <code>/manage</code> to create and manage aliases through the HTMX-based admin UI.</p>
+<h2>7. Write rules</h2>
+<p>Visit <code>https://&lt;your-cutout-host&gt;/manage</code> (authenticating via Access). Add Forward rules using glob patterns for the local and domain parts, e.g. <code>*@example.com</code> &rarr; <code>me@gmail.com</code>. First match wins; a <code>*@*</code> Drop catch-all is pinned at the bottom.</p>
+
+<h2>8. Verify destinations</h2>
+<p>Any new destination address on a Forward rule receives a one-time verification email from <code>verify@&lt;your-cutout-host&gt;</code>. Click the link in the email to confirm. Until a destination is verified, mail forwarded to it is silently dropped. The <code>/manage</code> UI shows a ✓ for verified destinations and a <em>resend</em> button for unverified ones.</p>
 
 <footer>
   <a href="./">Back to overview</a>

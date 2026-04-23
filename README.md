@@ -8,27 +8,29 @@ Transparent email alias proxy — like [SimpleLogin](https://simplelogin.io) or 
 
 ## How it works
 
-1. You own a domain with **Cloudflare Email Routing** enabled
-2. Configure routing rules via the HTMX management UI at `/manage`
-3. Inbound mail matching a rule is forwarded to your real address with headers rewritten
-4. Replies are sent back through the alias — your real address is never exposed
+1. You own one or more domains with **Cloudflare Email Routing** (inbound) and **Email Service** (outbound) enabled
+2. Write routing rules in the `/manage` UI — glob patterns on the local and domain parts, with a Forward or Drop action
+3. Forwarded destinations confirm ownership via a one-time verification link before mail starts flowing
+4. Mail matching a Forward rule is rewritten through a `reply+<uuid>@yourdomain.com` reverse-alias and sent on to the verified destination
+5. Replies to that reverse-alias are routed back to the original sender — your real address is never exposed
 
 ## Features
 
-- **Email aliasing**: generate random `reply+<uuid>@yourdomain.com` aliases that forward to your real inbox
-- **Ordered routing rules**: glob patterns on local and domain parts, evaluated top-to-bottom, first match wins
-- **Actions**: forward to one or more addresses, or drop
-- **Reply routing**: replies go back through the alias so your real address stays hidden
+- **Rule-based routing**: ordered glob patterns on local and domain parts, evaluated top-to-bottom, first match wins; a `*@*` Drop catch-all is always pinned at the end
+- **Forward or drop** per rule, with multiple destinations per Forward
+- **Reverse-alias replies**: `reply+<uuid>@yourdomain.com` mappings in KV (30-day TTL)
+- **Destination verification**: new destinations receive a one-time link from `verify@<your-cutout-host>`; unverified destinations are silently skipped at forward time
+- **Multi-domain**: one worker serves any number of zones; rules use the domain glob to differentiate
 - **Management UI**: HTMX-based rule editor at `/manage`, protected by Cloudflare Access
-- **Zero storage**: all config in KV, reverse aliases expire after 30 days
+- **Zero storage**: everything lives in KV — rules, reverse aliases, verified destinations, pending tokens
 
 ## Architecture
 
 - [Cloudflare Workers](https://workers.cloudflare.com/) (Rust compiled to WebAssembly)
-- [Cloudflare Email Routing](https://developers.cloudflare.com/email-routing/) (inbound email handling)
-- [Cloudflare send_email API](https://developers.cloudflare.com/email-routing/email-workers/send-email-workers/) (outbound replies through aliases)
-- [Cloudflare KV](https://developers.cloudflare.com/kv/) (routing config and reverse alias mappings)
-- [Cloudflare Access](https://developers.cloudflare.com/cloudflare-one/applications/) (management UI authentication)
+- [Cloudflare Email Routing](https://developers.cloudflare.com/email-routing/) — inbound MX + catch-all → worker
+- [Cloudflare Email Service](https://developers.cloudflare.com/email-service/) — outbound via the `send_email` binding, delivers to any recipient
+- [Cloudflare KV](https://developers.cloudflare.com/kv/) — rules, reverse aliases, verified destinations, pending tokens
+- [Cloudflare Access](https://developers.cloudflare.com/cloudflare-one/applications/) — protects `/manage` only; `/verify/<token>` stays public
 
 ## Deploy
 
@@ -40,13 +42,15 @@ nix develop
 
 # Create KV namespace
 wrangler kv namespace create KV
-# Copy the namespace ID into wrangler.toml or wrangler.production.toml
+# Copy the namespace ID into wrangler.toml
 
-# Configure Email Routing
-# In Cloudflare dashboard: set up a catch-all rule that sends all email to the worker
-
-# Configure Cloudflare Access
-# Create an Access application for /manage, then set CF_ACCESS_TEAM and CF_ACCESS_AUD
+# Dashboard steps, per email domain:
+#   Email Routing: enable + catch-all → worker
+#   Email Sending: onboard domain (adds cf-bounce.<domain> records)
+#
+# Dashboard step, once:
+#   Access: application policy covering cutout.<yourdomain>/manage/*
+#   then set CF_ACCESS_TEAM and CF_ACCESS_AUD in wrangler.toml
 
 # Deploy
 wrangler deploy

@@ -42,33 +42,60 @@ footer { margin-top: 3rem; padding-top: 1rem; border-top: 1px solid var(--border
 <h1>How It Works</h1>
 <p>Cutout sits between the outside world and your real email address, acting as an invisible relay.</p>
 
-<h2>Inbound flow (someone emails your alias)</h2>
+<h2>Routing model</h2>
+<p>You configure an ordered list of <strong>rules</strong> at <code>/manage</code>. Each rule matches inbound mail with glob patterns on the local part and the domain (e.g. <code>shop+*@example.com</code>), and has an action:</p>
+<ul>
+  <li><strong>Forward</strong> to one or more destination addresses, or</li>
+  <li><strong>Drop</strong> silently.</li>
+</ul>
+<p>Rules are evaluated top-to-bottom; the first match wins. A <code>*@*</code> catch-all is pinned to the end and defaults to Drop, so mail you haven't written a rule for is discarded rather than accidentally leaked.</p>
+
+<h2>Inbound flow (someone emails one of your addresses)</h2>
 <ol>
-  <li>An email arrives at <code>a1b2c3@yourdomain.com</code></li>
-  <li>Cloudflare Email Routing triggers the Cutout worker</li>
-  <li>The worker looks up the alias in D1 to find the destination address</li>
-  <li>If the alias is enabled, the email is forwarded to your real address via <code>send_email</code></li>
-  <li>The <code>From</code> header is rewritten so replies go back through the alias</li>
-  <li>The original sender's address is preserved in a <code>Reply-To</code> encoding</li>
+  <li>An email arrives at an address on any domain pointed at Cutout (e.g. <code>newsletter@yourdomain.com</code>)</li>
+  <li>Cloudflare Email Routing's catch-all rule triggers the Cutout worker</li>
+  <li>The worker matches the recipient against your rules, top-to-bottom</li>
+  <li>On a <strong>Forward</strong> match, for each <em>verified</em> destination the worker:
+    <ul>
+      <li>Generates a one-time reverse-alias <code>reply+&lt;uuid&gt;@yourdomain.com</code></li>
+      <li>Stores a mapping <code>reply+&lt;uuid&gt; → original sender</code> in KV with a 30-day TTL</li>
+      <li>Rewrites <code>From</code> and <code>Reply-To</code> to that reverse-alias, preserves the body/subject/threading headers</li>
+      <li>Sends the rewritten message via the <code>send_email</code> binding</li>
+    </ul>
+  </li>
+  <li>Unverified destinations are silently skipped (see verification below)</li>
 </ol>
 
-<h2>Outbound flow (you reply through an alias)</h2>
+<h2>Reply flow (you reply through a reverse-alias)</h2>
 <ol>
-  <li>You reply to a forwarded email from your real mailbox</li>
-  <li>The reply is addressed to a special reverse-path address that encodes the original sender</li>
-  <li>Cloudflare Email Routing triggers the worker again</li>
-  <li>The worker decodes the original sender from the address</li>
-  <li>The reply is sent via <code>send_email</code> with your alias as the <code>From</code> address</li>
-  <li>The recipient sees the reply coming from <code>a1b2c3@yourdomain.com</code> — never your real address</li>
+  <li>You reply from your real mailbox; the reply is addressed to the <code>reply+&lt;uuid&gt;@yourdomain.com</code> that Cutout put on the forwarded message</li>
+  <li>Email Routing triggers the worker again</li>
+  <li>The worker looks up <code>reply+&lt;uuid&gt;</code> in KV to find the original sender</li>
+  <li>The reply is re-sent via <code>send_email</code> with your original inbound address (e.g. <code>newsletter@yourdomain.com</code>) as the <code>From</code></li>
+  <li>The recipient sees the reply coming from your public alias — never your real mailbox</li>
+</ol>
+
+<h2>Destination verification</h2>
+<p>Cloudflare Email Service will deliver to any address, so Cutout does its own check to prove the rule author actually controls a destination:</p>
+<ol>
+  <li>When you add a Forward rule, Cutout sends a one-time link from <code>verify@&lt;cutout-host&gt;</code> to each unverified destination</li>
+  <li>The link hits the public route <code>/verify/&lt;token&gt;</code> (outside Cloudflare Access)</li>
+  <li>Clicking confirms the destination; it's then stored in KV under <code>verified:&lt;email&gt;</code> and usable in any rule</li>
+  <li>Until confirmed, mail matching a rule that forwards only to unverified destinations is dropped silently</li>
+  <li>The <code>/manage</code> UI shows a ✓ for verified destinations and a <em>resend</em> button for unverified ones</li>
 </ol>
 
 <h2>Key components</h2>
 <ul>
-  <li><strong>Cloudflare Email Routing</strong> — catch-all rule that sends all inbound email to the worker</li>
-  <li><strong>send_email binding</strong> — the Workers API for sending outbound email (no SMTP needed)</li>
-  <li><strong>KV</strong> — stores alias-to-destination routing config</li>
-  <li><strong>MIME rewriting</strong> — rewrites headers to maintain the alias illusion on both sides</li>
+  <li><strong>Cloudflare Email Routing</strong> — inbound: catch-all → worker, one per zone</li>
+  <li><strong>Cloudflare Email Service</strong> — outbound: the same <code>send_email</code> binding, but with onboarded sender domains it can deliver to any recipient (no per-address verification at the Cloudflare level)</li>
+  <li><strong>KV</strong> — stores the ordered rule list, reverse-alias mappings (30-day TTL), verified destinations, and pending verification tokens (24-hour TTL)</li>
+  <li><strong>Cloudflare Access</strong> — protects <code>/manage</code> only; <code>/verify/&lt;token&gt;</code> and <code>/health</code> are public</li>
+  <li><strong>MIME rewriting</strong> — RFC 2822 header rewriting on both inbound forwards and reply-routing</li>
 </ul>
+
+<h2>Multiple domains</h2>
+<p>One worker can serve any number of zones. For each email domain, enable Email Routing and point its catch-all at the same Cutout worker; rules use the <code>domain</code> glob to differentiate them. Reverse-aliases and verifications are derived from the domain the mail actually arrived on.</p>
 
 <footer>
   <a href="./">Back to overview</a>
