@@ -152,9 +152,18 @@ fn render_destination(email: &str, verified: &HashSet<String>) -> String {
         let vals_json = serde_json::json!({ "email": email }).to_string();
         let vals_attr = html_escape(&vals_json);
         format!(
-            r##"<span style="color:var(--warn)" title="Not verified">{esc} <button class="btn sm" style="padding:1px 6px;font-size:0.7rem;margin-left:2px" hx-post="/manage/verify/resend" hx-vals='{vals_attr}' hx-target="#rules-list" hx-swap="innerHTML" hx-ext="json-enc">resend</button></span>"##
+            r##"<span style="color:var(--warn)" title="Not verified">{esc} <button class="btn sm" style="padding:1px 6px;font-size:0.7rem;margin-left:2px" hx-post="/manage/verify/resend" hx-vals='{vals_attr}' hx-target="#toast" hx-swap="innerHTML" hx-ext="json-enc">resend</button></span>"##
         )
     }
+}
+
+/// Render a toast message snippet (for HTMX swap into #toast).
+pub fn toast(kind: &str, message: &str) -> String {
+    format!(
+        r#"<div class="toast {kind}">{message}</div>"#,
+        kind = html_escape(kind),
+        message = html_escape(message)
+    )
 }
 
 /// Single rule row.

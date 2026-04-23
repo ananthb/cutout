@@ -245,6 +245,7 @@ pub async fn reorder_rules(mut req: Request, env: &Env) -> Result<Response> {
 }
 
 /// POST /manage/verify/resend — resend a verification email for a single address.
+/// Returns a toast snippet (success or error) for swap into #toast.
 pub async fn resend_verification(mut req: Request, env: &Env) -> Result<Response> {
     let host = req.url()?.host_str().unwrap_or("").to_string();
     let form: serde_json::Value = req.json().await?;
@@ -255,13 +256,34 @@ pub async fn resend_verification(mut req: Request, env: &Env) -> Result<Response
         .trim()
         .to_lowercase();
     if email.is_empty() {
-        return Response::error("email required", 400);
+        return Response::from_html(templates::toast("error", "Email address required."));
+    }
+    if host.is_empty() {
+        return Response::from_html(templates::toast(
+            "error",
+            "No host in request URL; cannot build verification link.",
+        ));
     }
 
-    send_verification_emails(env, &host, &[email]).await;
-
     let kv_store = env.kv("KV")?;
-    let rules = kv::get_rules(&kv_store).await?;
-    let verified = verified_set(&kv_store, &rules).await;
-    Response::from_html(templates::rules_list_partial(&rules, &verified))
+    if kv::is_verified(&kv_store, &email).await.unwrap_or(false) {
+        return Response::from_html(templates::toast(
+            "success",
+            &format!("{email} is already verified."),
+        ));
+    }
+
+    match verify::send_verification(env, &host, &email).await {
+        Ok(()) => Response::from_html(templates::toast(
+            "success",
+            &format!("Verification email sent to {email}."),
+        )),
+        Err(e) => {
+            console_log!("resend verification failed for {email}: {e}");
+            Response::from_html(templates::toast(
+                "error",
+                &format!("Could not send verification to {email}: {e}"),
+            ))
+        }
+    }
 }
