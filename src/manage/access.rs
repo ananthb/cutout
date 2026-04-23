@@ -5,13 +5,44 @@ use worker::*;
 
 /// Verify the Cloudflare Access JWT and return the authenticated email.
 pub async fn verify_access(req: &Request, env: &Env) -> Option<String> {
-    let token = req.headers().get("Cf-Access-Jwt-Assertion").ok()??;
+    // Access sets the JWT as both a header and a cookie — check both
+    let token = match req.headers().get("Cf-Access-Jwt-Assertion").ok()? {
+        Some(t) => t,
+        None => match get_cookie(req, "CF_Authorization") {
+            Some(t) => t,
+            None => {
+                console_log!("No Cf-Access-Jwt-Assertion header or CF_Authorization cookie");
+                return None;
+            }
+        },
+    };
 
-    let aud = env.var("CF_ACCESS_AUD").map(|v| v.to_string()).ok()?;
-    let team_domain = env.var("CF_ACCESS_TEAM").map(|v| v.to_string()).ok()?;
+    let aud = match env.var("CF_ACCESS_AUD").map(|v| v.to_string()).ok() {
+        Some(a) if !a.is_empty() => a,
+        _ => {
+            console_log!("CF_ACCESS_AUD not set or empty");
+            return None;
+        }
+    };
+
+    let team_domain = match env.var("CF_ACCESS_TEAM").map(|v| v.to_string()).ok() {
+        Some(t) if !t.is_empty() => t,
+        _ => {
+            console_log!("CF_ACCESS_TEAM not set or empty");
+            return None;
+        }
+    };
+
+    console_log!(
+        "Verifying JWT: aud={aud}, team={team_domain}, token_len={}",
+        token.len()
+    );
 
     match verify_cf_jwt(&token, &aud, &team_domain).await {
-        Ok(email) => Some(email),
+        Ok(email) => {
+            console_log!("Access verified: {email}");
+            Some(email)
+        }
         Err(e) => {
             console_log!("Access JWT verification failed: {e}");
             None
@@ -151,4 +182,15 @@ fn get_subtle() -> Result<web_sys::SubtleCrypto> {
         .dyn_into()
         .map_err(|_| Error::from("Not a Crypto object"))?;
     Ok(crypto.subtle())
+}
+
+/// Extract a cookie value by name from the Cookie header.
+fn get_cookie(req: &Request, name: &str) -> Option<String> {
+    let header = req.headers().get("Cookie").ok()??;
+    let prefix = format!("{name}=");
+    header
+        .split(';')
+        .map(|s| s.trim())
+        .find(|s| s.starts_with(&prefix))
+        .map(|s| s[prefix.len()..].to_string())
 }

@@ -1,0 +1,22 @@
+name = "cutout"
+main = "build/worker/shim.mjs"
+compatibility_date = "2024-01-01"
+
+[build]
+command = "worker-build --release"
+
+[[kv_namespaces]]
+binding = "KV"
+id = "66c8000103c6420f91cd3943216d5828"
+
+[[send_email]]
+name = "EMAIL"
+
+[vars]
+ENVIRONMENT = "production"
+CF_ACCESS_TEAM = "kedi-dev"
+CF_ACCESS_AUD = "fdb38cc6733fdd96e5357872b5c1545275692eeb8bdf5b3124091025e929cd84"
+
+[observability.logs]
+enabled = true
+invocation_logs = true
