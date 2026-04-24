@@ -98,8 +98,28 @@ h2 { font-size: 1.25rem; margin-bottom: 1rem; }
   .issue-err  { background: #3b1111; color: #f87171; }
   .issue-warn { background: #3a2a0a; color: #fbbf24; }
 }
-.form-group textarea { width: 100%; padding: 8px 10px; border: 1px solid var(--border);
-  border-radius: var(--r-sm); background: var(--bg); color: var(--fg); }
+.dest-field { border: 1px solid var(--border); border-radius: var(--r-sm);
+  padding: 6px; background: var(--bg); display: flex; flex-wrap: wrap;
+  gap: 4px; align-items: center; min-height: 38px; cursor: text; }
+.dest-field:focus-within { border-color: var(--accent);
+  box-shadow: 0 0 0 3px rgba(37,99,235,0.15); }
+.dest-field .chip-input { flex: 1; min-width: 180px; border: none;
+  background: transparent; outline: none; padding: 4px; font-size: 0.9rem;
+  color: var(--fg); font-family: ui-monospace, monospace; }
+.chip { display: inline-flex; align-items: center; gap: 2px;
+  padding: 2px 2px 2px 8px; border-radius: 4px;
+  font-family: ui-monospace, monospace; font-size: 0.8rem; }
+.chip button { background: none; border: none; cursor: pointer;
+  font-size: 1rem; line-height: 1; padding: 0 6px; color: inherit;
+  opacity: 0.6; border-radius: 3px; }
+.chip button:hover { opacity: 1; background: rgba(0,0,0,0.08); }
+.chip-error { display: none; font-size: 0.75rem; padding: 4px 6px;
+  border-radius: 3px; margin-top: 4px; background: #fef2f2; color: #991b1b; }
+.chip-error.visible { display: block; }
+@media (prefers-color-scheme: dark) {
+  .chip-error { background: #3b1111; color: #f87171; }
+  .chip button:hover { background: rgba(255,255,255,0.08); }
+}
 .tester-result { border: 1px solid var(--border); border-radius: var(--r-md);
   padding: 1rem; margin-top: 1rem; }
 .tester-result.matched { border-left: 3px solid var(--ok); }
@@ -108,6 +128,114 @@ h2 { font-size: 1.25rem; margin-bottom: 1rem; }
   .rule-row, .rule-head { grid-template-columns: 1fr; gap: 4px; }
   .form-row { grid-template-columns: 1fr; }
 }
+"##;
+
+/// Shared client-side script for the destinations chip input. Defined once
+/// per page in `base_html`; individual destination fields call
+/// `cutoutSetupDestField` from their own inline `<script>` so it works both
+/// on first render and on HTMX-swapped edit forms.
+const CHIP_SCRIPT: &str = r##"
+(function(){
+  function parseDest(raw, enabled) {
+    const text = raw.trim();
+    if (!text) return { empty: true };
+    const idx = text.indexOf(':');
+    if (idx < 0) return { err: "use 'kind:value' (e.g. email:you@example.com)" };
+    const kindIn = text.slice(0, idx).trim().toLowerCase();
+    const value  = text.slice(idx + 1).trim();
+    if (!value) return { err: "value missing after ':'" };
+    const alias = {email:'email', telegram:'telegram', tg:'telegram', discord:'discord', dc:'discord'};
+    const kind = alias[kindIn];
+    if (!kind) return { err: "unknown kind (use email, telegram, or discord)" };
+    if (enabled.indexOf(kind) < 0) return { err: kind + " is not enabled on this deployment" };
+    if (kind === 'email') {
+      if (!value.includes('@') || value.startsWith('@') || value.endsWith('@'))
+        return { err: "email address must contain '@'" };
+      return { kind: kind, value: value.toLowerCase() };
+    }
+    if (kind === 'telegram') {
+      if (!/^-?\d+$/.test(value)) return { err: "telegram chat_id must be an integer" };
+      return { kind: kind, value: value };
+    }
+    if (kind === 'discord') {
+      if (!/^\d+$/.test(value)) return { err: "discord channel_id must be a positive integer" };
+      return { kind: kind, value: value };
+    }
+  }
+  function esc(s) { return s.replace(/[<>&"']/g, c =>
+    ({'<':'&lt;','>':'&gt;','&':'&amp;','"':'&quot;',"'":'&#x27;'}[c])); }
+  function setupDestField(root) {
+    if (!root || root.dataset.ready === '1') return;
+    root.dataset.ready = '1';
+    const field = root.querySelector('.dest-field');
+    const input = root.querySelector('.chip-input');
+    const hidden = root.querySelector('input[type=hidden]');
+    const errEl = root.querySelector('.chip-error');
+    const enabled = (root.dataset.enabled || '').split(',').filter(Boolean);
+
+    function sync() {
+      const lines = Array.from(root.querySelectorAll('.chip'))
+        .map(el => el.dataset.kind + ':' + el.dataset.value);
+      hidden.value = lines.join('\n');
+    }
+    function showErr(msg) {
+      errEl.textContent = msg || '';
+      errEl.classList.toggle('visible', !!msg);
+    }
+    function addChip(kind, value) {
+      const chip = document.createElement('span');
+      chip.className = 'chip dest-' + kind;
+      chip.dataset.kind = kind;
+      chip.dataset.value = value;
+      chip.innerHTML = esc(kind + ':' + value);
+      const btn = document.createElement('button');
+      btn.type = 'button';
+      btn.setAttribute('aria-label', 'remove');
+      btn.textContent = '\u00d7';
+      btn.onclick = () => { chip.remove(); sync(); input.focus(); };
+      chip.appendChild(btn);
+      field.insertBefore(chip, input);
+      sync();
+    }
+    function commit() {
+      const r = parseDest(input.value, enabled);
+      if (r.empty) { showErr(''); return true; }
+      if (r.err)   { showErr(r.err); return false; }
+      addChip(r.kind, r.value);
+      input.value = ''; showErr(''); return true;
+    }
+
+    // Wire up chips rendered server-side (edit form pre-fill).
+    root.querySelectorAll('.chip').forEach(chip => {
+      let btn = chip.querySelector('button');
+      if (!btn) {
+        btn = document.createElement('button');
+        btn.type = 'button';
+        btn.setAttribute('aria-label', 'remove');
+        btn.textContent = '\u00d7';
+        chip.appendChild(btn);
+      }
+      btn.onclick = () => { chip.remove(); sync(); input.focus(); };
+    });
+    sync();
+
+    field.addEventListener('click', e => {
+      if (e.target === field) input.focus();
+    });
+    input.addEventListener('keydown', e => {
+      if (e.key === 'Enter' || e.key === ',') { e.preventDefault(); commit(); }
+      else if (e.key === 'Backspace' && !input.value) {
+        const chips = root.querySelectorAll('.chip');
+        if (chips.length) { chips[chips.length - 1].remove(); sync(); }
+      } else { showErr(''); }
+    });
+    const form = root.closest('form');
+    if (form) form.addEventListener('submit', e => {
+      if (!commit()) e.preventDefault();
+    });
+  }
+  window.cutoutSetupDestField = setupDestField;
+})();
 "##;
 
 /// Base HTML wrapper.
@@ -122,6 +250,7 @@ pub fn base_html(title: &str, email: &str, content: &str) -> String {
 <style>{css}</style>
 <script src="https://unpkg.com/htmx.org@2.0.8/dist/htmx.min.js" crossorigin="anonymous"></script>
 <script src="https://unpkg.com/htmx-ext-json-enc@2.0.3/json-enc.js" crossorigin="anonymous"></script>
+<script>{chip_script}</script>
 </head>
 <body>
 <header><div class="inner"><h1>Cutout</h1><span class="user">{email}</span></div></header>
@@ -130,6 +259,7 @@ pub fn base_html(title: &str, email: &str, content: &str) -> String {
 </html>"##,
         title = html_escape(title),
         css = CSS,
+        chip_script = CHIP_SCRIPT,
         email = html_escape(email),
         content = content,
     )
@@ -333,37 +463,64 @@ fn nav_links(current: &str) -> String {
     )
 }
 
-/// Produce the `kind:value` help and placeholder for the destinations field,
-/// listing only channels whose bot secrets are configured.
-fn destinations_help(enabled: &EnabledChannels) -> (String, String) {
-    let mut kinds = vec!["email"];
-    let mut lines = vec!["email:you@example.com"];
+/// Emit the chip-style destinations field. `id_prefix` must be unique on the
+/// page (one for the add form, one for the edit form). `initial` pre-fills
+/// chips for the edit form.
+fn destinations_field(
+    id_prefix: &str,
+    enabled: &EnabledChannels,
+    initial: &[Destination],
+) -> String {
+    let mut kinds: Vec<&str> = vec!["email"];
     if enabled.telegram {
         kinds.push("telegram");
-        lines.push("telegram:-100123456789");
     }
     if enabled.discord {
         kinds.push("discord");
-        lines.push("discord:987654321098765432");
     }
-    let help_inner = kinds
+    let kinds_attr = kinds.join(",");
+    let kinds_help = kinds
         .iter()
         .map(|k| format!("<code>{k}</code>"))
         .collect::<Vec<_>>()
         .join(", ");
-    let help = format!("One <code>kind:value</code> per line. Available kinds: {help_inner}.");
     let missing = match (enabled.telegram, enabled.discord) {
         (true, true) => String::new(),
         (false, true) => " (set <code>TELEGRAM_BOT_TOKEN</code> to enable telegram)".into(),
         (true, false) => " (set <code>DISCORD_BOT_TOKEN</code> + <code>DISCORD_APP_ID</code> + <code>DISCORD_PUBLIC_KEY</code> to enable discord)".into(),
         (false, false) => " (set the telegram / discord bot secrets to enable those kinds)".into(),
     };
-    (format!("{help}{missing}"), lines.join("\n"))
+    let initial_chips: String = initial
+        .iter()
+        .map(|d| {
+            let kind = d.kind_label();
+            let value = d.value();
+            format!(
+                r#"<span class="chip dest-{kind}" data-kind="{kind}" data-value="{v_attr}">{text}</span>"#,
+                kind = kind,
+                v_attr = html_escape(value),
+                text = html_escape(&format!("{kind}:{value}")),
+            )
+        })
+        .collect();
+    format!(
+        r##"<div id="{id}" class="dest-wrapper" data-enabled="{kinds_attr}">
+  <div class="dest-field">{initial_chips}<input class="chip-input" type="text" placeholder="email:you@example.com" autocomplete="off" spellcheck="false"><input type="hidden" name="destinations" value=""></div>
+  <div class="chip-error"></div>
+</div>
+<div class="form-help">Press Enter or comma to add. Each entry must be <code>kind:value</code>. Available kinds: {kinds_help}.{missing}</div>
+<script>cutoutSetupDestField(document.getElementById('{id}'));</script>"##,
+        id = id_prefix,
+        kinds_attr = kinds_attr,
+        initial_chips = initial_chips,
+        kinds_help = kinds_help,
+        missing = missing,
+    )
 }
 
 /// Add rule form (hidden by default).
 fn add_rule_form(enabled: &EnabledChannels) -> String {
-    let (help, placeholder) = destinations_help(enabled);
+    let dest_field = destinations_field("add-dest", enabled, &[]);
     format!(
         r##"<div id="add-form" class="form-card" style="display:none">
   <h3 style="margin-bottom:1rem">Add Rule</h3>
@@ -392,9 +549,8 @@ fn add_rule_form(enabled: &EnabledChannels) -> String {
       </select>
     </div>
     <div class="form-group" id="dest-group">
-      <label for="destinations">Destinations (one per line)</label>
-      <textarea id="destinations" name="destinations" rows="3" placeholder="{placeholder}" style="font-family:ui-monospace,monospace;font-size:0.85rem"></textarea>
-      <div class="form-help">{help}</div>
+      <label>Destinations</label>
+      {dest_field}
     </div>
     <div style="display:flex;gap:8px">
       <button type="submit" class="btn primary">Add Rule</button>
@@ -403,16 +559,15 @@ fn add_rule_form(enabled: &EnabledChannels) -> String {
   </form>
 </div>
 <div id="edit-area"></div>"##,
-        placeholder = html_escape(&placeholder),
-        help = help,
+        dest_field = dest_field,
     )
 }
 
 /// Edit rule form partial (returned for HTMX swap into #edit-area).
-pub fn edit_rule_form(rule: &Rule) -> String {
-    let (action_type, destinations) = match &rule.action {
-        Action::Forward { destinations } => ("forward", Destination::format_list(destinations)),
-        Action::Drop => ("drop", String::new()),
+pub fn edit_rule_form(rule: &Rule, enabled: &EnabledChannels) -> String {
+    let (action_type, destinations): (&str, &[Destination]) = match &rule.action {
+        Action::Forward { destinations } => ("forward", destinations.as_slice()),
+        Action::Drop => ("drop", &[]),
     };
     let dest_display = if action_type == "forward" {
         "block"
@@ -429,6 +584,7 @@ pub fn edit_rule_form(rule: &Rule) -> String {
     } else {
         ""
     };
+    let dest_field = destinations_field("edit-dest", enabled, destinations);
 
     format!(
         r##"<div class="form-card">
@@ -456,8 +612,8 @@ pub fn edit_rule_form(rule: &Rule) -> String {
       </select>
     </div>
     <div class="form-group" id="edit-dest-group" style="display:{dest_display}">
-      <label for="edit-destinations">Destinations (one per line)</label>
-      <textarea id="edit-destinations" name="destinations" rows="4" style="font-family:ui-monospace,monospace;font-size:0.85rem">{destinations}</textarea>
+      <label>Destinations</label>
+      {dest_field}
     </div>
     <div style="display:flex;gap:8px">
       <button type="submit" class="btn primary">Save</button>
@@ -472,7 +628,7 @@ pub fn edit_rule_form(rule: &Rule) -> String {
         forward_selected = forward_selected,
         drop_selected = drop_selected,
         dest_display = dest_display,
-        destinations = html_escape(&destinations),
+        dest_field = dest_field,
     )
 }
 

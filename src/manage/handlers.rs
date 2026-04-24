@@ -121,9 +121,10 @@ pub async fn create_rule(mut req: Request, env: &Env) -> Result<Response> {
 pub async fn edit_form(env: &Env, rule_id: &str) -> Result<Response> {
     let kv_store = env.kv("KV")?;
     let rules = kv::get_rules(&kv_store).await?;
+    let enabled = EnabledChannels::from_env(env);
 
     match rules.iter().find(|r| r.id == rule_id) {
-        Some(rule) => Response::from_html(templates::edit_rule_form(rule)),
+        Some(rule) => Response::from_html(templates::edit_rule_form(rule, &enabled)),
         None => Response::error("Rule not found", 404),
     }
 }
