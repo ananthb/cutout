@@ -17,6 +17,27 @@ use crate::types::{BotChannel, BotForward, OutboundEmail};
 /// KV TTL for bot reply contexts: 30 days, matching reverse-alias TTL.
 const REPLY_CONTEXT_TTL: u64 = 30 * 24 * 60 * 60;
 
+/// Which chat destinations are currently available, based on whether the
+/// relevant bot secrets are present.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct EnabledChannels {
+    pub telegram: bool,
+    pub discord: bool,
+}
+
+impl EnabledChannels {
+    /// Detect which bot channels are configured. A channel is enabled iff
+    /// all secrets required to both post and verify its webhook are set.
+    pub fn from_env(env: &Env) -> Self {
+        Self {
+            telegram: env.secret("TELEGRAM_BOT_TOKEN").is_ok(),
+            discord: env.secret("DISCORD_BOT_TOKEN").is_ok()
+                && env.secret("DISCORD_APP_ID").is_ok()
+                && env.secret("DISCORD_PUBLIC_KEY").is_ok(),
+        }
+    }
+}
+
 fn telegram_bot(env: &Env) -> Option<TelegramBot> {
     env.secret("TELEGRAM_BOT_TOKEN")
         .ok()

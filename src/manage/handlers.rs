@@ -3,6 +3,7 @@
 use worker::*;
 
 use super::templates;
+use crate::bots::EnabledChannels;
 use crate::email::routing;
 use crate::helpers::generate_id;
 use crate::kv;
@@ -48,8 +49,8 @@ fn parse_action(form: &serde_json::Value) -> std::result::Result<Action, String>
     }
 }
 
-fn render_rules(rules: &[Rule]) -> String {
-    let report = validation::validate(rules);
+fn render_rules(rules: &[Rule], enabled: &EnabledChannels) -> String {
+    let report = validation::validate(rules, enabled);
     templates::rules_list_partial(rules, &report)
 }
 
@@ -66,8 +67,9 @@ fn validation_error_response(report: &validation::Report) -> Result<Response> {
 pub async fn list_rules(env: &Env, email: &str) -> Result<Response> {
     let kv_store = env.kv("KV")?;
     let rules = ensure_catch_all(&kv_store).await?;
-    let report = validation::validate(&rules);
-    Response::from_html(templates::rules_page(&rules, email, &report))
+    let enabled = EnabledChannels::from_env(env);
+    let report = validation::validate(&rules, &enabled);
+    Response::from_html(templates::rules_page(&rules, email, &report, &enabled))
 }
 
 /// POST /manage/rules — create a new rule (inserted before catch-all)
@@ -105,13 +107,14 @@ pub async fn create_rule(mut req: Request, env: &Env) -> Result<Response> {
     let insert_pos = rules.len().saturating_sub(1);
     rules.insert(insert_pos, rule);
 
-    let report = validation::validate(&rules);
+    let enabled = EnabledChannels::from_env(env);
+    let report = validation::validate(&rules, &enabled);
     if report.has_errors() {
         return validation_error_response(&report);
     }
 
     kv::save_rules(&kv_store, &rules).await?;
-    Response::from_html(render_rules(&rules))
+    Response::from_html(render_rules(&rules, &enabled))
 }
 
 /// GET /manage/rules/{id}/edit — return edit form partial
@@ -156,13 +159,14 @@ pub async fn update_rule(mut req: Request, env: &Env, rule_id: &str) -> Result<R
         existing.action = action;
     }
 
-    let report = validation::validate(&rules);
+    let enabled = EnabledChannels::from_env(env);
+    let report = validation::validate(&rules, &enabled);
     if report.has_errors() {
         return validation_error_response(&report);
     }
 
     kv::save_rules(&kv_store, &rules).await?;
-    Response::from_html(render_rules(&rules))
+    Response::from_html(render_rules(&rules, &enabled))
 }
 
 /// DELETE /manage/rules/{id} — delete a rule (blocked for catch-all)
@@ -178,7 +182,8 @@ pub async fn delete_rule(env: &Env, rule_id: &str) -> Result<Response> {
 
     rules.retain(|r| r.id != rule_id);
     kv::save_rules(&kv_store, &rules).await?;
-    Response::from_html(render_rules(&rules))
+    let enabled = EnabledChannels::from_env(env);
+    Response::from_html(render_rules(&rules, &enabled))
 }
 
 /// POST /manage/rules/reorder — move a rule up or down
@@ -191,9 +196,10 @@ pub async fn reorder_rules(mut req: Request, env: &Env) -> Result<Response> {
 
     let mut rules = kv::get_rules(&kv_store).await?;
 
+    let enabled = EnabledChannels::from_env(env);
     if let Some(pos) = rules.iter().position(|r| r.id == rule_id) {
         if rules[pos].is_catch_all() {
-            return Response::from_html(render_rules(&rules));
+            return Response::from_html(render_rules(&rules, &enabled));
         }
 
         let catch_all_pos = rules.len().saturating_sub(1);
@@ -210,14 +216,15 @@ pub async fn reorder_rules(mut req: Request, env: &Env) -> Result<Response> {
     }
 
     kv::save_rules(&kv_store, &rules).await?;
-    Response::from_html(render_rules(&rules))
+    Response::from_html(render_rules(&rules, &enabled))
 }
 
 /// GET /manage/test — rule tester page.
 pub async fn tester_page(env: &Env, email: &str) -> Result<Response> {
     let kv_store = env.kv("KV")?;
     let rules = ensure_catch_all(&kv_store).await?;
-    Response::from_html(templates::tester_page(&rules, email, None))
+    let enabled = EnabledChannels::from_env(env);
+    Response::from_html(templates::tester_page(&rules, email, None, &enabled))
 }
 
 /// POST /manage/test — evaluate rules against the supplied `to` address.
@@ -231,6 +238,7 @@ pub async fn tester_run(mut req: Request, env: &Env, email: &str) -> Result<Resp
         .to_lowercase();
     let kv_store = env.kv("KV")?;
     let rules = ensure_catch_all(&kv_store).await?;
+    let enabled = EnabledChannels::from_env(env);
 
     let result = if let Some((local, domain)) = to.rsplit_once('@') {
         let matched = routing::find_matching_rule(&rules, local, domain);
@@ -244,5 +252,5 @@ pub async fn tester_run(mut req: Request, env: &Env, email: &str) -> Result<Resp
             matched_index: None,
         })
     };
-    Response::from_html(templates::tester_page(&rules, email, result))
+    Response::from_html(templates::tester_page(&rules, email, result, &enabled))
 }

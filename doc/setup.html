@@ -89,7 +89,46 @@ nix develop</code></pre>
 <p>Attach the worker's HTTP handler to whichever hostname you want <code>/manage</code> reachable on (Workers &rarr; your worker &rarr; Triggers &rarr; Custom Domain).</p>
 
 <h2>8. Write rules</h2>
-<p>Visit <code>https://&lt;your-cutout-host&gt;/manage</code> (authenticating via Access). Add Forward rules using glob patterns for the local and domain parts, e.g. <code>*@example.com</code> &rarr; <code>me@gmail.com</code>. First match wins; a <code>*@*</code> Drop catch-all is pinned at the bottom. Destinations must already exist in the Destination Addresses list (step&nbsp;5) — otherwise <code>forward()</code> bounces at runtime.</p>
+<p>Visit <code>https://&lt;your-cutout-host&gt;/manage</code> (authenticating via Access). Add Forward rules using glob patterns for the local and domain parts, e.g. <code>*@example.com</code>. First match wins; a <code>*@*</code> Drop catch-all is pinned at the bottom.</p>
+<p>Each rule's <strong>destinations</strong> field is one <code>kind:value</code> per line. Available kinds:</p>
+<ul>
+  <li><code>email:you@example.com</code> — must exist in the Cloudflare Destination Addresses list (step&nbsp;5)</li>
+  <li><code>telegram:&lt;chat_id&gt;</code> — requires step&nbsp;9</li>
+  <li><code>discord:&lt;channel_id&gt;</code> — requires step&nbsp;10</li>
+</ul>
+<p>Kinds whose secrets aren't configured are hidden from the help text and rejected by the validator. The <code>/manage/test</code> page evaluates the current rule set against a recipient you type in.</p>
+
+<h2>9. Optional: Telegram forwarding</h2>
+<p>To allow <code>telegram:&lt;chat_id&gt;</code> destinations:</p>
+<ol>
+  <li>Create a bot via <a href="https://t.me/BotFather">@BotFather</a> on Telegram and copy the token.</li>
+  <li>Add the bot to the chat where you want mail to land; get the chat_id (e.g. via <a href="https://t.me/userinfobot">@userinfobot</a>). Private chats use your user id; groups use a negative id.</li>
+  <li>Set the token + a random webhook secret:
+    <pre><code>wrangler secret put TELEGRAM_BOT_TOKEN
+wrangler secret put TELEGRAM_WEBHOOK_SECRET</code></pre>
+  </li>
+  <li>Register the webhook (once). Replace &lt;token&gt; and &lt;secret&gt;:
+    <pre><code>curl -X POST "https://api.telegram.org/bot&lt;token&gt;/setWebhook" \
+  -H "Content-Type: application/json" \
+  -d '{"url":"https://&lt;your-cutout-host&gt;/telegram/webhook","secret_token":"&lt;secret&gt;"}'</code></pre>
+  </li>
+</ol>
+<p>In Telegram, replies use the app's native Reply feature — long-press / swipe a forwarded message, type a reply, send. Cutout receives the reply via the webhook and sends an email back to the original sender.</p>
+
+<h2>10. Optional: Discord forwarding</h2>
+<p>To allow <code>discord:&lt;channel_id&gt;</code> destinations:</p>
+<ol>
+  <li>Create an application in the <a href="https://discord.com/developers/applications">Discord Developer Portal</a>. Under Bot, create a bot and copy its token. Note the Application ID and Public Key from the General Information page.</li>
+  <li>Invite the bot to your server with <code>View Channels</code> + <code>Send Messages</code> scopes.</li>
+  <li>Enable channel developer mode in Discord → right-click the target channel → Copy Channel ID.</li>
+  <li>Set the secrets:
+    <pre><code>wrangler secret put DISCORD_BOT_TOKEN
+wrangler secret put DISCORD_APP_ID
+wrangler secret put DISCORD_PUBLIC_KEY</code></pre>
+  </li>
+  <li>Back in the Developer Portal, set the <strong>Interactions Endpoint URL</strong> to <code>https://&lt;your-cutout-host&gt;/discord/interactions</code> and save — Discord will verify by sending a signed ping.</li>
+</ol>
+<p>Replies use the Reply button on the bot's forwarded message → modal → submit. Cutout receives the interaction, verifies the Ed25519 signature, and sends an email back to the original sender.</p>
 
 <footer>
   <a href="./">Back to overview</a>

@@ -1,5 +1,6 @@
 //! HTML templates for the management UI.
 
+use crate::bots::EnabledChannels;
 use crate::helpers::html_escape;
 use crate::types::{Action, Destination, Rule};
 use crate::validation::{Issue, Report};
@@ -135,7 +136,12 @@ pub fn base_html(title: &str, email: &str, content: &str) -> String {
 }
 
 /// Full rules management page.
-pub fn rules_page(rules: &[Rule], email: &str, report: &Report) -> String {
+pub fn rules_page(
+    rules: &[Rule],
+    email: &str,
+    report: &Report,
+    enabled: &EnabledChannels,
+) -> String {
     let rows: String = rules
         .iter()
         .enumerate()
@@ -171,7 +177,7 @@ pub fn rules_page(rules: &[Rule], email: &str, report: &Report) -> String {
 {add_form}"#,
         nav = nav,
         rows = rows,
-        add_form = add_rule_form(),
+        add_form = add_rule_form(enabled),
     );
 
     base_html("Rules", email, &content)
@@ -327,11 +333,37 @@ fn nav_links(current: &str) -> String {
     )
 }
 
-const DEST_PLACEHOLDER: &str =
-    "email:you@example.com\ntelegram:-100123456789\ndiscord:987654321098765432";
+/// Produce the `kind:value` help and placeholder for the destinations field,
+/// listing only channels whose bot secrets are configured.
+fn destinations_help(enabled: &EnabledChannels) -> (String, String) {
+    let mut kinds = vec!["email"];
+    let mut lines = vec!["email:you@example.com"];
+    if enabled.telegram {
+        kinds.push("telegram");
+        lines.push("telegram:-100123456789");
+    }
+    if enabled.discord {
+        kinds.push("discord");
+        lines.push("discord:987654321098765432");
+    }
+    let help_inner = kinds
+        .iter()
+        .map(|k| format!("<code>{k}</code>"))
+        .collect::<Vec<_>>()
+        .join(", ");
+    let help = format!("One <code>kind:value</code> per line. Available kinds: {help_inner}.");
+    let missing = match (enabled.telegram, enabled.discord) {
+        (true, true) => String::new(),
+        (false, true) => " (set <code>TELEGRAM_BOT_TOKEN</code> to enable telegram)".into(),
+        (true, false) => " (set <code>DISCORD_BOT_TOKEN</code> + <code>DISCORD_APP_ID</code> + <code>DISCORD_PUBLIC_KEY</code> to enable discord)".into(),
+        (false, false) => " (set the telegram / discord bot secrets to enable those kinds)".into(),
+    };
+    (format!("{help}{missing}"), lines.join("\n"))
+}
 
 /// Add rule form (hidden by default).
-fn add_rule_form() -> String {
+fn add_rule_form(enabled: &EnabledChannels) -> String {
+    let (help, placeholder) = destinations_help(enabled);
     format!(
         r##"<div id="add-form" class="form-card" style="display:none">
   <h3 style="margin-bottom:1rem">Add Rule</h3>
@@ -362,7 +394,7 @@ fn add_rule_form() -> String {
     <div class="form-group" id="dest-group">
       <label for="destinations">Destinations (one per line)</label>
       <textarea id="destinations" name="destinations" rows="3" placeholder="{placeholder}" style="font-family:ui-monospace,monospace;font-size:0.85rem"></textarea>
-      <div class="form-help">One <code>kind:value</code> per line. Kinds: <code>email</code>, <code>telegram</code>, <code>discord</code>.</div>
+      <div class="form-help">{help}</div>
     </div>
     <div style="display:flex;gap:8px">
       <button type="submit" class="btn primary">Add Rule</button>
@@ -371,7 +403,8 @@ fn add_rule_form() -> String {
   </form>
 </div>
 <div id="edit-area"></div>"##,
-        placeholder = html_escape(DEST_PLACEHOLDER),
+        placeholder = html_escape(&placeholder),
+        help = help,
     )
 }
 
@@ -450,8 +483,35 @@ pub struct TesterResult {
 }
 
 /// Rule tester page.
-pub fn tester_page(rules: &[Rule], email: &str, result: Option<TesterResult>) -> String {
+pub fn tester_page(
+    rules: &[Rule],
+    email: &str,
+    result: Option<TesterResult>,
+    enabled: &EnabledChannels,
+) -> String {
     let nav = nav_links("test");
+    let channels_badge = {
+        let badges = [
+            ("email", true),
+            ("telegram", enabled.telegram),
+            ("discord", enabled.discord),
+        ];
+        badges
+            .iter()
+            .map(|(kind, on)| {
+                let style = if *on {
+                    "background:var(--code-bg);color:var(--fg)"
+                } else {
+                    "background:var(--code-bg);color:var(--muted);text-decoration:line-through"
+                };
+                format!(
+                    r#"<span class="dest-tag dest-{kind}" style="{style}">{kind}</span>"#,
+                    kind = kind,
+                    style = style
+                )
+            })
+            .collect::<String>()
+    };
     let result_html = match result {
         None => String::new(),
         Some(r) => {
@@ -497,7 +557,8 @@ pub fn tester_page(rules: &[Rule], email: &str, result: Option<TesterResult>) ->
     let content = format!(
         r##"{nav}
 <h2>Rule tester</h2>
-<p style="color:var(--muted);font-size:0.85rem;margin-bottom:1rem">Enter an inbound recipient address. The tester runs the configured rule set against it and shows which rule would fire.</p>
+<p style="color:var(--muted);font-size:0.85rem;margin-bottom:0.5rem">Enter an inbound recipient address. The tester runs the configured rule set against it and shows which rule would fire.</p>
+<p style="font-size:0.85rem;margin-bottom:1rem">Enabled destination kinds: {badges}</p>
 <form hx-post="/manage/test" hx-target="#tester-target" hx-swap="innerHTML" hx-ext="json-enc">
   <div class="form-group">
     <label for="to">Inbound address</label>
@@ -507,6 +568,7 @@ pub fn tester_page(rules: &[Rule], email: &str, result: Option<TesterResult>) ->
 </form>
 <div id="tester-target">{result}</div>"##,
         nav = nav,
+        badges = channels_badge,
         result = result_html,
     );
 

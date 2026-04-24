@@ -2,7 +2,8 @@
 //! duplicates, and unreachable rules (earlier rule's pattern subsumes
 //! later's). Run before saving a rule set.
 
-use crate::types::{Action, Rule};
+use crate::bots::EnabledChannels;
+use crate::types::{Action, Destination, Rule};
 
 /// Validation problem attached to a rule by position. Errors block a save;
 /// warnings (currently just "unreachable") are surfaced to the UI but don't
@@ -69,7 +70,9 @@ impl Report {
 
 /// Validate a whole rule set in place. Always returns a [`Report`] (possibly
 /// empty). Use [`Report::has_errors`] to decide whether to save.
-pub fn validate(rules: &[Rule]) -> Report {
+/// `enabled` flags which chat channels currently have their bot secrets set;
+/// destinations pointing at disabled channels are flagged as errors.
+pub fn validate(rules: &[Rule], enabled: &EnabledChannels) -> Report {
     let mut report = Report {
         issues: vec![Vec::new(); rules.len()],
     };
@@ -84,12 +87,28 @@ pub fn validate(rules: &[Rule]) -> Report {
             report.issues[i].push(Issue::Error("domain pattern is empty".into()));
         }
 
-        // Forward action must have destinations.
+        // Forward action must have destinations; each destination's channel
+        // must be enabled.
         if let Action::Forward { destinations } = &rule.action {
             if destinations.is_empty() {
                 report.issues[i].push(Issue::Error(
                     "Forward action needs at least one destination".into(),
                 ));
+            }
+            for dest in destinations {
+                match dest {
+                    Destination::Telegram { .. } if !enabled.telegram => {
+                        report.issues[i].push(Issue::Error(
+                            "telegram destination requires TELEGRAM_BOT_TOKEN secret".into(),
+                        ));
+                    }
+                    Destination::Discord { .. } if !enabled.discord => {
+                        report.issues[i].push(Issue::Error(
+                            "discord destination requires DISCORD_BOT_TOKEN + DISCORD_APP_ID + DISCORD_PUBLIC_KEY secrets".into(),
+                        ));
+                    }
+                    _ => {}
+                }
             }
         }
 
@@ -210,6 +229,13 @@ mod tests {
         }
     }
 
+    fn all_enabled() -> EnabledChannels {
+        EnabledChannels {
+            telegram: true,
+            discord: true,
+        }
+    }
+
     // ---- glob_subsumes ----
 
     #[test]
@@ -276,7 +302,7 @@ mod tests {
             rule("a", "shop", "example.com", forward("me@x.com")),
             rule("b", "*", "*", Action::Drop),
         ];
-        let report = validate(&rules);
+        let report = validate(&rules, &all_enabled());
         assert!(!report.has_errors(), "{:?}", report.lines());
         assert!(report.issues.iter().all(|r| r.is_empty()));
     }
@@ -291,7 +317,7 @@ mod tests {
                 destinations: vec![],
             },
         )];
-        let report = validate(&rules);
+        let report = validate(&rules, &all_enabled());
         assert!(report.has_errors());
         assert!(report.first_error().unwrap().1.contains("Forward action"));
     }
@@ -299,7 +325,7 @@ mod tests {
     #[test]
     fn empty_pattern_is_error() {
         let rules = vec![rule("a", "", "example.com", Action::Drop)];
-        let report = validate(&rules);
+        let report = validate(&rules, &all_enabled());
         assert!(report.has_errors());
     }
 
@@ -309,7 +335,7 @@ mod tests {
             rule("a", "shop", "example.com", forward("a@x")),
             rule("b", "SHOP", "Example.com", forward("b@x")),
         ];
-        let report = validate(&rules);
+        let report = validate(&rules, &all_enabled());
         assert!(report.has_errors());
         let (idx, msg) = report.first_error().unwrap();
         assert_eq!(idx, 1, "error should attach to second rule");
@@ -322,7 +348,7 @@ mod tests {
             rule("catch", "*", "*", Action::Drop),
             rule("specific", "shop", "example.com", forward("x@y")),
         ];
-        let report = validate(&rules);
+        let report = validate(&rules, &all_enabled());
         assert!(
             !report.has_errors(),
             "unreachable is a warning, not an error"
@@ -338,7 +364,7 @@ mod tests {
             rule("first", "shop*", "*", forward("x@y")),
             rule("second", "shop-foo", "example.com", forward("y@z")),
         ];
-        let report = validate(&rules);
+        let report = validate(&rules, &all_enabled());
         assert!(!report.has_errors());
         assert!(
             !report.issues[1].is_empty(),
@@ -352,7 +378,89 @@ mod tests {
             rule("first", "shop", "example.com", forward("x@y")),
             rule("catch-all", "*", "*", Action::Drop),
         ];
-        let report = validate(&rules);
+        let report = validate(&rules, &all_enabled());
         assert!(report.issues.iter().all(|r| r.is_empty()));
+    }
+
+    #[test]
+    fn telegram_destination_requires_telegram_enabled() {
+        let rules = vec![rule(
+            "a",
+            "shop",
+            "x.com",
+            Action::Forward {
+                destinations: vec![Destination::Telegram {
+                    chat_id: "-100123".into(),
+                }],
+            },
+        )];
+        let disabled = EnabledChannels {
+            telegram: false,
+            discord: true,
+        };
+        let report = validate(&rules, &disabled);
+        assert!(report.has_errors());
+        assert!(report
+            .first_error()
+            .unwrap()
+            .1
+            .contains("TELEGRAM_BOT_TOKEN"));
+    }
+
+    #[test]
+    fn discord_destination_requires_discord_enabled() {
+        let rules = vec![rule(
+            "a",
+            "shop",
+            "x.com",
+            Action::Forward {
+                destinations: vec![Destination::Discord {
+                    channel_id: "42".into(),
+                }],
+            },
+        )];
+        let disabled = EnabledChannels {
+            telegram: true,
+            discord: false,
+        };
+        let report = validate(&rules, &disabled);
+        assert!(report.has_errors());
+        assert!(report
+            .first_error()
+            .unwrap()
+            .1
+            .contains("DISCORD_BOT_TOKEN"));
+    }
+
+    #[test]
+    fn chat_destinations_pass_when_enabled() {
+        let rules = vec![rule(
+            "a",
+            "shop",
+            "x.com",
+            Action::Forward {
+                destinations: vec![
+                    Destination::Telegram {
+                        chat_id: "-100".into(),
+                    },
+                    Destination::Discord {
+                        channel_id: "42".into(),
+                    },
+                ],
+            },
+        )];
+        let report = validate(&rules, &all_enabled());
+        assert!(!report.has_errors(), "{:?}", report.lines());
+    }
+
+    #[test]
+    fn email_destination_ignores_channel_flags() {
+        let rules = vec![rule("a", "shop", "x.com", forward("me@x.com"))];
+        let disabled = EnabledChannels {
+            telegram: false,
+            discord: false,
+        };
+        let report = validate(&rules, &disabled);
+        assert!(!report.has_errors());
     }
 }

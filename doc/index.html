@@ -51,9 +51,9 @@ footer { margin-top: 3rem; padding-top: 1rem; border-top: 1px solid var(--border
 <ol>
   <li>You own one or more domains with <strong>Cloudflare Email Routing</strong> (inbound) and <strong>Email Service</strong> (outbound) enabled</li>
   <li>Write <strong>rules</strong> in the <code>/manage</code> UI — glob patterns on the address's local part and domain, with a <em>Forward</em> or <em>Drop</em> action; first-match-wins, with a catch-all Drop pinned to the end</li>
-  <li>Each forward destination must exist in your account's Cloudflare <strong>Email Routing → Destination Addresses</strong> list (Cloudflare sends its own confirmation on add)</li>
-  <li>Mail matching a Forward rule is handed to Cloudflare's native forwarder via <code>EmailMessage.forward()</code> — original <code>From</code>, <code>To</code>, DKIM, and attachments are preserved as-received. A <code>Reply-To: reply+&lt;uuid&gt;@yourdomain.com</code> header is overlaid so replies route through the proxy</li>
-  <li>Your replies to that reverse-alias are routed back to the original sender so your real address never leaves your inbox</li>
+  <li>A Forward rule can fan out to multiple destinations of mixed kinds: email, Telegram chat, Discord channel</li>
+  <li>For email destinations: Cloudflare's native <code>EmailMessage.forward()</code> preserves original <code>From</code>/<code>To</code>/DKIM/attachments; a <code>Reply-To: reply+&lt;uuid&gt;@yourdomain.com</code> is overlaid so replies route back through the proxy</li>
+  <li>For Telegram/Discord: the bot posts the content to the chat; replies (Telegram's native reply, Discord's Reply button → modal) route back to the original sender via email</li>
 </ol>
 
 <h2>Built on</h2>
@@ -61,9 +61,10 @@ footer { margin-top: 3rem; padding-top: 1rem; border-top: 1px solid var(--border
   <li><strong>Cloudflare Workers</strong> — Rust compiled to WebAssembly</li>
   <li><strong>Email Routing</strong> — inbound email, <code>EmailMessage.forward()</code> for the Forward action, and destination-address verification</li>
   <li><strong>Email Service</strong> — outbound reverse-alias replies (where the recipient isn't in Destination Addresses)</li>
-  <li><strong>KV</strong> — ordered rule list and reverse-alias mappings</li>
+  <li><strong>KV</strong> — ordered rule list, reverse-alias mappings, per-message bot reply contexts</li>
   <li><strong>Cloudflare Access</strong> — protects the admin UI on <code>/manage</code></li>
   <li><strong>HTMX</strong> — lightweight admin management page</li>
+  <li><a href="https://github.com/ananthb/botrelay-rs"><strong>botrelay-rs</strong></a> — shared crate: Telegram + Discord bot clients, Ed25519 interaction verification, reply-context types</li>
 </ul>
 
 <h2>Documentation</h2>
