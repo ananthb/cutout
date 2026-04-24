@@ -53,18 +53,7 @@ pub async fn handle_email(
     let matched_rule = routing::find_matching_rule(&rules, &local, &domain);
 
     match matched_rule {
-        Some(rule) => {
-            execute_action(
-                &rule.action,
-                &rule.label,
-                from,
-                to,
-                &parsed,
-                &kv_store,
-                &domain,
-            )
-            .await
-        }
+        Some(rule) => execute_action(&rule.action, &rule.label, from, to, &kv_store, &domain).await,
         None => {
             // Should not happen if catch-all exists, but handle gracefully
             console_log!("No matching rule for {to}, dropping");
@@ -79,7 +68,6 @@ async fn execute_action(
     rule_label: &str,
     from: &str,
     to: &str,
-    parsed: &Option<mime::ParsedEmail>,
     kv_store: &worker::kv::KvStore,
     domain: &str,
 ) -> Result<EmailResult> {
@@ -90,72 +78,41 @@ async fn execute_action(
         }
 
         Action::Forward { destinations } => {
-            let parsed = match parsed {
-                Some(p) => p,
-                None => return Ok(EmailResult::Reject("Failed to parse email".into())),
-            };
-
-            let mut emails = Vec::with_capacity(destinations.len());
-
+            // EmailMessage.forward() is single-destination per message. Pick
+            // the first verified destination; warn if more were configured.
+            let mut picked: Option<String> = None;
             for destination in destinations {
-                if !kv::is_verified(kv_store, destination).await? {
-                    console_log!(
-                        "Skipping unverified destination {destination} (rule: {rule_label})"
-                    );
-                    continue;
+                if kv::is_verified(kv_store, destination).await? {
+                    picked = Some(destination.clone());
+                    break;
                 }
-
-                let reverse_addr = forward::generate_reverse_address(domain);
-
-                // Save reverse alias for reply routing
-                let reverse_alias = ReverseAlias {
-                    alias: to.to_string(),
-                    original_sender: from.to_string(),
-                };
-                kv::save_reverse_alias(kv_store, &reverse_addr, &reverse_alias).await?;
-
+                console_log!("Skipping unverified destination {destination} (rule: {rule_label})");
+            }
+            let destination = match picked {
+                Some(d) => d,
+                None => return Ok(EmailResult::Drop),
+            };
+            if destinations.len() > 1 {
                 console_log!(
-                    "Forwarding from {from} to {destination} via {to} (rule: {rule_label})"
+                    "Rule {rule_label} has {} destinations; forwarding only to {destination} (message.forward is single-destination)",
+                    destinations.len()
                 );
-
-                emails.push(forwarded_email(parsed, &reverse_addr, destination, from));
             }
 
-            if emails.is_empty() {
-                Ok(EmailResult::Drop)
-            } else {
-                Ok(EmailResult::Send(emails))
-            }
+            let reverse_addr = forward::generate_reverse_address(domain);
+            let reverse_alias = ReverseAlias {
+                alias: to.to_string(),
+                original_sender: from.to_string(),
+            };
+            kv::save_reverse_alias(kv_store, &reverse_addr, &reverse_alias).await?;
+
+            console_log!("Forwarding from {from} to {destination} via {to} (rule: {rule_label})");
+
+            Ok(EmailResult::Forward(ForwardInstruction {
+                destination,
+                reply_to: reverse_addr,
+            }))
         }
-    }
-}
-
-/// Build the structured outbound message for a forwarded email.
-fn forwarded_email(
-    parsed: &mime::ParsedEmail,
-    reverse_addr: &str,
-    destination: &str,
-    original_from: &str,
-) -> OutboundEmail {
-    let mut headers: Vec<(String, String)> = vec![
-        ("X-Cutout-Forwarded".to_string(), "1".to_string()),
-        ("X-Original-From".to_string(), original_from.to_string()),
-    ];
-    if let Some(msg_id) = &parsed.message_id {
-        headers.push(("In-Reply-To".to_string(), msg_id.clone()));
-    }
-    if let Some(refs) = &parsed.references {
-        headers.push(("References".to_string(), refs.clone()));
-    }
-
-    OutboundEmail {
-        from: reverse_addr.to_string(),
-        to: destination.to_string(),
-        subject: parsed.subject.clone(),
-        text: parsed.text_body.clone(),
-        html: parsed.html_body.clone(),
-        reply_to: Some(reverse_addr.to_string()),
-        headers,
     }
 }
 

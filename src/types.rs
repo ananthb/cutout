@@ -54,12 +54,26 @@ pub struct OutboundEmail {
     pub headers: Vec<(String, String)>,
 }
 
+/// Instruction to Cloudflare to forward the inbound message via the native
+/// `EmailMessage.forward()` call. This preserves the original From/To/DKIM
+/// and everything else — exactly what CF's built-in email forwarder does.
+/// The destination must be verified in the zone's Email Routing
+/// "Destination Addresses" list.
+pub struct ForwardInstruction {
+    pub destination: String,
+    /// Reply-To to overlay so recipient replies route back through the proxy.
+    pub reply_to: String,
+}
+
 /// Result of email processing — drives action in the wasm_bindgen email() export.
 pub enum EmailResult {
     /// Silently drop the email.
     Drop,
     /// Reject the email with an SMTP error message.
     Reject(String),
-    /// Send one or more emails via the send_email binding.
+    /// Hand the inbound message to Cloudflare's native forwarder.
+    Forward(ForwardInstruction),
+    /// Send one or more new emails via the send_email binding (used by the
+    /// reverse-alias reply path, where there's no inbound bytes to preserve).
     Send(Vec<OutboundEmail>),
 }

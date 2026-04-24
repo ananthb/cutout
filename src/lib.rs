@@ -51,6 +51,18 @@ extern "C" {
 
     #[wasm_bindgen(method, js_name = "setReject")]
     fn set_reject(this: &IncomingEmailMessage, reason: &str);
+
+    /// `forward(rcptTo, headers)` hands the inbound message to Cloudflare's
+    /// native forwarder, preserving original From/To/DKIM/attachments.
+    /// Optional `headers` are overlaid (e.g. Reply-To for proxied replies).
+    /// The destination must be verified in the zone's Email Routing
+    /// "Destination Addresses" list.
+    #[wasm_bindgen(method)]
+    fn forward(
+        this: &IncomingEmailMessage,
+        rcpt_to: &str,
+        headers: &web_sys::Headers,
+    ) -> js_sys::Promise;
 }
 
 #[wasm_bindgen]
@@ -90,6 +102,21 @@ pub async fn email(
         .map_err(|e| JsValue::from_str(&format!("Email handler error: {e}")))?;
 
     match result {
+        types::EmailResult::Forward(instr) => {
+            // Hand the inbound message to Cloudflare's native forwarder.
+            // Overlay a Reply-To header so recipient replies route back through
+            // our reverse-alias instead of going to the original sender directly.
+            let headers = web_sys::Headers::new()
+                .map_err(|e| JsValue::from_str(&format!("Headers::new: {e:?}")))?;
+            headers
+                .set("Reply-To", &instr.reply_to)
+                .map_err(|e| JsValue::from_str(&format!("set Reply-To: {e:?}")))?;
+            headers
+                .set("X-Cutout-Forwarded", "1")
+                .map_err(|e| JsValue::from_str(&format!("set X-Cutout-Forwarded: {e:?}")))?;
+            let promise = message.forward(&instr.destination, &headers);
+            wasm_bindgen_futures::JsFuture::from(promise).await?;
+        }
         types::EmailResult::Send(emails) => {
             for outbound in &emails {
                 email::send::send_outbound(&worker_env, outbound)
