@@ -44,8 +44,10 @@ extern "C" {
     #[wasm_bindgen(method, getter)]
     fn to(this: &IncomingEmailMessage) -> String;
 
+    /// `raw` is a ReadableStream of the message's RFC 2822 bytes — NOT a Promise.
+    /// Treating it as a Promise (awaiting it) hangs forever.
     #[wasm_bindgen(method, getter)]
-    fn raw(this: &IncomingEmailMessage) -> js_sys::Promise;
+    fn raw(this: &IncomingEmailMessage) -> web_sys::ReadableStream;
 
     #[wasm_bindgen(method, js_name = "setReject")]
     fn set_reject(this: &IncomingEmailMessage, reason: &str);
@@ -67,13 +69,19 @@ pub async fn email(
     let to = message.to();
     console_log!("email from={from} to={to}");
 
-    // Read the raw email bytes
-    let raw_promise = message.raw();
-    let raw_value = wasm_bindgen_futures::JsFuture::from(raw_promise).await?;
-    let uint8 = js_sys::Uint8Array::new(&raw_value);
+    // `message.raw` is a ReadableStream. Wrap it in a Response to consume the
+    // bytes — `Response#arrayBuffer()` reads the stream to completion.
+    let raw_stream = message.raw();
+    let response = web_sys::Response::new_with_opt_readable_stream(Some(&raw_stream))
+        .map_err(|e| JsValue::from_str(&format!("Response from raw stream: {e:?}")))?;
+    let buf_promise = response
+        .array_buffer()
+        .map_err(|e| JsValue::from_str(&format!("arrayBuffer: {e:?}")))?;
+    let buf_value = wasm_bindgen_futures::JsFuture::from(buf_promise).await?;
+    let uint8 = js_sys::Uint8Array::new(&buf_value);
     let mut raw_bytes = vec![0u8; uint8.length() as usize];
     uint8.copy_to(&mut raw_bytes);
-    console_log!("email raw bytes={} ", raw_bytes.len());
+    console_log!("email raw bytes={}", raw_bytes.len());
 
     let worker_env: Env = env.into();
 
