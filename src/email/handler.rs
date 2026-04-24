@@ -201,11 +201,17 @@ fn structured_forward_email(
     let text = parsed.and_then(|p| p.text_body.clone());
     let html = parsed.and_then(|p| p.html_body.clone());
 
-    // Use the original sender's name as a display name so the inbox shows
-    // "Alice <reply+uuid@domain.com>" instead of just the alias.
-    let from = match parsed.and_then(|p| p.from_name.as_ref()) {
-        Some(name) => format!("{} <{}>", name, reverse_addr),
-        None => reverse_addr.to_string(),
+    // Use the original sender's name and email as a display name so the inbox
+    // shows "Alice (alice@example.org) <reply+uuid@domain.com>" instead of
+    // just the alias.
+    let from = match (
+        parsed.and_then(|p| p.from_name.as_ref()),
+        parsed.and_then(|p| p.from_address.as_ref()),
+    ) {
+        (Some(name), Some(addr)) => format!("{} ({}) <{}>", name, addr, reverse_addr),
+        (Some(name), None) => format!("{} <{}>", name, reverse_addr),
+        (None, Some(addr)) => format!("{} <{}>", addr, reverse_addr),
+        (None, None) => reverse_addr.to_string(),
     };
 
     OutboundEmail {
@@ -274,6 +280,7 @@ mod tests {
     fn test_structured_forward_display_name() {
         let parsed = mime::ParsedEmail {
             from_name: Some("Alice".to_string()),
+            from_address: Some("alice@example.org".to_string()),
             subject: "Hello".to_string(),
             message_id: Some("msg123".to_string()),
             references: None,
@@ -287,8 +294,11 @@ mod tests {
         let outbound =
             structured_forward_email(Some(&parsed), reverse_addr, destination, original_from);
 
-        // Should use display name from header + the reverse alias address
-        assert_eq!(outbound.from, "Alice <reply+abc@proxy.com>");
+        // Should use display name from header + original email + the reverse alias address
+        assert_eq!(
+            outbound.from,
+            "Alice (alice@example.org) <reply+abc@proxy.com>"
+        );
         assert_eq!(outbound.reply_to, Some(reverse_addr.to_string()));
     }
 
@@ -296,6 +306,7 @@ mod tests {
     fn test_structured_forward_no_name() {
         let parsed = mime::ParsedEmail {
             from_name: None,
+            from_address: Some("alice@example.org".to_string()),
             subject: "Hello".to_string(),
             message_id: None,
             references: None,
@@ -309,7 +320,29 @@ mod tests {
             "alice@example.org",
         );
 
-        // Should fall back to just the address if no display name is present
+        // Should fall back to original address as display name
+        assert_eq!(outbound.from, "alice@example.org <reply@proxy.com>");
+    }
+
+    #[test]
+    fn test_structured_forward_no_metadata() {
+        let parsed = mime::ParsedEmail {
+            from_name: None,
+            from_address: None,
+            subject: "Hello".to_string(),
+            message_id: None,
+            references: None,
+            text_body: None,
+            html_body: None,
+        };
+        let outbound = structured_forward_email(
+            Some(&parsed),
+            "reply@proxy.com",
+            "me@home.com",
+            "alice@example.org",
+        );
+
+        // Should fall back to just the address
         assert_eq!(outbound.from, "reply@proxy.com");
     }
 }
