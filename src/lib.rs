@@ -13,14 +13,20 @@
 //! ## Architecture
 //!
 //! - All config lives in KV — no database needed
-//! - `email` — Inbound/outbound email handling and MIME rewriting
+//! - `email` — Inbound/outbound email handling
 //! - `manage` — HTMX-based management UI behind Cloudflare Access
-//! - `verify` — Destination email verification (public `/verify/{token}` route)
+//!
+//! ## Destination verification
+//!
+//! Destination addresses must be verified via Cloudflare Email Routing's
+//! "Destination Addresses" list (dashboard → Email → Email Routing →
+//! Destination Addresses). `message.forward()` enforces this at runtime.
+//! Cutout itself doesn't run a verification flow.
 //!
 //! ## Routes
 //!
-//! Only `/manage/*` is protected by the Cloudflare Access application.
-//! Everything else (`/`, `/health`, `/verify/{token}`) is public.
+//! `/manage/*` is protected by the Cloudflare Access application; `/` and
+//! `/health` are public.
 
 use wasm_bindgen::prelude::*;
 use worker::*;
@@ -30,7 +36,6 @@ mod helpers;
 pub mod kv;
 mod manage;
 mod types;
-mod verify;
 
 // --- Email event handler via wasm_bindgen ---
 
@@ -72,14 +77,9 @@ pub async fn email(
     _ctx: JsValue,
 ) -> std::result::Result<(), JsValue> {
     console_error_panic_hook::set_once();
-    console_log!(
-        "email handler entered (env undefined? {})",
-        env.is_undefined()
-    );
 
     let from = message.from();
     let to = message.to();
-    console_log!("email from={from} to={to}");
 
     // `message.raw` is a ReadableStream. Wrap it in a Response to consume the
     // bytes — `Response#arrayBuffer()` reads the stream to completion.
@@ -93,7 +93,6 @@ pub async fn email(
     let uint8 = js_sys::Uint8Array::new(&buf_value);
     let mut raw_bytes = vec![0u8; uint8.length() as usize];
     uint8.copy_to(&mut raw_bytes);
-    console_log!("email raw bytes={}", raw_bytes.len());
 
     let worker_env: Env = env.into();
 
@@ -150,14 +149,6 @@ async fn fetch(req: Request, env: Env, _ctx: Context) -> Result<Response> {
             Ok(Response::empty()?.with_status(302).with_headers(headers))
         }
         "/health" => Response::ok("OK"),
-        // Public — the Access application is scoped to /manage/* only.
-        p if p.starts_with("/verify/") => {
-            let token = p.strip_prefix("/verify/").unwrap_or("");
-            if token.is_empty() || token.contains('/') {
-                return Response::error("Not Found", 404);
-            }
-            verify::handle_verify(&env, token).await
-        }
         p if p.starts_with("/manage") => manage::handle_manage(req, env, p, method).await,
         _ => Response::error("Not Found", 404),
     }

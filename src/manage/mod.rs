@@ -30,9 +30,6 @@ pub async fn handle_manage(req: Request, env: Env, path: &str, method: Method) -
         // POST /manage/rules/reorder — move rule up/down
         (Method::Post, ["rules", "reorder"]) => handlers::reorder_rules(req, &env).await,
 
-        // POST /manage/verify/resend — resend a verification email
-        (Method::Post, ["verify", "resend"]) => handlers::resend_verification(req, &env).await,
-
         // GET /manage/rules/{id}/edit — edit form partial
         (Method::Get, ["rules", id, "edit"]) => handlers::edit_form(&env, id).await,
 

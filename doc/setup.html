@@ -66,25 +66,30 @@ nix develop</code></pre>
 <p>Cutout is domain-agnostic — one worker can serve any number of zones. Just repeat this step per domain.</p>
 
 <h2>4. Onboard each domain to Cloudflare Email Service (outbound)</h2>
-<p>Email Routing's <code>send_email</code> binding on its own only delivers to pre-verified destinations. To let Cutout forward to anyone, onboard each sender domain to <strong>Email Service</strong>:</p>
+<p>The reverse-alias reply path sends mail to arbitrary original-sender addresses, which can't be pre-verified in Email Routing. Onboard each sender domain to <strong>Email Service</strong>:</p>
 <ol>
   <li>Dashboard &rarr; <strong>Email &rarr; Email Sending &rarr; Onboard Domain</strong></li>
   <li>Accept the DNS records (MX / SPF / DKIM / DMARC) on the <code>cf-bounce.&lt;yourdomain&gt;</code> subdomain. These are independent from any existing root-domain SPF/DKIM records you may use for another SMTP provider.</li>
 </ol>
 
-<h2>5. Configure Cloudflare Access on <code>/manage</code></h2>
-<p>Create an Access application whose policy covers <code>cutout.&lt;yourdomain&gt;/manage/*</code>. Only <code>/manage</code> should be protected — <code>/verify/&lt;token&gt;</code> must stay public so destination confirmation links work.</p>
+<h2>5. Verify your destination addresses</h2>
+<p>The Forward action uses <code>EmailMessage.forward()</code>, which requires each destination to be in your account's Cloudflare <strong>Email Routing → Destination Addresses</strong> list.</p>
+<ol>
+  <li>Dashboard &rarr; <strong>Email &rarr; Email Routing &rarr; Destination addresses</strong></li>
+  <li>Click <strong>Add destination address</strong> and enter the address (e.g. your real Gmail)</li>
+  <li>Cloudflare emails a confirmation link; click it</li>
+</ol>
+
+<h2>6. Configure Cloudflare Access on <code>/manage</code></h2>
+<p>Create an Access application whose policy covers <code>cutout.&lt;yourdomain&gt;/manage/*</code>. Only <code>/manage</code> should be protected.</p>
 <p>Set <code>CF_ACCESS_TEAM</code> (your Access team slug) and <code>CF_ACCESS_AUD</code> (the application AUD tag) in <code>wrangler.toml</code>.</p>
 
-<h2>6. Deploy</h2>
+<h2>7. Deploy</h2>
 <pre><code>wrangler deploy</code></pre>
 <p>Attach the worker's HTTP handler to whichever hostname you want <code>/manage</code> reachable on (Workers &rarr; your worker &rarr; Triggers &rarr; Custom Domain).</p>
 
-<h2>7. Write rules</h2>
-<p>Visit <code>https://&lt;your-cutout-host&gt;/manage</code> (authenticating via Access). Add Forward rules using glob patterns for the local and domain parts, e.g. <code>*@example.com</code> &rarr; <code>me@gmail.com</code>. First match wins; a <code>*@*</code> Drop catch-all is pinned at the bottom.</p>
-
-<h2>8. Verify destinations</h2>
-<p>Any new destination address on a Forward rule receives a one-time verification email from <code>verify@&lt;your-cutout-host&gt;</code>. Click the link in the email to confirm. Until a destination is verified, mail forwarded to it is silently dropped. The <code>/manage</code> UI shows a ✓ for verified destinations and a <em>resend</em> button for unverified ones.</p>
+<h2>8. Write rules</h2>
+<p>Visit <code>https://&lt;your-cutout-host&gt;/manage</code> (authenticating via Access). Add Forward rules using glob patterns for the local and domain parts, e.g. <code>*@example.com</code> &rarr; <code>me@gmail.com</code>. First match wins; a <code>*@*</code> Drop catch-all is pinned at the bottom. Destinations must already exist in the Destination Addresses list (step&nbsp;5) — otherwise <code>forward()</code> bounces at runtime.</p>
 
 <footer>
   <a href="./">Back to overview</a>

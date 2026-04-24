@@ -78,18 +78,13 @@ async fn execute_action(
         }
 
         Action::Forward { destinations } => {
-            // EmailMessage.forward() is single-destination per message. Pick
-            // the first verified destination; warn if more were configured.
-            let mut picked: Option<String> = None;
-            for destination in destinations {
-                if kv::is_verified(kv_store, destination).await? {
-                    picked = Some(destination.clone());
-                    break;
-                }
-                console_log!("Skipping unverified destination {destination} (rule: {rule_label})");
-            }
-            let destination = match picked {
-                Some(d) => d,
+            // EmailMessage.forward() is single-destination per message; take
+            // the first configured destination and warn if there are extras.
+            // Cloudflare rejects forward() if the destination isn't in the
+            // account's Email Routing Destination Addresses list — that's the
+            // verification check.
+            let destination = match destinations.first() {
+                Some(d) => d.clone(),
                 None => return Ok(EmailResult::Drop),
             };
             if destinations.len() > 1 {

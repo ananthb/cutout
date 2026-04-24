@@ -1,7 +1,5 @@
 //! HTML templates for the management UI.
 
-use std::collections::HashSet;
-
 use crate::helpers::html_escape;
 use crate::types::{Action, Rule};
 
@@ -112,11 +110,11 @@ pub fn base_html(title: &str, email: &str, content: &str) -> String {
 }
 
 /// Full rules management page.
-pub fn rules_page(rules: &[Rule], email: &str, verified: &HashSet<String>) -> String {
+pub fn rules_page(rules: &[Rule], email: &str) -> String {
     let rows: String = rules
         .iter()
         .enumerate()
-        .map(|(i, rule)| rule_row(rule, i, verified))
+        .map(|(i, rule)| rule_row(rule, i))
         .collect();
 
     let content = format!(
@@ -126,9 +124,10 @@ pub fn rules_page(rules: &[Rule], email: &str, verified: &HashSet<String>) -> St
 </div>
 <p style="color:var(--muted);font-size:0.85rem;margin-bottom:1.5rem">
   Rules are evaluated top-to-bottom. The first match wins. The <code>*@*</code> catch-all is always last.
-  Forwarding to a destination requires the address to be verified — check the inbox for a confirmation link.
+  Destinations must be verified in Cloudflare's
+  <a href="https://dash.cloudflare.com/?to=/:account/email/routing/routes" target="_blank">Email Routing → Destination Addresses</a>
+  list before mail can be forwarded to them.
 </p>
-<div id="toast"></div>
 <div id="rules-list" class="rule-list">
   <div class="rule-head">
     <div>#</div><div>Label</div><div>Pattern</div><div>Action</div><div></div>
@@ -143,31 +142,8 @@ pub fn rules_page(rules: &[Rule], email: &str, verified: &HashSet<String>) -> St
     base_html("Rules", email, &content)
 }
 
-/// Render a single Forward destination with its verification status.
-fn render_destination(email: &str, verified: &HashSet<String>) -> String {
-    let esc = html_escape(email);
-    if verified.contains(email) {
-        format!(r#"<span style="color:var(--ok)" title="Verified">{esc} ✓</span>"#)
-    } else {
-        let vals_json = serde_json::json!({ "email": email }).to_string();
-        let vals_attr = html_escape(&vals_json);
-        format!(
-            r##"<span style="color:var(--warn)" title="Not verified">{esc} <button class="btn sm" style="padding:1px 6px;font-size:0.7rem;margin-left:2px" hx-post="/manage/verify/resend" hx-vals='{vals_attr}' hx-target="#toast" hx-swap="innerHTML" hx-ext="json-enc">resend</button></span>"##
-        )
-    }
-}
-
-/// Render a toast message snippet (for HTMX swap into #toast).
-pub fn toast(kind: &str, message: &str) -> String {
-    format!(
-        r#"<div class="toast {kind}">{message}</div>"#,
-        kind = html_escape(kind),
-        message = html_escape(message)
-    )
-}
-
 /// Single rule row.
-pub fn rule_row(rule: &Rule, index: usize, verified: &HashSet<String>) -> String {
+pub fn rule_row(rule: &Rule, index: usize) -> String {
     let pattern = format!(
         "{}@{}",
         html_escape(&rule.local_pattern),
@@ -175,14 +151,15 @@ pub fn rule_row(rule: &Rule, index: usize, verified: &HashSet<String>) -> String
     );
 
     let (action_class, action_label, action_detail) = match &rule.action {
-        Action::Forward { destinations } => {
-            let detail = destinations
+        Action::Forward { destinations } => (
+            "action-forward",
+            "Forward",
+            destinations
                 .iter()
-                .map(|d| render_destination(d, verified))
+                .map(|d| html_escape(d))
                 .collect::<Vec<_>>()
-                .join(", ");
-            ("action-forward", "Forward", detail)
-        }
+                .join(", "),
+        ),
         Action::Drop => ("action-drop", "Drop", String::new()),
     };
 
@@ -248,11 +225,11 @@ pub fn rule_row(rule: &Rule, index: usize, verified: &HashSet<String>) -> String
 }
 
 /// Rules list partial (just the rows, for HTMX swap).
-pub fn rules_list_partial(rules: &[Rule], verified: &HashSet<String>) -> String {
+pub fn rules_list_partial(rules: &[Rule]) -> String {
     let rows: String = rules
         .iter()
         .enumerate()
-        .map(|(i, rule)| rule_row(rule, i, verified))
+        .map(|(i, rule)| rule_row(rule, i))
         .collect();
 
     format!(
