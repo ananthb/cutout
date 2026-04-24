@@ -58,9 +58,14 @@ pub async fn email(
     _ctx: JsValue,
 ) -> std::result::Result<(), JsValue> {
     console_error_panic_hook::set_once();
+    console_log!(
+        "email handler entered (env undefined? {})",
+        env.is_undefined()
+    );
 
     let from = message.from();
     let to = message.to();
+    console_log!("email from={from} to={to}");
 
     // Read the raw email bytes
     let raw_promise = message.raw();
@@ -68,6 +73,7 @@ pub async fn email(
     let uint8 = js_sys::Uint8Array::new(&raw_value);
     let mut raw_bytes = vec![0u8; uint8.length() as usize];
     uint8.copy_to(&mut raw_bytes);
+    console_log!("email raw bytes={} ", raw_bytes.len());
 
     let worker_env: Env = env.into();
 
