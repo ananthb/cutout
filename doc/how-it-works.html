@@ -91,7 +91,7 @@ footer { margin-top: 3rem; padding-top: 1rem; border-top: 1px solid var(--border
   <li><strong>Cloudflare Email Service</strong> — outbound: the same <code>send_email</code> binding, but with onboarded sender domains it can deliver to any recipient (no per-address verification at the Cloudflare level)</li>
   <li><strong>KV</strong> — stores the ordered rule list, reverse-alias mappings (30-day TTL), verified destinations, and pending verification tokens (24-hour TTL)</li>
   <li><strong>Cloudflare Access</strong> — protects <code>/manage</code> only; <code>/verify/&lt;token&gt;</code> and <code>/health</code> are public</li>
-  <li><strong>MIME rewriting</strong> — RFC 2822 header rewriting on both inbound forwards and reply-routing</li>
+  <li><strong>Structured outbound</strong> — incoming MIME is parsed into subject/text/html/headers and re-sent via Email Service's structured API rather than re-serialised. Threading headers (<code>In-Reply-To</code>, <code>References</code>) and the loop-detection header are passed through; exotic MIME structures and attachments are not preserved.</li>
 </ul>
 
 <h2>Multiple domains</h2>
