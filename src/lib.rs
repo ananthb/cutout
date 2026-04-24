@@ -31,11 +31,13 @@
 use wasm_bindgen::prelude::*;
 use worker::*;
 
+mod bots;
 mod email;
 mod helpers;
 pub mod kv;
 mod manage;
 mod types;
+mod validation;
 
 // --- Email event handler via wasm_bindgen ---
 
@@ -101,26 +103,28 @@ pub async fn email(
         .map_err(|e| JsValue::from_str(&format!("Email handler error: {e}")))?;
 
     match result {
-        types::EmailResult::Forward(instr) => {
-            // Hand the inbound message to Cloudflare's native forwarder.
-            // Overlay a Reply-To header so recipient replies route back through
-            // our reverse-alias instead of going to the original sender directly.
-            let headers = web_sys::Headers::new()
-                .map_err(|e| JsValue::from_str(&format!("Headers::new: {e:?}")))?;
-            headers
-                .set("Reply-To", &instr.reply_to)
-                .map_err(|e| JsValue::from_str(&format!("set Reply-To: {e:?}")))?;
-            headers
-                .set("X-Cutout-Forwarded", "1")
-                .map_err(|e| JsValue::from_str(&format!("set X-Cutout-Forwarded: {e:?}")))?;
-            let promise = message.forward(&instr.destination, &headers);
-            wasm_bindgen_futures::JsFuture::from(promise).await?;
-        }
-        types::EmailResult::Send(emails) => {
-            for outbound in &emails {
+        types::EmailResult::Dispatch(dispatch) => {
+            if let Some(instr) = &dispatch.forward_email {
+                let headers = web_sys::Headers::new()
+                    .map_err(|e| JsValue::from_str(&format!("Headers::new: {e:?}")))?;
+                headers
+                    .set("Reply-To", &instr.reply_to)
+                    .map_err(|e| JsValue::from_str(&format!("set Reply-To: {e:?}")))?;
+                headers
+                    .set("X-Cutout-Forwarded", "1")
+                    .map_err(|e| JsValue::from_str(&format!("set X-Cutout-Forwarded: {e:?}")))?;
+                let promise = message.forward(&instr.destination, &headers);
+                wasm_bindgen_futures::JsFuture::from(promise).await?;
+            }
+            for outbound in &dispatch.send_emails {
                 email::send::send_outbound(&worker_env, outbound)
                     .await
                     .map_err(|e| JsValue::from_str(&format!("send_outbound: {e}")))?;
+            }
+            for forward in &dispatch.bot_forwards {
+                if let Err(e) = bots::dispatch(&worker_env, forward).await {
+                    console_log!("bot dispatch failed: {e}");
+                }
             }
         }
         types::EmailResult::Reject(reason) => {
@@ -149,6 +153,12 @@ async fn fetch(req: Request, env: Env, _ctx: Context) -> Result<Response> {
             Ok(Response::empty()?.with_status(302).with_headers(headers))
         }
         "/health" => Response::ok("OK"),
+        "/telegram/webhook" if method == Method::Post => {
+            bots::handle_telegram_webhook(req, env).await
+        }
+        "/discord/interactions" if method == Method::Post => {
+            bots::handle_discord_interaction(req, env).await
+        }
         p if p.starts_with("/manage") => manage::handle_manage(req, env, p, method).await,
         _ => Response::error("Not Found", 404),
     }

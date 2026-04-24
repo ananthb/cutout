@@ -1,7 +1,8 @@
 //! HTML templates for the management UI.
 
 use crate::helpers::html_escape;
-use crate::types::{Action, Rule};
+use crate::types::{Action, Destination, Rule};
+use crate::validation::{Issue, Report};
 
 const CSS: &str = r##"
 :root {
@@ -78,6 +79,30 @@ h2 { font-size: 1.25rem; margin-bottom: 1rem; }
   .toast.error { background: #450a0a; color: #fecaca; }
 }
 .htmx-request .btn { opacity: 0.6; pointer-events: none; }
+.dest-tag { display: inline-block; padding: 1px 6px; border-radius: 4px;
+  font-family: ui-monospace, monospace; font-size: 0.75rem; margin-right: 4px; }
+.dest-email    { background: #dbeafe; color: #1e40af; }
+.dest-telegram { background: #e0f2fe; color: #075985; }
+.dest-discord  { background: #ede9fe; color: #5b21b6; }
+@media (prefers-color-scheme: dark) {
+  .dest-email    { background: #1e3a5f; color: #93bbfd; }
+  .dest-telegram { background: #0c4a6e; color: #7dd3fc; }
+  .dest-discord  { background: #3b2463; color: #c4b5fd; }
+}
+.issues { margin-top: 4px; display: flex; flex-direction: column; gap: 2px; }
+.issue { font-size: 0.75rem; padding: 2px 6px; border-radius: 3px; }
+.issue-err  { background: #fef2f2; color: #991b1b; }
+.issue-warn { background: #fef3c7; color: #92400e; }
+@media (prefers-color-scheme: dark) {
+  .issue-err  { background: #3b1111; color: #f87171; }
+  .issue-warn { background: #3a2a0a; color: #fbbf24; }
+}
+.form-group textarea { width: 100%; padding: 8px 10px; border: 1px solid var(--border);
+  border-radius: var(--r-sm); background: var(--bg); color: var(--fg); }
+.tester-result { border: 1px solid var(--border); border-radius: var(--r-md);
+  padding: 1rem; margin-top: 1rem; }
+.tester-result.matched { border-left: 3px solid var(--ok); }
+.tester-result.nomatch { border-left: 3px solid var(--warn); }
 @media (max-width: 640px) {
   .rule-row, .rule-head { grid-template-columns: 1fr; gap: 4px; }
   .form-row { grid-template-columns: 1fr; }
@@ -110,23 +135,32 @@ pub fn base_html(title: &str, email: &str, content: &str) -> String {
 }
 
 /// Full rules management page.
-pub fn rules_page(rules: &[Rule], email: &str) -> String {
+pub fn rules_page(rules: &[Rule], email: &str, report: &Report) -> String {
     let rows: String = rules
         .iter()
         .enumerate()
-        .map(|(i, rule)| rule_row(rule, i))
+        .map(|(i, rule)| {
+            rule_row(
+                rule,
+                i,
+                report.issues.get(i).map(|v| v.as_slice()).unwrap_or(&[]),
+            )
+        })
         .collect();
 
+    let nav = nav_links("rules");
+
     let content = format!(
-        r#"<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:1rem">
+        r#"{nav}
+<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:1rem">
   <h2 style="margin:0">Routing Rules</h2>
   <button class="btn primary" onclick="document.getElementById(&#39;add-form&#39;).style.display=&#39;block&#39;">Add Rule</button>
 </div>
 <p style="color:var(--muted);font-size:0.85rem;margin-bottom:1.5rem">
   Rules are evaluated top-to-bottom. The first match wins. The <code>*@*</code> catch-all is always last.
-  Destinations must be verified in Cloudflare's
+  Email destinations must be verified in Cloudflare's
   <a href="https://dash.cloudflare.com/?to=/:account/email/routing/routes" target="_blank">Email Routing → Destination Addresses</a>
-  list before mail can be forwarded to them.
+  list.
 </p>
 <div id="rules-list" class="rule-list">
   <div class="rule-head">
@@ -135,6 +169,7 @@ pub fn rules_page(rules: &[Rule], email: &str) -> String {
   {rows}
 </div>
 {add_form}"#,
+        nav = nav,
         rows = rows,
         add_form = add_rule_form(),
     );
@@ -142,8 +177,22 @@ pub fn rules_page(rules: &[Rule], email: &str) -> String {
     base_html("Rules", email, &content)
 }
 
-/// Single rule row.
-pub fn rule_row(rule: &Rule, index: usize) -> String {
+fn render_destinations(destinations: &[Destination]) -> String {
+    destinations
+        .iter()
+        .map(|d| {
+            format!(
+                r#"<span class="dest-tag dest-{kind}" title="{kind}">{kind}:{value}</span>"#,
+                kind = d.kind_label(),
+                value = html_escape(d.value()),
+            )
+        })
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
+/// Single rule row. `issues` is the validation report for this rule only.
+pub fn rule_row(rule: &Rule, index: usize, issues: &[Issue]) -> String {
     let pattern = format!(
         "{}@{}",
         html_escape(&rule.local_pattern),
@@ -154,11 +203,7 @@ pub fn rule_row(rule: &Rule, index: usize) -> String {
         Action::Forward { destinations } => (
             "action-forward",
             "Forward",
-            destinations
-                .iter()
-                .map(|d| html_escape(d))
-                .collect::<Vec<_>>()
-                .join(", "),
+            render_destinations(destinations),
         ),
         Action::Drop => ("action-drop", "Drop", String::new()),
     };
@@ -205,10 +250,27 @@ pub fn rule_row(rule: &Rule, index: usize) -> String {
         )
     };
 
+    let issues_html = if issues.is_empty() {
+        String::new()
+    } else {
+        let lines: String = issues
+            .iter()
+            .map(|i| {
+                let class = if i.is_error() { "err" } else { "warn" };
+                format!(
+                    r#"<div class="issue issue-{class}">{msg}</div>"#,
+                    class = class,
+                    msg = html_escape(i.message())
+                )
+            })
+            .collect();
+        format!(r#"<div class="issues">{lines}</div>"#)
+    };
+
     format!(
         r#"<div class="{row_class}">
   <div class="order">{order}</div>
-  <div>{label}</div>
+  <div>{label}{issues}</div>
   <div class="pattern"><code>{pattern}</code></div>
   <div>{action_html}</div>
   <div class="actions">{move_buttons}{edit_button}{delete_button}</div>
@@ -216,6 +278,7 @@ pub fn rule_row(rule: &Rule, index: usize) -> String {
         row_class = row_class,
         order = index + 1,
         label = html_escape(&rule.label),
+        issues = issues_html,
         pattern = pattern,
         action_html = action_html,
         move_buttons = move_buttons,
@@ -225,11 +288,17 @@ pub fn rule_row(rule: &Rule, index: usize) -> String {
 }
 
 /// Rules list partial (just the rows, for HTMX swap).
-pub fn rules_list_partial(rules: &[Rule]) -> String {
+pub fn rules_list_partial(rules: &[Rule], report: &Report) -> String {
     let rows: String = rules
         .iter()
         .enumerate()
-        .map(|(i, rule)| rule_row(rule, i))
+        .map(|(i, rule)| {
+            rule_row(
+                rule,
+                i,
+                report.issues.get(i).map(|v| v.as_slice()).unwrap_or(&[]),
+            )
+        })
         .collect();
 
     format!(
@@ -241,42 +310,75 @@ pub fn rules_list_partial(rules: &[Rule]) -> String {
     )
 }
 
+/// Navigation links at the top of every manage page.
+fn nav_links(current: &str) -> String {
+    fn link(href: &str, label: &str, active: bool) -> String {
+        let style = if active {
+            "color:var(--fg);font-weight:600"
+        } else {
+            "color:var(--muted)"
+        };
+        format!(r#"<a href="{href}" style="{style};margin-right:1rem">{label}</a>"#)
+    }
+    format!(
+        r#"<nav style="margin-bottom:1.5rem;font-size:0.9rem">{rules}{test}</nav>"#,
+        rules = link("/manage", "Rules", current == "rules"),
+        test = link("/manage/test", "Rule tester", current == "test"),
+    )
+}
+
+const DEST_PLACEHOLDER: &str =
+    "email:you@example.com\ntelegram:-100123456789\ndiscord:987654321098765432";
+
 /// Add rule form (hidden by default).
 fn add_rule_form() -> String {
-    let mut s = String::new();
-    s.push_str(r#"<div id="add-form" class="form-card" style="display:none">"#);
-    s.push_str(r#"<h3 style="margin-bottom:1rem">Add Rule</h3>"#);
-    s.push_str(r##"<form hx-post="/manage/rules" hx-target="#rules-list" hx-swap="innerHTML" hx-ext="json-enc">"##);
-    s.push_str(r#"<div class="form-group"><label for="label">Label</label>"#);
-    s.push_str(r#"<input id="label" name="label" type="text" placeholder="e.g. Newsletter drop" required></div>"#);
-    s.push_str(r#"<div class="form-row"><div class="form-group">"#);
-    s.push_str(r#"<label for="local_pattern">Local part pattern</label>"#);
-    s.push_str(r#"<input id="local_pattern" name="local_pattern" type="text" placeholder="*" value="*" required>"#);
-    s.push_str(
-        r#"<div class="form-help">The part before @. Use <code>*</code> for any.</div></div>"#,
-    );
-    s.push_str(r#"<div class="form-group"><label for="domain_pattern">Domain pattern</label>"#);
-    s.push_str(r#"<input id="domain_pattern" name="domain_pattern" type="text" placeholder="*" value="*" required>"#);
-    s.push_str(
-        r#"<div class="form-help">The part after @. Use <code>*</code> for any.</div></div></div>"#,
-    );
-    s.push_str(r#"<div class="form-group"><label for="action_type">Action</label>"#);
-    s.push_str(r#"<select id="action_type" name="action_type" "#);
-    s.push_str(r#"onchange="document.getElementById(&#39;dest-group&#39;).style.display=this.value===&#39;forward&#39;?&#39;block&#39;:&#39;none&#39;">"#);
-    s.push_str(r#"<option value="forward">Forward</option><option value="drop">Drop</option></select></div>"#);
-    s.push_str(r#"<div class="form-group" id="dest-group"><label for="destinations">Forward to (comma-separated)</label>"#);
-    s.push_str(r#"<input id="destinations" name="destinations" type="text" placeholder="me@example.com, backup@example.com"></div>"#);
-    s.push_str(r#"<div style="display:flex;gap:8px">"#);
-    s.push_str(r#"<button type="submit" class="btn primary">Add Rule</button>"#);
-    s.push_str(r#"<button type="button" class="btn" onclick="document.getElementById(&#39;add-form&#39;).style.display=&#39;none&#39;">Cancel</button>"#);
-    s.push_str(r#"</div></form></div><div id="edit-area"></div>"#);
-    s
+    format!(
+        r##"<div id="add-form" class="form-card" style="display:none">
+  <h3 style="margin-bottom:1rem">Add Rule</h3>
+  <form hx-post="/manage/rules" hx-target="#rules-list" hx-swap="innerHTML" hx-ext="json-enc">
+    <div class="form-group">
+      <label for="label">Label</label>
+      <input id="label" name="label" type="text" placeholder="e.g. Newsletter drop" required>
+    </div>
+    <div class="form-row">
+      <div class="form-group">
+        <label for="local_pattern">Local part pattern</label>
+        <input id="local_pattern" name="local_pattern" type="text" placeholder="*" value="*" required>
+        <div class="form-help">The part before @. Use <code>*</code> for any.</div>
+      </div>
+      <div class="form-group">
+        <label for="domain_pattern">Domain pattern</label>
+        <input id="domain_pattern" name="domain_pattern" type="text" placeholder="*" value="*" required>
+        <div class="form-help">The part after @. Use <code>*</code> for any.</div>
+      </div>
+    </div>
+    <div class="form-group">
+      <label for="action_type">Action</label>
+      <select id="action_type" name="action_type" onchange="document.getElementById('dest-group').style.display=this.value==='forward'?'block':'none'">
+        <option value="forward">Forward</option>
+        <option value="drop">Drop</option>
+      </select>
+    </div>
+    <div class="form-group" id="dest-group">
+      <label for="destinations">Destinations (one per line)</label>
+      <textarea id="destinations" name="destinations" rows="3" placeholder="{placeholder}" style="font-family:ui-monospace,monospace;font-size:0.85rem"></textarea>
+      <div class="form-help">One <code>kind:value</code> per line. Kinds: <code>email</code>, <code>telegram</code>, <code>discord</code>.</div>
+    </div>
+    <div style="display:flex;gap:8px">
+      <button type="submit" class="btn primary">Add Rule</button>
+      <button type="button" class="btn" onclick="document.getElementById('add-form').style.display='none'">Cancel</button>
+    </div>
+  </form>
+</div>
+<div id="edit-area"></div>"##,
+        placeholder = html_escape(DEST_PLACEHOLDER),
+    )
 }
 
 /// Edit rule form partial (returned for HTMX swap into #edit-area).
 pub fn edit_rule_form(rule: &Rule) -> String {
     let (action_type, destinations) = match &rule.action {
-        Action::Forward { destinations } => ("forward", destinations.join(", ")),
+        Action::Forward { destinations } => ("forward", Destination::format_list(destinations)),
         Action::Drop => ("drop", String::new()),
     };
     let dest_display = if action_type == "forward" {
@@ -296,27 +398,40 @@ pub fn edit_rule_form(rule: &Rule) -> String {
     };
 
     format!(
-        "<div class=\"form-card\">\
-<h3 style=\"margin-bottom:1rem\">Edit Rule</h3>\
-<form hx-put=\"/manage/rules/{id}\" hx-target=\"#rules-list\" hx-swap=\"innerHTML\" hx-ext=\"json-enc\">\
-<div class=\"form-group\"><label for=\"edit-label\">Label</label>\
-<input id=\"edit-label\" name=\"label\" type=\"text\" value=\"{label}\" required></div>\
-<div class=\"form-row\"><div class=\"form-group\">\
-<label for=\"edit-local\">Local part pattern</label>\
-<input id=\"edit-local\" name=\"local_pattern\" type=\"text\" value=\"{local}\" required></div>\
-<div class=\"form-group\"><label for=\"edit-domain\">Domain pattern</label>\
-<input id=\"edit-domain\" name=\"domain_pattern\" type=\"text\" value=\"{domain}\" required></div></div>\
-<div class=\"form-group\"><label for=\"edit-action\">Action</label>\
-<select id=\"edit-action\" name=\"action_type\" onchange=\"document.getElementById(&#39;edit-dest-group&#39;).style.display=this.value===&#39;forward&#39;?&#39;block&#39;:&#39;none&#39;\">\
-<option value=\"forward\"{forward_selected}>Forward</option>\
-<option value=\"drop\"{drop_selected}>Drop</option></select></div>\
-<div class=\"form-group\" id=\"edit-dest-group\" style=\"display:{dest_display}\">\
-<label for=\"edit-destinations\">Forward to (comma-separated)</label>\
-<input id=\"edit-destinations\" name=\"destinations\" type=\"text\" value=\"{destinations}\"></div>\
-<div style=\"display:flex;gap:8px\">\
-<button type=\"submit\" class=\"btn primary\">Save</button>\
-<button type=\"button\" class=\"btn\" onclick=\"document.getElementById(&#39;edit-area&#39;).innerHTML=&#39;&#39;\">Cancel</button>\
-</div></form></div>",
+        r##"<div class="form-card">
+  <h3 style="margin-bottom:1rem">Edit Rule</h3>
+  <form hx-put="/manage/rules/{id}" hx-target="#rules-list" hx-swap="innerHTML" hx-ext="json-enc">
+    <div class="form-group">
+      <label for="edit-label">Label</label>
+      <input id="edit-label" name="label" type="text" value="{label}" required>
+    </div>
+    <div class="form-row">
+      <div class="form-group">
+        <label for="edit-local">Local part pattern</label>
+        <input id="edit-local" name="local_pattern" type="text" value="{local}" required>
+      </div>
+      <div class="form-group">
+        <label for="edit-domain">Domain pattern</label>
+        <input id="edit-domain" name="domain_pattern" type="text" value="{domain}" required>
+      </div>
+    </div>
+    <div class="form-group">
+      <label for="edit-action">Action</label>
+      <select id="edit-action" name="action_type" onchange="document.getElementById('edit-dest-group').style.display=this.value==='forward'?'block':'none'">
+        <option value="forward"{forward_selected}>Forward</option>
+        <option value="drop"{drop_selected}>Drop</option>
+      </select>
+    </div>
+    <div class="form-group" id="edit-dest-group" style="display:{dest_display}">
+      <label for="edit-destinations">Destinations (one per line)</label>
+      <textarea id="edit-destinations" name="destinations" rows="4" style="font-family:ui-monospace,monospace;font-size:0.85rem">{destinations}</textarea>
+    </div>
+    <div style="display:flex;gap:8px">
+      <button type="submit" class="btn primary">Save</button>
+      <button type="button" class="btn" onclick="document.getElementById('edit-area').innerHTML=''">Cancel</button>
+    </div>
+  </form>
+</div>"##,
         id = html_escape(&rule.id),
         label = html_escape(&rule.label),
         local = html_escape(&rule.local_pattern),
@@ -326,4 +441,74 @@ pub fn edit_rule_form(rule: &Rule) -> String {
         dest_display = dest_display,
         destinations = html_escape(&destinations),
     )
+}
+
+/// Result of running the rule tester.
+pub struct TesterResult {
+    pub to: String,
+    pub matched_index: Option<usize>,
+}
+
+/// Rule tester page.
+pub fn tester_page(rules: &[Rule], email: &str, result: Option<TesterResult>) -> String {
+    let nav = nav_links("test");
+    let result_html = match result {
+        None => String::new(),
+        Some(r) => {
+            let to_esc = html_escape(&r.to);
+            match r.matched_index {
+                Some(idx) => {
+                    let rule = &rules[idx];
+                    let action_detail = match &rule.action {
+                        Action::Forward { destinations } => {
+                            format!(
+                                "Forward to {}",
+                                destinations
+                                    .iter()
+                                    .map(|d| format!("{}:{}", d.kind_label(), d.value()))
+                                    .collect::<Vec<_>>()
+                                    .join(", ")
+                            )
+                        }
+                        Action::Drop => "Drop".to_string(),
+                    };
+                    format!(
+                        r#"<div class="tester-result matched">
+<p>Input: <code>{to}</code></p>
+<p>Matched <strong>rule {n}</strong>: <em>{label}</em> ({pattern})</p>
+<p>Action: {action}</p>
+</div>"#,
+                        to = to_esc,
+                        n = idx + 1,
+                        label = html_escape(&rule.label),
+                        pattern =
+                            html_escape(&format!("{}@{}", rule.local_pattern, rule.domain_pattern)),
+                        action = html_escape(&action_detail),
+                    )
+                }
+                None => format!(
+                    r#"<div class="tester-result nomatch"><p>No rule matches <code>{to}</code>.</p></div>"#,
+                    to = to_esc
+                ),
+            }
+        }
+    };
+
+    let content = format!(
+        r##"{nav}
+<h2>Rule tester</h2>
+<p style="color:var(--muted);font-size:0.85rem;margin-bottom:1rem">Enter an inbound recipient address. The tester runs the configured rule set against it and shows which rule would fire.</p>
+<form hx-post="/manage/test" hx-target="#tester-target" hx-swap="innerHTML" hx-ext="json-enc">
+  <div class="form-group">
+    <label for="to">Inbound address</label>
+    <input id="to" name="to" type="text" placeholder="shop.swizzles@kedi.dev" required>
+  </div>
+  <button type="submit" class="btn primary">Test</button>
+</form>
+<div id="tester-target">{result}</div>"##,
+        nav = nav,
+        result = result_html,
+    );
+
+    base_html("Rule tester", email, &content)
 }

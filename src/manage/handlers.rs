@@ -1,11 +1,13 @@
-//! CRUD handlers for routing rules.
+//! CRUD handlers for routing rules plus the rule tester.
 
 use worker::*;
 
 use super::templates;
+use crate::email::routing;
 use crate::helpers::generate_id;
 use crate::kv;
 use crate::types::*;
+use crate::validation;
 
 /// Ensure the rules list has a catch-all as the last rule.
 /// If empty, creates a default catch-all with Drop action.
@@ -25,8 +27,9 @@ async fn ensure_catch_all(kv_store: &worker::kv::KvStore) -> Result<Vec<Rule>> {
     Ok(rules)
 }
 
-/// Parse an Action from form JSON. Email addresses are lowercased.
-fn parse_action(form: &serde_json::Value) -> Action {
+/// Parse an Action from form JSON. The `destinations` field is a
+/// newline-separated list of `kind:value` lines (see [`Destination::parse_list`]).
+fn parse_action(form: &serde_json::Value) -> std::result::Result<Action, String> {
     let action_type = form
         .get("action_type")
         .and_then(|v| v.as_str())
@@ -34,31 +37,48 @@ fn parse_action(form: &serde_json::Value) -> Action {
 
     match action_type {
         "forward" => {
-            let destinations: Vec<String> = form
+            let raw = form
                 .get("destinations")
                 .and_then(|v| v.as_str())
-                .unwrap_or("")
-                .split(',')
-                .map(|s| s.trim().to_lowercase())
-                .filter(|s| !s.is_empty())
-                .collect();
-            Action::Forward { destinations }
+                .unwrap_or("");
+            let destinations = Destination::parse_list(raw)?;
+            Ok(Action::Forward { destinations })
         }
-        _ => Action::Drop,
+        _ => Ok(Action::Drop),
     }
+}
+
+fn render_rules(rules: &[Rule]) -> String {
+    let report = validation::validate(rules);
+    templates::rules_list_partial(rules, &report)
+}
+
+/// If validation rejects the proposed rule set, return a 400 response with a
+/// human-readable error.
+fn validation_error_response(report: &validation::Report) -> Result<Response> {
+    let (i, msg) = report
+        .first_error()
+        .expect("caller checked has_errors first");
+    Response::error(format!("rule {}: {}", i + 1, msg), 400)
 }
 
 /// GET /manage — list rules
 pub async fn list_rules(env: &Env, email: &str) -> Result<Response> {
     let kv_store = env.kv("KV")?;
     let rules = ensure_catch_all(&kv_store).await?;
-    Response::from_html(templates::rules_page(&rules, email))
+    let report = validation::validate(&rules);
+    Response::from_html(templates::rules_page(&rules, email, &report))
 }
 
 /// POST /manage/rules — create a new rule (inserted before catch-all)
 pub async fn create_rule(mut req: Request, env: &Env) -> Result<Response> {
     let kv_store = env.kv("KV")?;
     let form: serde_json::Value = req.json().await?;
+
+    let action = match parse_action(&form) {
+        Ok(a) => a,
+        Err(e) => return Response::error(format!("destinations: {e}"), 400),
+    };
 
     let mut rules = ensure_catch_all(&kv_store).await?;
 
@@ -74,7 +94,7 @@ pub async fn create_rule(mut req: Request, env: &Env) -> Result<Response> {
             .and_then(|v| v.as_str())
             .unwrap_or("*")
             .to_string(),
-        action: parse_action(&form),
+        action,
         label: form
             .get("label")
             .and_then(|v| v.as_str())
@@ -82,17 +102,16 @@ pub async fn create_rule(mut req: Request, env: &Env) -> Result<Response> {
             .to_string(),
     };
 
-    // Insert before the catch-all (last element)
-    let insert_pos = if !rules.is_empty() {
-        rules.len() - 1
-    } else {
-        0
-    };
+    let insert_pos = rules.len().saturating_sub(1);
     rules.insert(insert_pos, rule);
 
-    kv::save_rules(&kv_store, &rules).await?;
+    let report = validation::validate(&rules);
+    if report.has_errors() {
+        return validation_error_response(&report);
+    }
 
-    Response::from_html(templates::rules_list_partial(&rules))
+    kv::save_rules(&kv_store, &rules).await?;
+    Response::from_html(render_rules(&rules))
 }
 
 /// GET /manage/rules/{id}/edit — return edit form partial
@@ -110,6 +129,11 @@ pub async fn edit_form(env: &Env, rule_id: &str) -> Result<Response> {
 pub async fn update_rule(mut req: Request, env: &Env, rule_id: &str) -> Result<Response> {
     let kv_store = env.kv("KV")?;
     let form: serde_json::Value = req.json().await?;
+
+    let action = match parse_action(&form) {
+        Ok(a) => a,
+        Err(e) => return Response::error(format!("destinations: {e}"), 400),
+    };
 
     let mut rules = kv::get_rules(&kv_store).await?;
 
@@ -129,12 +153,16 @@ pub async fn update_rule(mut req: Request, env: &Env, rule_id: &str) -> Result<R
             .and_then(|v| v.as_str())
             .unwrap_or(&existing.domain_pattern)
             .to_string();
-        existing.action = parse_action(&form);
+        existing.action = action;
+    }
+
+    let report = validation::validate(&rules);
+    if report.has_errors() {
+        return validation_error_response(&report);
     }
 
     kv::save_rules(&kv_store, &rules).await?;
-
-    Response::from_html(templates::rules_list_partial(&rules))
+    Response::from_html(render_rules(&rules))
 }
 
 /// DELETE /manage/rules/{id} — delete a rule (blocked for catch-all)
@@ -142,7 +170,6 @@ pub async fn delete_rule(env: &Env, rule_id: &str) -> Result<Response> {
     let kv_store = env.kv("KV")?;
     let mut rules = kv::get_rules(&kv_store).await?;
 
-    // Block deletion of the catch-all
     if let Some(rule) = rules.iter().find(|r| r.id == rule_id) {
         if rule.is_catch_all() {
             return Response::error("Cannot delete the catch-all rule", 400);
@@ -151,7 +178,7 @@ pub async fn delete_rule(env: &Env, rule_id: &str) -> Result<Response> {
 
     rules.retain(|r| r.id != rule_id);
     kv::save_rules(&kv_store, &rules).await?;
-    Response::from_html(templates::rules_list_partial(&rules))
+    Response::from_html(render_rules(&rules))
 }
 
 /// POST /manage/rules/reorder — move a rule up or down
@@ -165,9 +192,8 @@ pub async fn reorder_rules(mut req: Request, env: &Env) -> Result<Response> {
     let mut rules = kv::get_rules(&kv_store).await?;
 
     if let Some(pos) = rules.iter().position(|r| r.id == rule_id) {
-        // Don't move the catch-all
         if rules[pos].is_catch_all() {
-            return Response::from_html(templates::rules_list_partial(&rules));
+            return Response::from_html(render_rules(&rules));
         }
 
         let catch_all_pos = rules.len().saturating_sub(1);
@@ -184,5 +210,39 @@ pub async fn reorder_rules(mut req: Request, env: &Env) -> Result<Response> {
     }
 
     kv::save_rules(&kv_store, &rules).await?;
-    Response::from_html(templates::rules_list_partial(&rules))
+    Response::from_html(render_rules(&rules))
+}
+
+/// GET /manage/test — rule tester page.
+pub async fn tester_page(env: &Env, email: &str) -> Result<Response> {
+    let kv_store = env.kv("KV")?;
+    let rules = ensure_catch_all(&kv_store).await?;
+    Response::from_html(templates::tester_page(&rules, email, None))
+}
+
+/// POST /manage/test — evaluate rules against the supplied `to` address.
+pub async fn tester_run(mut req: Request, env: &Env, email: &str) -> Result<Response> {
+    let form: serde_json::Value = req.json().await?;
+    let to = form
+        .get("to")
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .trim()
+        .to_lowercase();
+    let kv_store = env.kv("KV")?;
+    let rules = ensure_catch_all(&kv_store).await?;
+
+    let result = if let Some((local, domain)) = to.rsplit_once('@') {
+        let matched = routing::find_matching_rule(&rules, local, domain);
+        Some(templates::TesterResult {
+            to: to.clone(),
+            matched_index: matched.and_then(|m| rules.iter().position(|r| r.id == m.id)),
+        })
+    } else {
+        Some(templates::TesterResult {
+            to: to.clone(),
+            matched_index: None,
+        })
+    };
+    Response::from_html(templates::tester_page(&rules, email, result))
 }

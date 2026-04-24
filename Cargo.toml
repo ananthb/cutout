@@ -23,6 +23,7 @@ hmac = "0.12"
 mail-parser = "0.9"
 base64 = "0.22"
 subtle = "2.6"
+botrelay = { git = "https://github.com/ananthb/botrelay-rs", branch = "main" }
 
 [profile.release]
 opt-level = "s"

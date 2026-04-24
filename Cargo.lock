@@ -47,6 +47,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "botrelay"
+version = "0.1.0"
+source = "git+https://github.com/ananthb/botrelay-rs?branch=main#c93fed335b68232c457906a4a5b83f1083b08b17"
+dependencies = [
+ "js-sys",
+ "serde",
+ "serde_json",
+ "wasm-bindgen",
+ "wasm-bindgen-futures",
+ "web-sys",
+ "worker",
+]
+
+[[package]]
 name = "bumpalo"
 version = "3.20.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -109,6 +123,7 @@ name = "cutout"
 version = "0.1.0"
 dependencies = [
  "base64",
+ "botrelay",
  "console_error_panic_hook",
  "getrandom 0.2.17",
  "hmac",

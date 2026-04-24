@@ -39,6 +39,11 @@ pub async fn handle_manage(req: Request, env: Env, path: &str, method: Method) -
         // DELETE /manage/rules/{id} — delete rule
         (Method::Delete, ["rules", id]) => handlers::delete_rule(&env, id).await,
 
+        // GET /manage/test — rule tester page
+        (Method::Get, ["test"]) => handlers::tester_page(&env, &email).await,
+        // POST /manage/test — run the tester
+        (Method::Post, ["test"]) => handlers::tester_run(req, &env, &email).await,
+
         _ => Response::error("Not Found", 404),
     }
 }

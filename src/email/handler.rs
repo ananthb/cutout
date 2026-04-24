@@ -40,34 +40,44 @@ pub async fn handle_email(
         return Ok(EmailResult::Reject("Forwarding loop detected".into()));
     }
 
-    // Parse the email
-    let parsed = mime::parse_email(raw_bytes);
-
-    // Check if this is a reverse alias reply
+    // Check if this is a reverse alias reply (parse email only for this path).
     if forward::is_reverse_alias(to) {
-        return handle_reverse_alias(to, &parsed, &kv_store, &domain).await;
+        let parsed = mime::parse_email(raw_bytes);
+        return handle_reverse_alias(to, &parsed, &kv_store).await;
     }
 
-    // Load and match routing rules
+    // Load and match routing rules.
     let rules = kv::get_rules(&kv_store).await?;
     let matched_rule = routing::find_matching_rule(&rules, &local, &domain);
 
     match matched_rule {
-        Some(rule) => execute_action(&rule.action, &rule.label, from, to, &kv_store, &domain).await,
+        Some(rule) => {
+            execute_action(
+                &rule.action,
+                &rule.label,
+                from,
+                to,
+                raw_bytes,
+                &kv_store,
+                &domain,
+            )
+            .await
+        }
         None => {
-            // Should not happen if catch-all exists, but handle gracefully
             console_log!("No matching rule for {to}, dropping");
             Ok(EmailResult::Drop)
         }
     }
 }
 
-/// Execute a matched action.
+/// Execute a matched action, producing a [`Dispatch`] for the top-level
+/// handler to fan out into `message.forward()`, `send_email`, or bot posts.
 async fn execute_action(
     action: &Action,
     rule_label: &str,
     from: &str,
     to: &str,
+    raw_bytes: &[u8],
     kv_store: &worker::kv::KvStore,
     domain: &str,
 ) -> Result<EmailResult> {
@@ -78,22 +88,13 @@ async fn execute_action(
         }
 
         Action::Forward { destinations } => {
-            // EmailMessage.forward() is single-destination per message; take
-            // the first configured destination and warn if there are extras.
-            // Cloudflare rejects forward() if the destination isn't in the
-            // account's Email Routing Destination Addresses list — that's the
-            // verification check.
-            let destination = match destinations.first() {
-                Some(d) => d.clone(),
-                None => return Ok(EmailResult::Drop),
-            };
-            if destinations.len() > 1 {
-                console_log!(
-                    "Rule {rule_label} has {} destinations; forwarding only to {destination} (message.forward is single-destination)",
-                    destinations.len()
-                );
+            if destinations.is_empty() {
+                return Ok(EmailResult::Drop);
             }
 
+            // Generate one reverse alias per inbound message — shared across
+            // all destinations so any reply routes back to the same original
+            // sender. Save the mapping up front.
             let reverse_addr = forward::generate_reverse_address(domain);
             let reverse_alias = ReverseAlias {
                 alias: to.to_string(),
@@ -101,13 +102,119 @@ async fn execute_action(
             };
             kv::save_reverse_alias(kv_store, &reverse_addr, &reverse_alias).await?;
 
-            console_log!("Forwarding from {from} to {destination} via {to} (rule: {rule_label})");
+            // Parse once for the structured / bot paths. Email forwarding via
+            // message.forward() doesn't need a parse — it passes raw bytes.
+            let parsed = mime::parse_email(raw_bytes);
 
-            Ok(EmailResult::Forward(ForwardInstruction {
-                destination,
-                reply_to: reverse_addr,
-            }))
+            let mut dispatch = Dispatch::default();
+            let mut email_count = 0usize;
+
+            for dest in destinations {
+                match dest {
+                    Destination::Email { address } => {
+                        if email_count == 0 {
+                            dispatch.forward_email = Some(ForwardInstruction {
+                                destination: address.clone(),
+                                reply_to: reverse_addr.clone(),
+                            });
+                        } else {
+                            dispatch.send_emails.push(structured_forward_email(
+                                parsed.as_ref(),
+                                &reverse_addr,
+                                address,
+                                from,
+                            ));
+                        }
+                        email_count += 1;
+                    }
+                    Destination::Telegram { chat_id } => {
+                        dispatch.bot_forwards.push(BotForward {
+                            channel: BotChannel::Telegram {
+                                chat_id: chat_id.clone(),
+                            },
+                            original_sender: from.to_string(),
+                            alias: to.to_string(),
+                            subject: parsed
+                                .as_ref()
+                                .map(|p| p.subject.clone())
+                                .unwrap_or_default(),
+                            text: parsed
+                                .as_ref()
+                                .and_then(|p| p.text_body.clone())
+                                .unwrap_or_default(),
+                        });
+                    }
+                    Destination::Discord { channel_id } => {
+                        dispatch.bot_forwards.push(BotForward {
+                            channel: BotChannel::Discord {
+                                channel_id: channel_id.clone(),
+                            },
+                            original_sender: from.to_string(),
+                            alias: to.to_string(),
+                            subject: parsed
+                                .as_ref()
+                                .map(|p| p.subject.clone())
+                                .unwrap_or_default(),
+                            text: parsed
+                                .as_ref()
+                                .and_then(|p| p.text_body.clone())
+                                .unwrap_or_default(),
+                        });
+                    }
+                }
+            }
+
+            console_log!(
+                "Forwarding from {from} via {to} (rule: {rule_label}): email={} send_emails={} bots={}",
+                dispatch.forward_email.is_some() as u8,
+                dispatch.send_emails.len(),
+                dispatch.bot_forwards.len()
+            );
+
+            if dispatch.is_empty() {
+                Ok(EmailResult::Drop)
+            } else {
+                Ok(EmailResult::Dispatch(dispatch))
+            }
         }
+    }
+}
+
+/// Build a structured outbound email for destinations beyond the first.
+/// Used when a rule has multiple email destinations — CF's `forward()` can
+/// only fire once per message, so extras take the `send_email` path (which
+/// rewrites the `From` to the reverse-alias).
+fn structured_forward_email(
+    parsed: Option<&mime::ParsedEmail>,
+    reverse_addr: &str,
+    destination: &str,
+    original_from: &str,
+) -> OutboundEmail {
+    let mut headers: Vec<(String, String)> = vec![
+        ("X-Cutout-Forwarded".to_string(), "1".to_string()),
+        ("X-Original-From".to_string(), original_from.to_string()),
+    ];
+    if let Some(parsed) = parsed {
+        if let Some(msg_id) = &parsed.message_id {
+            headers.push(("In-Reply-To".to_string(), msg_id.clone()));
+        }
+        if let Some(refs) = &parsed.references {
+            headers.push(("References".to_string(), refs.clone()));
+        }
+    }
+
+    let subject = parsed.map(|p| p.subject.clone()).unwrap_or_default();
+    let text = parsed.and_then(|p| p.text_body.clone());
+    let html = parsed.and_then(|p| p.html_body.clone());
+
+    OutboundEmail {
+        from: reverse_addr.to_string(),
+        to: destination.to_string(),
+        subject,
+        text,
+        html,
+        reply_to: Some(reverse_addr.to_string()),
+        headers,
     }
 }
 
@@ -116,7 +223,6 @@ async fn handle_reverse_alias(
     to: &str,
     parsed: &Option<mime::ParsedEmail>,
     kv_store: &worker::kv::KvStore,
-    _domain: &str,
 ) -> Result<EmailResult> {
     let reverse = match kv::get_reverse_alias(kv_store, to).await? {
         Some(r) => r,
@@ -146,7 +252,8 @@ async fn handle_reverse_alias(
         headers.push(("References".to_string(), refs.clone()));
     }
 
-    Ok(EmailResult::Send(vec![OutboundEmail {
+    let mut dispatch = Dispatch::default();
+    dispatch.send_emails.push(OutboundEmail {
         from: reverse.alias.clone(),
         to: reverse.original_sender,
         subject: parsed.subject.clone(),
@@ -154,5 +261,6 @@ async fn handle_reverse_alias(
         html: parsed.html_body.clone(),
         reply_to: Some(reverse.alias),
         headers,
-    }]))
+    });
+    Ok(EmailResult::Dispatch(dispatch))
 }
