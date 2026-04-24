@@ -3,7 +3,7 @@ use mail_parser::MessageParser;
 /// Parsed representation of an inbound email — only the fields we need to
 /// reconstruct an outbound message via Cloudflare Email Service.
 pub struct ParsedEmail {
-    pub from_header: Option<String>,
+    pub from_name: Option<String>,
     pub subject: String,
     pub message_id: Option<String>,
     pub references: Option<String>,
@@ -16,9 +16,11 @@ pub fn parse_email(raw: &[u8]) -> Option<ParsedEmail> {
     let message = MessageParser::default().parse(raw)?;
 
     Some(ParsedEmail {
-        from_header: message
-            .header("From")
-            .and_then(|h| h.as_text())
+        from_name: message
+            .from()
+            .and_then(|h| h.as_list())
+            .and_then(|list| list.first())
+            .and_then(|a| a.name.as_ref())
             .map(|s| s.to_string()),
         subject: message.subject().unwrap_or("").to_string(),
         message_id: message.message_id().map(|s| s.to_string()),

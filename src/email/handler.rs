@@ -201,15 +201,12 @@ fn structured_forward_email(
     let text = parsed.and_then(|p| p.text_body.clone());
     let html = parsed.and_then(|p| p.html_body.clone());
 
-    // Use the original From header as a display name so the inbox shows
+    // Use the original sender's name as a display name so the inbox shows
     // "Alice <reply+uuid@domain.com>" instead of just the alias.
-    // We clean up any existing brackets to ensure valid RFC 5322 format.
-    let from_display = parsed
-        .and_then(|p| p.from_header.as_ref())
-        .map(|h| h.replace('<', "").replace('>', "").trim().to_string())
-        .unwrap_or_else(|| original_from.to_string());
-
-    let from = format!("{} <{}>", from_display, reverse_addr);
+    let from = match parsed.and_then(|p| p.from_name.as_ref()) {
+        Some(name) => format!("{} <{}>", name, reverse_addr),
+        None => reverse_addr.to_string(),
+    };
 
     OutboundEmail {
         from,
@@ -276,7 +273,7 @@ mod tests {
     #[test]
     fn test_structured_forward_display_name() {
         let parsed = mime::ParsedEmail {
-            from_header: Some("Alice".to_string()),
+            from_name: Some("Alice".to_string()),
             subject: "Hello".to_string(),
             message_id: Some("msg123".to_string()),
             references: None,
@@ -296,9 +293,9 @@ mod tests {
     }
 
     #[test]
-    fn test_structured_forward_cleans_brackets() {
+    fn test_structured_forward_no_name() {
         let parsed = mime::ParsedEmail {
-            from_header: Some("<Alice>".to_string()),
+            from_name: None,
             subject: "Hello".to_string(),
             message_id: None,
             references: None,
@@ -312,7 +309,7 @@ mod tests {
             "alice@example.org",
         );
 
-        // Should strip brackets from the display name part
-        assert_eq!(outbound.from, "Alice <reply@proxy.com>");
+        // Should fall back to just the address if no display name is present
+        assert_eq!(outbound.from, "reply@proxy.com");
     }
 }
