@@ -97,7 +97,7 @@ pub fn base_html(title: &str, email: &str, content: &str) -> String {
 <title>{title} — Cutout</title>
 <style>{css}</style>
 <script src="https://unpkg.com/htmx.org@2.0.8/dist/htmx.min.js" crossorigin="anonymous"></script>
-<script src="https://unpkg.com/htmx.org@2.0.8/dist/ext/json-enc.js"></script>
+<script src="https://unpkg.com/htmx-ext-json-enc@2.0.3/json-enc.js" crossorigin="anonymous"></script>
 </head>
 <body>
 <header><div class="inner"><h1>Cutout</h1><span class="user">{email}</span></div></header>
