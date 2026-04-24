@@ -32,7 +32,7 @@ jobs:
           account_id = "${CLOUDFLARE_ACCOUNT_ID}"
 
           [build]
-          command = "worker-build --release"
+          command = "bash scripts/build.sh"
 
           [[kv_namespaces]]
           binding = "KV"
