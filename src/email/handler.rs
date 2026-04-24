@@ -102,30 +102,25 @@ async fn execute_action(
             };
             kv::save_reverse_alias(kv_store, &reverse_addr, &reverse_alias).await?;
 
-            // Parse once for the structured / bot paths. Email forwarding via
-            // message.forward() doesn't need a parse — it passes raw bytes.
+            // Parse the email content. We need this for all structured paths.
             let parsed = mime::parse_email(raw_bytes);
 
             let mut dispatch = Dispatch::default();
-            let mut email_count = 0usize;
 
             for dest in destinations {
                 match dest {
                     Destination::Email { address } => {
-                        if email_count == 0 {
-                            dispatch.forward_email = Some(ForwardInstruction {
-                                destination: address.clone(),
-                                reply_to: reverse_addr.clone(),
-                            });
-                        } else {
-                            dispatch.send_emails.push(structured_forward_email(
-                                parsed.as_ref(),
-                                &reverse_addr,
-                                address,
-                                from,
-                            ));
-                        }
-                        email_count += 1;
+                        // Always use structured send_email for email destinations.
+                        // CF's message.forward() only allows X- headers and often
+                        // fails to override an existing Reply-To from the original
+                        // message. structured_forward_email ensures our reverse-alias
+                        // Reply-To is set correctly.
+                        dispatch.send_emails.push(structured_forward_email(
+                            parsed.as_ref(),
+                            &reverse_addr,
+                            address,
+                            from,
+                        ));
                     }
                     Destination::Telegram { chat_id } => {
                         dispatch.bot_forwards.push(BotForward {
@@ -165,8 +160,7 @@ async fn execute_action(
             }
 
             console_log!(
-                "Forwarding from {from} via {to} (rule: {rule_label}): email={} send_emails={} bots={}",
-                dispatch.forward_email.is_some() as u8,
+                "Forwarding from {from} via {to} (rule: {rule_label}): send_emails={} bots={}",
                 dispatch.send_emails.len(),
                 dispatch.bot_forwards.len()
             );
@@ -207,8 +201,18 @@ fn structured_forward_email(
     let text = parsed.and_then(|p| p.text_body.clone());
     let html = parsed.and_then(|p| p.html_body.clone());
 
+    // Use the original From header as a display name so the inbox shows
+    // "Alice <reply+uuid@domain.com>" instead of just the alias.
+    // We clean up any existing brackets to ensure valid RFC 5322 format.
+    let from_display = parsed
+        .and_then(|p| p.from_header.as_ref())
+        .map(|h| h.replace('<', "").replace('>', "").trim().to_string())
+        .unwrap_or_else(|| original_from.to_string());
+
+    let from = format!("{} <{}>", from_display, reverse_addr);
+
     OutboundEmail {
-        from: reverse_addr.to_string(),
+        from,
         to: destination.to_string(),
         subject,
         text,
@@ -263,4 +267,52 @@ async fn handle_reverse_alias(
         headers,
     });
     Ok(EmailResult::Dispatch(dispatch))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_structured_forward_display_name() {
+        let parsed = mime::ParsedEmail {
+            from_header: Some("Alice".to_string()),
+            subject: "Hello".to_string(),
+            message_id: Some("msg123".to_string()),
+            references: None,
+            text_body: Some("body".to_string()),
+            html_body: None,
+        };
+        let reverse_addr = "reply+abc@proxy.com";
+        let destination = "me@home.com";
+        let original_from = "alice@example.org";
+
+        let outbound =
+            structured_forward_email(Some(&parsed), reverse_addr, destination, original_from);
+
+        // Should use display name from header + the reverse alias address
+        assert_eq!(outbound.from, "Alice <reply+abc@proxy.com>");
+        assert_eq!(outbound.reply_to, Some(reverse_addr.to_string()));
+    }
+
+    #[test]
+    fn test_structured_forward_cleans_brackets() {
+        let parsed = mime::ParsedEmail {
+            from_header: Some("<Alice>".to_string()),
+            subject: "Hello".to_string(),
+            message_id: None,
+            references: None,
+            text_body: None,
+            html_body: None,
+        };
+        let outbound = structured_forward_email(
+            Some(&parsed),
+            "reply@proxy.com",
+            "me@home.com",
+            "alice@example.org",
+        );
+
+        // Should strip brackets from the display name part
+        assert_eq!(outbound.from, "Alice <reply@proxy.com>");
+    }
 }

@@ -295,7 +295,7 @@ pub fn rules_page(
 <p style="color:var(--muted);font-size:0.85rem;margin-bottom:1.5rem">
   Rules are evaluated top-to-bottom. The first match wins. The <code>*@*</code> catch-all is always last.
   Email destinations must be verified in Cloudflare's
-  <a href="https://dash.cloudflare.com/?to=/:account/email/routing/routes" target="_blank">Email Routing → Destination Addresses</a>
+  <a href="https://dash.cloudflare.com/?to=/:account/email/routing/destination-addresses" target="_blank">Email Routing → Destination Addresses</a>
   list.
 </p>
 <div id="rules-list" class="rule-list">

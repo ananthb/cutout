@@ -165,16 +165,6 @@ pub struct OutboundEmail {
     pub headers: Vec<(String, String)>,
 }
 
-/// Instruction to Cloudflare to forward the inbound message via the native
-/// `EmailMessage.forward()` call. Preserves original From/To/DKIM. The
-/// destination must be verified in the zone's Email Routing Destination
-/// Addresses list.
-pub struct ForwardInstruction {
-    pub destination: String,
-    /// Reply-To to overlay so recipient replies route back through the proxy.
-    pub reply_to: String,
-}
-
 /// Bot-channel forward: send the parsed email content to a chat via the
 /// relevant bot API. The caller saves a [`botrelay::ReplyContext`] keyed by
 /// the returned message id so replies route back.
@@ -203,15 +193,12 @@ pub enum EmailResult {
 }
 
 /// Everything the top-level handler needs to do for one inbound email.
-/// The single `forward_email` slot uses Cloudflare's native
-/// `EmailMessage.forward()` (bytes preserved); extra email destinations fall
-/// back to structured `send_email`. Bot forwards fan out to Telegram/Discord.
+/// Email destinations are sent via structured `send_email` to ensure
+/// Reply-To and other headers are set correctly.
+/// Bot forwards fan out to Telegram/Discord.
 #[derive(Default)]
 pub struct Dispatch {
-    /// At most one — assigned to the first email destination so it gets the
-    /// CF-native forwarder treatment.
-    pub forward_email: Option<ForwardInstruction>,
-    /// Email destinations beyond the first, sent via structured `send_email`.
+    /// Email destinations sent via structured `send_email`.
     pub send_emails: Vec<OutboundEmail>,
     /// Telegram + Discord bot posts.
     pub bot_forwards: Vec<BotForward>,
@@ -219,7 +206,7 @@ pub struct Dispatch {
 
 impl Dispatch {
     pub fn is_empty(&self) -> bool {
-        self.forward_email.is_none() && self.send_emails.is_empty() && self.bot_forwards.is_empty()
+        self.send_emails.is_empty() && self.bot_forwards.is_empty()
     }
 }
 

@@ -69,6 +69,7 @@ pub async fn list_rules(env: &Env, email: &str) -> Result<Response> {
     let rules = ensure_catch_all(&kv_store).await?;
     let enabled = EnabledChannels::from_env(env);
     let report = validation::validate(&rules, &enabled);
+
     Response::from_html(templates::rules_page(&rules, email, &report, &enabled))
 }
 
