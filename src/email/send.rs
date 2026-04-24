@@ -1,24 +1,16 @@
-//! Send outbound emails via the Cloudflare EMAIL binding.
+//! Send outbound emails via the Cloudflare Email Service `EMAIL` binding.
 //!
-//! Wraps outgoing messages in the `EmailMessage` class imported from the
-//! built-in `cloudflare:email` module. Passing a plain object with a `raw`
-//! field is interpreted by Email Service as the new structured format and
-//! rejected for missing `text`/`html` — we always have fully-formed RFC 2822
-//! bytes to send, so use the legacy class path.
+//! Uses the structured-message API: `{ from, to, subject, text, html, replyTo,
+//! headers }`. Email Service rejects plain objects with `raw` bytes (it
+//! interprets them as malformed structured messages), and the legacy
+//! `EmailMessage` class from `cloudflare:email` requires bundler externals
+//! that worker-build doesn't provide. Structured fields side-step both.
 
 use wasm_bindgen::prelude::*;
 use wasm_bindgen::JsCast;
 use worker::*;
 
 use crate::types::OutboundEmail;
-
-#[wasm_bindgen(module = "cloudflare:email")]
-extern "C" {
-    pub type EmailMessage;
-
-    #[wasm_bindgen(constructor)]
-    fn new(from: &str, to: &str, raw: &JsValue) -> EmailMessage;
-}
 
 #[wasm_bindgen]
 extern "C" {
@@ -35,12 +27,37 @@ pub async fn send_outbound(env: &Env, outbound: &OutboundEmail) -> Result<()> {
         .map_err(|_| Error::from("Missing EMAIL binding"))?;
     let send_email: SendEmailBinding = binding.unchecked_into();
 
-    let raw = js_sys::Uint8Array::from(outbound.raw.as_slice());
-    let msg = EmailMessage::new(&outbound.from, &outbound.to, &raw.into());
+    let obj = js_sys::Object::new();
+    set_str(&obj, "from", &outbound.from)?;
+    set_str(&obj, "to", &outbound.to)?;
+    set_str(&obj, "subject", &outbound.subject)?;
+    if let Some(text) = &outbound.text {
+        set_str(&obj, "text", text)?;
+    }
+    if let Some(html) = &outbound.html {
+        set_str(&obj, "html", html)?;
+    }
+    if let Some(reply_to) = &outbound.reply_to {
+        set_str(&obj, "replyTo", reply_to)?;
+    }
+    if !outbound.headers.is_empty() {
+        let headers = js_sys::Object::new();
+        for (name, value) in &outbound.headers {
+            set_str(&headers, name, value)?;
+        }
+        js_sys::Reflect::set(&obj, &"headers".into(), &headers.into())
+            .map_err(|_| Error::from("set headers"))?;
+    }
 
-    let promise = send_email.send(&msg.into());
+    let promise = send_email.send(&obj.into());
     wasm_bindgen_futures::JsFuture::from(promise)
         .await
         .map_err(|e| Error::from(format!("send_email failed: {e:?}")))?;
+    Ok(())
+}
+
+fn set_str(obj: &js_sys::Object, key: &str, value: &str) -> Result<()> {
+    js_sys::Reflect::set(obj, &key.into(), &JsValue::from_str(value))
+        .map_err(|_| Error::from(format!("set {key}")))?;
     Ok(())
 }

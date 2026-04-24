@@ -41,10 +41,17 @@ pub struct ReverseAlias {
 }
 
 /// A single outbound email to send via the EMAIL binding.
+/// Cloudflare Email Service expects structured fields, not raw RFC 2822 bytes.
 pub struct OutboundEmail {
     pub from: String,
     pub to: String,
-    pub raw: Vec<u8>,
+    pub subject: String,
+    pub text: Option<String>,
+    pub html: Option<String>,
+    pub reply_to: Option<String>,
+    /// Extra headers to set on the outbound message (e.g. In-Reply-To, References,
+    /// X-Cutout-Forwarded). Iterated in order so duplicate names are preserved.
+    pub headers: Vec<(String, String)>,
 }
 
 /// Result of email processing — drives action in the wasm_bindgen email() export.

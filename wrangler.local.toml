@@ -3,7 +3,7 @@ main = "build/worker/shim.mjs"
 compatibility_date = "2024-01-01"
 
 [build]
-command = "bash scripts/build.sh"
+command = "worker-build --release"
 
 [[kv_namespaces]]
 binding = "KV"

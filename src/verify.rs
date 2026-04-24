@@ -19,13 +19,7 @@ pub async fn send_verification(env: &Env, proxy_domain: &str, email: &str) -> Re
         return Ok(());
     }
     let token = kv::create_pending(&kv_store, email).await?;
-    let raw = build_verification_email(email, proxy_domain, &token);
-    let outbound = OutboundEmail {
-        from: format!("verify@{proxy_domain}"),
-        to: email.to_string(),
-        raw,
-    };
-    send::send_outbound(env, &outbound).await
+    send::send_outbound(env, &verification_email(email, proxy_domain, &token)).await
 }
 
 /// Handle GET /verify/{token}. Marks the associated email as verified.
@@ -43,35 +37,24 @@ pub async fn handle_verify(env: &Env, token: &str) -> Result<Response> {
     }
 }
 
-fn build_verification_email(to: &str, proxy_domain: &str, token: &str) -> Vec<u8> {
-    let message_id = format!("<{}@{proxy_domain}>", uuid::Uuid::new_v4());
+fn verification_email(to: &str, proxy_domain: &str, token: &str) -> OutboundEmail {
     let body = format!(
-        "Hi,\r\n\r\n\
-        Someone added this address as a forwarding destination on {proxy_domain}.\r\n\r\n\
-        Click the link below to confirm:\r\n\r\n\
-        https://{proxy_domain}/verify/{token}\r\n\r\n\
-        This link expires in 24 hours. If you did not expect this, ignore this email.\r\n"
+        "Hi,\n\n\
+        Someone added this address as a forwarding destination on {proxy_domain}.\n\n\
+        Click the link below to confirm:\n\n\
+        https://{proxy_domain}/verify/{token}\n\n\
+        This link expires in 24 hours. If you did not expect this, ignore this email.\n"
     );
 
-    let mut out = String::new();
-    out.push_str(&format!("Message-ID: {message_id}\r\n"));
-    #[cfg(not(test))]
-    out.push_str(&format!(
-        "Date: {}\r\n",
-        js_sys::Date::new_0()
-            .to_utc_string()
-            .as_string()
-            .unwrap_or_default()
-    ));
-    out.push_str(&format!("From: verify@{proxy_domain}\r\n"));
-    out.push_str(&format!("To: {to}\r\n"));
-    out.push_str("Subject: Confirm your forwarding address\r\n");
-    out.push_str("MIME-Version: 1.0\r\n");
-    out.push_str("Content-Type: text/plain; charset=utf-8\r\n");
-    out.push_str("Content-Transfer-Encoding: 8bit\r\n");
-    out.push_str("\r\n");
-    out.push_str(&body);
-    out.into_bytes()
+    OutboundEmail {
+        from: format!("verify@{proxy_domain}"),
+        to: to.to_string(),
+        subject: "Confirm your forwarding address".to_string(),
+        text: Some(body),
+        html: None,
+        reply_to: None,
+        headers: Vec::new(),
+    }
 }
 
 fn success_page(email: &str) -> String {
@@ -105,12 +88,13 @@ mod tests {
 
     #[test]
     fn verification_email_has_link() {
-        let raw = build_verification_email("me@example.com", "proxy.example.com", "tok123");
-        let s = String::from_utf8(raw).unwrap();
-        assert!(s.contains("To: me@example.com"));
-        assert!(s.contains("From: verify@proxy.example.com"));
-        assert!(s.contains("https://proxy.example.com/verify/tok123"));
-        assert!(s.contains("Subject: Confirm your forwarding address"));
+        let msg = verification_email("me@example.com", "proxy.example.com", "tok123");
+        assert_eq!(msg.from, "verify@proxy.example.com");
+        assert_eq!(msg.to, "me@example.com");
+        assert_eq!(msg.subject, "Confirm your forwarding address");
+        let text = msg.text.expect("text body");
+        assert!(text.contains("https://proxy.example.com/verify/tok123"));
+        assert!(msg.html.is_none());
     }
 
     #[test]

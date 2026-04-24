@@ -114,24 +114,11 @@ async fn execute_action(
                 };
                 kv::save_reverse_alias(kv_store, &reverse_addr, &reverse_alias).await?;
 
-                let forwarded = mime::build_forwarded_email(
-                    parsed,
-                    &reverse_addr,
-                    destination,
-                    &reverse_addr,
-                    from,
-                    domain,
-                );
-
                 console_log!(
                     "Forwarding from {from} to {destination} via {to} (rule: {rule_label})"
                 );
 
-                emails.push(OutboundEmail {
-                    from: reverse_addr,
-                    to: destination.clone(),
-                    raw: forwarded,
-                });
+                emails.push(forwarded_email(parsed, &reverse_addr, destination, from));
             }
 
             if emails.is_empty() {
@@ -143,12 +130,41 @@ async fn execute_action(
     }
 }
 
+/// Build the structured outbound message for a forwarded email.
+fn forwarded_email(
+    parsed: &mime::ParsedEmail,
+    reverse_addr: &str,
+    destination: &str,
+    original_from: &str,
+) -> OutboundEmail {
+    let mut headers: Vec<(String, String)> = vec![
+        ("X-Cutout-Forwarded".to_string(), "1".to_string()),
+        ("X-Original-From".to_string(), original_from.to_string()),
+    ];
+    if let Some(msg_id) = &parsed.message_id {
+        headers.push(("In-Reply-To".to_string(), msg_id.clone()));
+    }
+    if let Some(refs) = &parsed.references {
+        headers.push(("References".to_string(), refs.clone()));
+    }
+
+    OutboundEmail {
+        from: reverse_addr.to_string(),
+        to: destination.to_string(),
+        subject: parsed.subject.clone(),
+        text: parsed.text_body.clone(),
+        html: parsed.html_body.clone(),
+        reply_to: Some(reverse_addr.to_string()),
+        headers,
+    }
+}
+
 /// Handle a reply arriving at a reverse alias.
 async fn handle_reverse_alias(
     to: &str,
     parsed: &Option<mime::ParsedEmail>,
     kv_store: &worker::kv::KvStore,
-    domain: &str,
+    _domain: &str,
 ) -> Result<EmailResult> {
     let reverse = match kv::get_reverse_alias(kv_store, to).await? {
         Some(r) => r,
@@ -163,18 +179,28 @@ async fn handle_reverse_alias(
         None => return Ok(EmailResult::Reject("Failed to parse reply".into())),
     };
 
-    let reply_bytes =
-        mime::build_reply_email(parsed, &reverse.alias, &reverse.original_sender, domain);
-
     console_log!(
         "Reply routing: {} -> {}",
         reverse.alias,
         reverse.original_sender
     );
 
+    let mut headers: Vec<(String, String)> =
+        vec![("X-Cutout-Forwarded".to_string(), "1".to_string())];
+    if let Some(msg_id) = &parsed.message_id {
+        headers.push(("In-Reply-To".to_string(), msg_id.clone()));
+    }
+    if let Some(refs) = &parsed.references {
+        headers.push(("References".to_string(), refs.clone()));
+    }
+
     Ok(EmailResult::Send(vec![OutboundEmail {
-        from: reverse.alias,
+        from: reverse.alias.clone(),
         to: reverse.original_sender,
-        raw: reply_bytes,
+        subject: parsed.subject.clone(),
+        text: parsed.text_body.clone(),
+        html: parsed.html_body.clone(),
+        reply_to: Some(reverse.alias),
+        headers,
     }]))
 }
