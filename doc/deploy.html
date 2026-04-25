@@ -1,0 +1,106 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Deploy | Cutout</title>
+<meta name="description" content="Fork Cutout and deploy your own instance to Cloudflare Workers via GitHub Actions.">
+<link rel="icon" type="image/svg+xml" href="cutout-mark.svg">
+<style>
+:root { --bg: #fff; --fg: #1a1a1a; --muted: #555; --accent: #dd793a; --code-bg: #f5f6f8; --border: #e0e0e0; --max-w: 740px; }
+@media (prefers-color-scheme: dark) { :root { --bg: #121212; --fg: #e0e0e0; --muted: #aaa; --accent: #e89060; --code-bg: #2a2a2a; --border: #3a3a3a; } }
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body { font-family: system-ui, -apple-system, sans-serif; background: var(--bg); color: var(--fg); line-height: 1.6; }
+.container { max-width: var(--max-w); margin: 0 auto; padding: 2rem 1.5rem; }
+h1 { font-size: 1.8rem; margin-bottom: 0.5rem; }
+h2 { font-size: 1.25rem; margin-top: 2rem; margin-bottom: 0.5rem; border-bottom: 1px solid var(--border); padding-bottom: 0.3rem; }
+h3 { font-size: 1.05rem; margin-top: 1.5rem; margin-bottom: 0.4rem; }
+p { margin: 0.5rem 0; }
+a { color: var(--accent); text-decoration: none; }
+a:hover { text-decoration: underline; }
+ul, ol { margin: 0.5rem 0 0.5rem 1.5rem; }
+li { margin: 0.3rem 0; }
+code { background: var(--code-bg); padding: 0.15rem 0.4rem; border-radius: 3px; font-size: 0.9em; font-family: ui-monospace, monospace; }
+pre { background: var(--code-bg); padding: 0.75rem 1rem; border-radius: 4px; overflow-x: auto; margin: 0.6rem 0; font-size: 0.85em; line-height: 1.45; }
+pre code { background: transparent; padding: 0; font-size: inherit; }
+nav.site-nav { display: flex; gap: 0.75rem; margin: 1rem 0 2rem; flex-wrap: wrap; padding-bottom: 1rem; border-bottom: 1px solid var(--border); }
+nav.site-nav a { padding: 0.3rem 0.6rem; background: var(--code-bg); border-radius: 4px; font-weight: 500; font-size: 0.85rem; }
+nav.site-nav a.current { background: var(--accent); color: #fff; }
+footer { margin-top: 3rem; padding-top: 1rem; border-top: 1px solid var(--border); font-size: 0.8rem; color: var(--muted); }
+</style>
+</head>
+<body>
+<div class="container">
+
+<nav class="site-nav" aria-label="Documentation">
+  <a href="./">Overview</a>
+  <a href="how-it-works.html">How It Works</a>
+  <a href="deploy.html" class="current">Deploy</a>
+</nav>
+
+<h1 style="display:flex;align-items:center;gap:0.6rem"><img src="cutout-mark.svg" width="28" height="28" alt="" style="display:block">Deploy your own Cutout</h1>
+<p>Cutout is self-host first. Fork the repo, point a few GitHub Secrets at your Cloudflare account, and pushes to <code>main</code> deploy to your own Worker via GitHub Actions.</p>
+
+<h2>1. Fork the repo</h2>
+<p>Fork <a href="https://github.com/ananthb/cutout">ananthb/cutout</a> on GitHub into your own account or org.</p>
+
+<h2>2. Create the Cloudflare resources</h2>
+<p>You need a KV namespace (rule storage) and a D1 database (reverse-alias mappings + bot reply contexts). Both need to exist before the first deploy so you can supply their IDs.</p>
+<p>Clone your fork locally and use <code>wrangler</code> from the dev shell:</p>
+<pre><code>nix develop                      # or install wrangler manually
+wrangler kv namespace create KV
+wrangler d1 create cutout-db</code></pre>
+<p>Save the returned <code>id</code> (KV) and <code>database_id</code> (D1) — you'll paste them into GitHub Secrets next.</p>
+
+<h2>3. Configure GitHub Secrets</h2>
+<p>In your fork: <strong>Settings → Secrets and variables → Actions</strong>. Add:</p>
+<ul>
+  <li><code>CLOUDFLARE_API_TOKEN</code> — token with <em>Workers Scripts: Edit</em>, <em>Workers KV Storage: Edit</em>, <em>D1: Edit</em>, and <em>Email Routing: Edit</em> permissions.</li>
+  <li><code>CLOUDFLARE_ACCOUNT_ID</code> — your Cloudflare Account ID (visible in the dashboard sidebar).</li>
+  <li><code>KV_NAMESPACE_ID</code> — the <code>id</code> from step 2.</li>
+  <li><code>D1_DATABASE_ID</code> — the <code>database_id</code> from step 2.</li>
+  <li><code>CF_ACCESS_TEAM</code> and <code>CF_ACCESS_AUD</code> — your Cloudflare Access team domain and the AUD tag of the Access app guarding <code>/manage</code> (set this up in step 7).</li>
+  <li><code>CF_API_TOKEN</code> <em>(optional)</em> — separate token with <em>Account Analytics: Read</em> scope. Unlocks the dashboard stats panels (forwarded/dropped totals, per-rule matches, top senders). Leave empty to ship without stats; the live event tail still works.</li>
+</ul>
+
+<h2>4. Push to <code>main</code></h2>
+<p>The <code>Deploy</code> workflow generates <code>wrangler.production.toml</code> from your secrets, applies D1 migrations, runs <code>wrangler deploy</code>, and uploads <code>CF_ACCESS_TEAM</code> / <code>CF_ACCESS_AUD</code> / <code>CF_API_TOKEN</code> as Worker secrets. After it succeeds, your Worker is live at <code>cutout.&lt;your-workers-subdomain&gt;.workers.dev</code> (or a custom route you've added).</p>
+
+<h2>5. Enable Email Routing on each domain</h2>
+<p>For every domain you want Cutout to handle, in the Cloudflare dashboard:</p>
+<ol>
+  <li>Open <strong>Email → Email Routing</strong> and click <strong>Enable</strong>.</li>
+  <li>Under <strong>Routes</strong>, edit the <strong>catch-all address</strong>, set the action to <strong>Send to a Worker</strong>, and pick the <code>cutout</code> worker.</li>
+</ol>
+
+<h2>6. Onboard each domain to Email Service</h2>
+<p>This is what lets Cutout send outbound mail (replies, proxy-mode forwards, fan-out beyond the first destination).</p>
+<ol>
+  <li>Dashboard → <strong>Email → Email Sending → Onboard Domain</strong>.</li>
+  <li>Accept the DNS records (MX / SPF / DKIM / DMARC) on the <code>cf-bounce.&lt;yourdomain&gt;</code> subdomain.</li>
+</ol>
+
+<h2>7. Verify destination addresses</h2>
+<p>Cloudflare requires every email destination to be a verified address.</p>
+<ol>
+  <li>Dashboard → <strong>Email → Email Routing → Destination addresses</strong>.</li>
+  <li>Click <strong>Add destination address</strong> and enter the address (e.g. your real Gmail).</li>
+  <li>Click the confirmation link sent to that address.</li>
+</ol>
+
+<h2>8. Protect <code>/manage</code> with Cloudflare Access</h2>
+<p>The management UI must not be public. Create an Access application whose policy covers <code>cutout.&lt;yourdomain&gt;/manage/*</code> (or whichever route you mapped to the worker). Copy the application's <strong>AUD tag</strong> and your team domain into the <code>CF_ACCESS_AUD</code> and <code>CF_ACCESS_TEAM</code> GitHub Secrets, then re-run the deploy workflow so the worker picks them up.</p>
+
+<h2>9. Add routing rules</h2>
+<p>Visit <code>https://&lt;your-cutout-host&gt;/manage</code>. Add Forward rules using glob patterns on the local part and domain. For email destinations, use the <strong>Proxy via rewrite mode</strong> toggle to ensure <code>Reply-To</code> works when replying via your custom domain (see <a href="how-it-works.html">How It Works</a> for the tradeoffs).</p>
+
+<h2>Updating</h2>
+<p>Pull from upstream into your fork's <code>main</code> branch (or merge a PR) — the deploy workflow re-runs on every push to <code>main</code>.</p>
+
+<footer>
+  <a href="./">Back to overview</a>
+</footer>
+
+</div>
+</body>
+</html>

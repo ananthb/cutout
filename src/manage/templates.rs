@@ -440,6 +440,26 @@ code { font-family: var(--font-mono); font-size: 0.88em; }
 .tag.drop    { background: var(--bad-soft); color: var(--bad); }
 .tag.catch   { background: var(--warn-soft); color: var(--warn); }
 
+.tip { position: relative; cursor: help; }
+.tip::after {
+  content: attr(data-tip);
+  position: absolute; bottom: calc(100% + 6px); left: 50%;
+  transform: translateX(-50%);
+  background: var(--bg-2); color: var(--fg);
+  border: 1px solid var(--line-2); border-radius: var(--r-sm);
+  padding: 7px 9px;
+  font-family: var(--font-sans); font-size: 11.5px; font-weight: 400;
+  text-transform: none; letter-spacing: 0; line-height: 1.4;
+  text-align: left; white-space: normal;
+  width: max-content; max-width: 280px;
+  pointer-events: none; opacity: 0; visibility: hidden;
+  transition: opacity 0.12s ease, visibility 0.12s ease;
+  transition-delay: 0.35s;
+  box-shadow: 0 4px 14px rgba(0,0,0,0.18);
+  z-index: 30;
+}
+.tip:hover::after, .tip:focus-visible::after { opacity: 1; visibility: visible; }
+
 .btn {
   display: inline-flex; align-items: center; gap: 6px;
   height: 30px; padding: 0 12px;
@@ -716,17 +736,19 @@ function liveFeed() {
     events: [],
     lastTs: 0,
     filter: 'all',
-    collapsed: false,
+    collapsed: true,
     intervalId: null,
-    async init() {
-      await this.poll(true);
-      this.start();
-    },
+    init() {},
     start() {
       if (this.intervalId) return;
-      this.intervalId = setInterval(() => {
-        if (!this.collapsed) this.poll(false);
-      }, 2000);
+      this.poll(true);
+      this.intervalId = setInterval(() => this.poll(false), 2000);
+    },
+    stop() {
+      if (this.intervalId) {
+        clearInterval(this.intervalId);
+        this.intervalId = null;
+      }
     },
     async poll(initial) {
       try {
@@ -745,7 +767,8 @@ function liveFeed() {
     },
     toggle() {
       this.collapsed = !this.collapsed;
-      if (!this.collapsed) this.poll(false);
+      if (this.collapsed) this.stop();
+      else this.start();
     },
     visible() {
       if (this.filter === 'all') return this.events;
@@ -864,7 +887,10 @@ const LIVE_FEED_PANE: &str = r##"<div class="live-feed" :class="{ collapsed }"
       <span x-text="collapsed ? '▸' : '▾'"></span>
       <span class="mono" style="text-transform:uppercase;letter-spacing:0.08em;font-size:11px">Live feed</span>
     </button>
-    <span class="chip ok" style="height:20px;font-size:10.5px"><span class="dot"></span>streaming</span>
+    <span class="chip" :class="collapsed ? '' : 'ok'" style="height:20px;font-size:10.5px">
+      <span class="dot" x-show="!collapsed"></span>
+      <span x-text="collapsed ? 'paused — click to stream' : 'streaming'"></span>
+    </span>
     <div class="filters" x-show="!collapsed">
       <template x-for="f in ['all','forward','drop','reply','reject']" :key="f">
         <button class="filter-chip" :class="{ active: filter === f }" @click="filter = f" x-text="f" type="button"></button>
@@ -972,7 +998,7 @@ fn pipeline_pane(rules: &[Rule], selected_idx: usize) -> String {
   <header>
     <div>
       <h3>Routing pipeline</h3>
-      <small>{n} rules · evaluated top → bottom</small>
+      <small>{n} {rule_word} · evaluated top → bottom</small>
     </div>
     <button class="btn primary sm"
       hx-get="/manage/rules/new"
@@ -989,6 +1015,7 @@ fn pipeline_pane(rules: &[Rule], selected_idx: usize) -> String {
   </div>
 </aside>"##,
         n = rules.len(),
+        rule_word = if rules.len() == 1 { "rule" } else { "rules" },
     )
 }
 
@@ -1145,12 +1172,12 @@ fn inspector_pane(
         Action::Forward {
             replace_reply_to: true,
             ..
-        } => r#"<span class="tag proxy">forward · proxy</span>"#.to_string(),
-        Action::Forward { .. } => r#"<span class="tag forward">forward</span>"#.to_string(),
+        } => r#"<span class="tag proxy tip" data-tip="Forward in proxy/rewrite mode: the message is reconstructed and Reply-To is rewritten so replies route back through the worker via the same custom domain. Strips PGP signatures and attachments.">forward · proxy</span>"#.to_string(),
+        Action::Forward { .. } => r#"<span class="tag forward tip" data-tip="Forward in native mode: uses Cloudflare EmailMessage.forward(). Original bytes (PGP, attachments) pass through untouched; Reply-To is overlaid but may be ignored by some clients.">forward</span>"#.to_string(),
         Action::Drop if is_catch => {
-            r#"<span class="tag catch">drop · catch-all</span>"#.to_string()
+            r#"<span class="tag catch tip" data-tip="Pinned catch-all rule: silently drops anything no earlier rule matched. Always sits at the end and can't be deleted or moved.">drop · catch-all</span>"#.to_string()
         }
-        Action::Drop => r#"<span class="tag drop">drop</span>"#.to_string(),
+        Action::Drop => r#"<span class="tag drop tip" data-tip="Silently discard inbound mail matching this rule. No notification, no bounce.">drop</span>"#.to_string(),
     };
 
     let edit_btn = format!(
@@ -1244,7 +1271,7 @@ fn inspector_pane(
         r##"<section class="inspector-pane">
   <div class="inspector-header">
     <div class="meta">
-      <div class="id-row"><span>rule · {id}</span>{action_tag}</div>
+      <div class="id-row"><span class="tip" data-tip="Stable random identifier (UUID v4) for this rule. Used in the URL when editing or deleting and in stats keyed by rule.">rule · {id}</span>{action_tag}</div>
       <h2>{label}</h2>
       <span class="pat-display">{pattern}</span>
     </div>
@@ -1270,13 +1297,15 @@ fn inspector_pane(
 /// last-match (from AE) when available, plus destinations count + channels.
 fn render_stat_strip(rule: &Rule, dest_count: usize, stats: Option<&Stats7d>) -> String {
     let rule_stats = stats.and_then(|s| s.by_rule.get(&rule.id));
+    let m_tip = r#"data-tip="Number of inbound emails this rule matched in the last 7 days. Sourced from Cloudflare Analytics Engine.""#;
+    let l_tip = r#"data-tip="When this rule last matched an inbound email. Sourced from Cloudflare Analytics Engine.""#;
     let matches_cell = match rule_stats {
         Some(rs) => format!(
-            r##"<div><span class="k">matches · 7d</span><span class="v fwd">{}</span></div>"##,
+            r##"<div><span class="k tip" {m_tip}>matches · 7d</span><span class="v fwd">{}</span></div>"##,
             rs.matches
         ),
         None => format!(
-            r##"<div><span class="k">matches · 7d</span><span class="v muted">—</span><span class="sub">{}</span></div>"##,
+            r##"<div><span class="k tip" {m_tip}>matches · 7d</span><span class="v muted">—</span><span class="sub">{}</span></div>"##,
             if stats.is_none() {
                 "stats unavailable"
             } else {
@@ -1286,11 +1315,12 @@ fn render_stat_strip(rule: &Rule, dest_count: usize, stats: Option<&Stats7d>) ->
     };
     let last_cell = match rule_stats.and_then(|rs| rs.last_match_s) {
         Some(ts_s) => format!(
-            r##"<div><span class="k">last match</span><span class="v">{}</span><span class="sub">unix · {ts_s}</span></div>"##,
+            r##"<div><span class="k tip" {l_tip}>last match</span><span class="v">{}</span><span class="sub">unix · {ts_s}</span></div>"##,
             relative_time_from_seconds(ts_s, stats.map(|s| s.generated_at).unwrap_or(0))
         ),
-        None => r##"<div><span class="k">last match</span><span class="v muted">—</span></div>"##
-            .to_string(),
+        None => format!(
+            r##"<div><span class="k tip" {l_tip}>last match</span><span class="v muted">—</span></div>"##
+        ),
     };
 
     let channels = match &rule.action {
@@ -1328,8 +1358,8 @@ fn render_stat_strip(rule: &Rule, dest_count: usize, stats: Option<&Stats7d>) ->
         r##"<div class="stat-strip">
   {matches_cell}
   {last_cell}
-  <div><span class="k">destinations</span><span class="v">{dest_count}</span></div>
-  <div><span class="k">channels</span><span class="v" style="font-size:14px">{channels}</span></div>
+  <div><span class="k tip" data-tip="Total destination targets attached to this forward rule. Each can be an email address, Telegram chat, or Discord channel.">destinations</span><span class="v">{dest_count}</span></div>
+  <div><span class="k tip" data-tip="Breakdown of destinations by channel kind: email · tg (Telegram) · dc (Discord).">channels</span><span class="v" style="font-size:14px">{channels}</span></div>
 </div>"##,
     )
 }
@@ -1396,9 +1426,9 @@ fn relative_time_from_seconds(ts_s: i64, now_ms: i64) -> String {
 /// a tag indicating native vs. proxy mode.
 fn destinations_card(destinations: &[Destination], replace_reply_to: bool) -> String {
     let mode_tag = if replace_reply_to {
-        r#"<span class="tag proxy">proxy mode</span>"#
+        r#"<span class="tag proxy tip" data-tip="Proxy/rewrite mode: messages are reconstructed via Email Service so Reply-To works when replying via the same custom domain. Strips PGP signatures and attachments.">proxy mode</span>"#
     } else {
-        r#"<span class="tag forward">native mode</span>"#
+        r#"<span class="tag forward tip" data-tip="Native mode: uses EmailMessage.forward() — original bytes (PGP, attachments, formatting) pass through untouched. Reply-To is overlaid but may be ignored by some mail clients.">native mode</span>"#
     };
     let body = if destinations.is_empty() {
         r#"<div class="empty">No destinations — this forward is a no-op until you add at least one.</div>"#.to_string()

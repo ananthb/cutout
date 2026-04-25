@@ -23,9 +23,7 @@ Transparent email alias proxy — like [SimpleLogin](https://simplelogin.io) or 
 
 ## Getting Started
 
-See the **[Deployment Guide](doc/deploy.md)** for instructions on how to fork and deploy your own instance of Cutout using GitHub Actions.
-
-For a detailed manual setup, see the **[Setup Guide](doc/setup.md)**.
+See the **[Deploy guide](https://ananthb.github.io/cutout/deploy.html)** for step-by-step instructions on forking and deploying your own instance of Cutout to Cloudflare via GitHub Actions.
 
 ## Features
 
