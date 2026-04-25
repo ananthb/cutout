@@ -104,6 +104,22 @@ pub async fn email(
 
     match result {
         types::EmailResult::Dispatch(dispatch) => {
+            if let Some(instr) = &dispatch.forward_email {
+                let headers = web_sys::Headers::new()
+                    .map_err(|e| JsValue::from_str(&format!("Headers::new: {e:?}")))?;
+                headers
+                    .set("Reply-To", &instr.reply_to)
+                    .map_err(|e| JsValue::from_str(&format!("set Reply-To: {e:?}")))?;
+                headers
+                    .set("X-Cutout-Forwarded", "1")
+                    .map_err(|e| JsValue::from_str(&format!("set X-Cutout-Forwarded: {e:?}")))?;
+                headers
+                    .set("X-Original-From", &instr.original_from)
+                    .map_err(|e| JsValue::from_str(&format!("set X-Original-From: {e:?}")))?;
+
+                let promise = message.forward(&instr.destination, &headers);
+                wasm_bindgen_futures::JsFuture::from(promise).await?;
+            }
             for outbound in &dispatch.send_emails {
                 email::send::send_outbound(&worker_env, outbound)
                     .await

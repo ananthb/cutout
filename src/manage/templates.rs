@@ -336,11 +336,17 @@ pub fn rule_row(rule: &Rule, index: usize, issues: &[Issue]) -> String {
     );
 
     let (action_class, action_label, action_detail) = match &rule.action {
-        Action::Forward { destinations } => (
-            "action-forward",
-            "Forward",
-            render_destinations(destinations),
-        ),
+        Action::Forward {
+            destinations,
+            replace_reply_to,
+        } => {
+            let label = if *replace_reply_to {
+                "Forward (Rewrite)"
+            } else {
+                "Forward"
+            };
+            ("action-forward", label, render_destinations(destinations))
+        }
         Action::Drop => ("action-drop", "Drop", String::new()),
     };
 
@@ -551,6 +557,12 @@ fn add_rule_form(enabled: &EnabledChannels) -> String {
     <div class="form-group" id="dest-group">
       <label>Destinations</label>
       {dest_field}
+      <div style="margin-top:0.75rem">
+        <label style="display:flex;align-items:center;font-weight:normal;font-size:0.85rem">
+          <input type="checkbox" name="replace_reply_to" style="margin-right:0.5rem">
+          Rewrite From/Reply-To (guarantees proxy works, but breaks PGP/attachments)
+        </label>
+      </div>
     </div>
     <div style="display:flex;gap:8px">
       <button type="submit" class="btn primary">Add Rule</button>
@@ -565,10 +577,14 @@ fn add_rule_form(enabled: &EnabledChannels) -> String {
 
 /// Edit rule form partial (returned for HTMX swap into #edit-area).
 pub fn edit_rule_form(rule: &Rule, enabled: &EnabledChannels) -> String {
-    let (action_type, destinations): (&str, &[Destination]) = match &rule.action {
-        Action::Forward { destinations } => ("forward", destinations.as_slice()),
-        Action::Drop => ("drop", &[]),
-    };
+    let (action_type, destinations, replace_reply_to): (&str, &[Destination], bool) =
+        match &rule.action {
+            Action::Forward {
+                destinations,
+                replace_reply_to,
+            } => ("forward", destinations.as_slice(), *replace_reply_to),
+            Action::Drop => ("drop", &[], false),
+        };
     let dest_display = if action_type == "forward" {
         "block"
     } else {
@@ -584,6 +600,7 @@ pub fn edit_rule_form(rule: &Rule, enabled: &EnabledChannels) -> String {
     } else {
         ""
     };
+    let replace_checked = if replace_reply_to { " checked" } else { "" };
     let dest_field = destinations_field("edit-dest", enabled, destinations);
 
     format!(
@@ -614,6 +631,12 @@ pub fn edit_rule_form(rule: &Rule, enabled: &EnabledChannels) -> String {
     <div class="form-group" id="edit-dest-group" style="display:{dest_display}">
       <label>Destinations</label>
       {dest_field}
+      <div style="margin-top:0.75rem">
+        <label style="display:flex;align-items:center;font-weight:normal;font-size:0.85rem">
+          <input type="checkbox" name="replace_reply_to" {replace_checked}>
+          <span style="margin-left:0.5rem">Rewrite From/Reply-To (guarantees proxy works, but breaks PGP/attachments)</span>
+        </label>
+      </div>
     </div>
     <div style="display:flex;gap:8px">
       <button type="submit" class="btn primary">Save</button>
@@ -676,14 +699,23 @@ pub fn tester_page(
                 Some(idx) => {
                     let rule = &rules[idx];
                     let action_detail = match &rule.action {
-                        Action::Forward { destinations } => {
+                        Action::Forward {
+                            destinations,
+                            replace_reply_to,
+                        } => {
+                            let mode = if *replace_reply_to {
+                                " (rewrite mode)"
+                            } else {
+                                " (native mode)"
+                            };
                             format!(
-                                "Forward to {}",
+                                "Forward to {}{}",
                                 destinations
                                     .iter()
                                     .map(|d| format!("{}:{}", d.kind_label(), d.value()))
                                     .collect::<Vec<_>>()
-                                    .join(", ")
+                                    .join(", "),
+                                mode
                             )
                         }
                         Action::Drop => "Drop".to_string(),

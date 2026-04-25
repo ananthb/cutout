@@ -87,7 +87,10 @@ async fn execute_action(
             Ok(EmailResult::Drop)
         }
 
-        Action::Forward { destinations } => {
+        Action::Forward {
+            destinations,
+            replace_reply_to,
+        } => {
             if destinations.is_empty() {
                 return Ok(EmailResult::Drop);
             }
@@ -106,21 +109,29 @@ async fn execute_action(
             let parsed = mime::parse_email(raw_bytes);
 
             let mut dispatch = Dispatch::default();
+            let mut email_count = 0usize;
 
             for dest in destinations {
                 match dest {
                     Destination::Email { address } => {
-                        // Always use structured send_email for email destinations.
-                        // CF's message.forward() only allows X- headers and often
-                        // fails to override an existing Reply-To from the original
-                        // message. structured_forward_email ensures our reverse-alias
-                        // Reply-To is set correctly.
-                        dispatch.send_emails.push(structured_forward_email(
-                            parsed.as_ref(),
-                            &reverse_addr,
-                            address,
-                            from,
-                        ));
+                        if !replace_reply_to && email_count == 0 {
+                            // High-fidelity native forward for the first destination.
+                            // Preserves PGP/attachments.
+                            dispatch.forward_email = Some(ForwardInstruction {
+                                destination: address.clone(),
+                                reply_to: reverse_addr.clone(),
+                                original_from: from.to_string(),
+                            });
+                        } else {
+                            // Structured send_email for extra destinations or if forced.
+                            dispatch.send_emails.push(structured_forward_email(
+                                parsed.as_ref(),
+                                &reverse_addr,
+                                address,
+                                from,
+                            ));
+                        }
+                        email_count += 1;
                     }
                     Destination::Telegram { chat_id } => {
                         dispatch.bot_forwards.push(BotForward {
@@ -160,7 +171,8 @@ async fn execute_action(
             }
 
             console_log!(
-                "Forwarding from {from} via {to} (rule: {rule_label}): send_emails={} bots={}",
+                "Forwarding from {from} via {to} (rule: {rule_label}): native={} send_emails={} bots={}",
+                dispatch.forward_email.is_some() as u8,
                 dispatch.send_emails.len(),
                 dispatch.bot_forwards.len()
             );
@@ -300,6 +312,12 @@ mod tests {
             "Alice (alice@example.org) <reply+abc@proxy.com>"
         );
         assert_eq!(outbound.reply_to, Some(reverse_addr.to_string()));
+
+        // Should include the original sender in headers
+        assert!(outbound
+            .headers
+            .iter()
+            .any(|(n, v)| n == "X-Original-From" && v == "alice@example.org"));
     }
 
     #[test]

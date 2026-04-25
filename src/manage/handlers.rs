@@ -43,7 +43,20 @@ fn parse_action(form: &serde_json::Value) -> std::result::Result<Action, String>
                 .and_then(|v| v.as_str())
                 .unwrap_or("");
             let destinations = Destination::parse_list(raw)?;
-            Ok(Action::Forward { destinations })
+            let replace_reply_to = form
+                .get("replace_reply_to")
+                .and_then(|v| {
+                    if v.is_boolean() {
+                        v.as_bool()
+                    } else {
+                        v.as_str().map(|s| s == "true" || s == "on")
+                    }
+                })
+                .unwrap_or(false);
+            Ok(Action::Forward {
+                destinations,
+                replace_reply_to,
+            })
         }
         _ => Ok(Action::Drop),
     }

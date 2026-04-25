@@ -90,4 +90,28 @@ mod tests {
             Some("prev789@proxy.example.com")
         );
     }
+
+    #[test]
+    fn test_inline_pgp_preservation() {
+        let pgp_email = b"From: Alice <alice@example.org>\r\n\
+            To: shop@proxy.com\r\n\
+            Subject: Secret\r\n\
+            \r\n\
+            -----BEGIN PGP SIGNED MESSAGE-----\r\n\
+            Hash: SHA256\r\n\
+            \r\n\
+            This is a secret message.\r\n\
+            -----BEGIN PGP SIGNATURE-----\r\n\
+            Version: GnuPG v2\r\n\
+            \r\n\
+            iQEcBAEBCAAGBQJ...\r\n\
+            -----END PGP SIGNATURE-----\r\n";
+
+        let parsed = parse_email(pgp_email).expect("should parse");
+        let body = parsed.text_body.unwrap();
+
+        assert!(body.contains("-----BEGIN PGP SIGNED MESSAGE-----"));
+        assert!(body.contains("This is a secret message."));
+        assert!(body.contains("-----END PGP SIGNATURE-----"));
+    }
 }

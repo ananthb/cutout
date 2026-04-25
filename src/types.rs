@@ -25,7 +25,11 @@ impl Rule {
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum Action {
     /// Forward inbound mail to one or more destinations (mixed-channel).
-    Forward { destinations: Vec<Destination> },
+    Forward {
+        destinations: Vec<Destination>,
+        #[serde(default)]
+        replace_reply_to: bool,
+    },
     /// Silently drop.
     Drop,
 }
@@ -165,6 +169,18 @@ pub struct OutboundEmail {
     pub headers: Vec<(String, String)>,
 }
 
+/// Instruction to Cloudflare to forward the inbound message via the native
+/// `EmailMessage.forward()` call. Preserves original From/To/DKIM. The
+/// destination must be verified in the zone's Email Routing Destination
+/// Addresses list.
+pub struct ForwardInstruction {
+    pub destination: String,
+    /// Reply-To to overlay so recipient replies route back through the proxy.
+    pub reply_to: String,
+    /// Original sender for archival headers.
+    pub original_from: String,
+}
+
 /// Bot-channel forward: send the parsed email content to a chat via the
 /// relevant bot API. The caller saves a [`botrelay::ReplyContext`] keyed by
 /// the returned message id so replies route back.
@@ -198,6 +214,9 @@ pub enum EmailResult {
 /// Bot forwards fan out to Telegram/Discord.
 #[derive(Default)]
 pub struct Dispatch {
+    /// At most one — assigned to the first email destination if replace_reply_to
+    /// is false, ensuring high fidelity (PGP/attachments preserved).
+    pub forward_email: Option<ForwardInstruction>,
     /// Email destinations sent via structured `send_email`.
     pub send_emails: Vec<OutboundEmail>,
     /// Telegram + Discord bot posts.
@@ -206,7 +225,7 @@ pub struct Dispatch {
 
 impl Dispatch {
     pub fn is_empty(&self) -> bool {
-        self.send_emails.is_empty() && self.bot_forwards.is_empty()
+        self.forward_email.is_none() && self.send_emails.is_empty() && self.bot_forwards.is_empty()
     }
 }
 
@@ -320,11 +339,13 @@ mod tests {
             destinations: vec![Destination::Email {
                 address: "a@b".into(),
             }],
+            replace_reply_to: true,
         };
         let j = serde_json::to_value(&a).unwrap();
         assert_eq!(j["type"], "forward");
         assert_eq!(j["destinations"][0]["kind"], "email");
         assert_eq!(j["destinations"][0]["address"], "a@b");
+        assert_eq!(j["replace_reply_to"], true);
     }
 
     #[test]
