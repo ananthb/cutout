@@ -43,22 +43,6 @@ footer { margin-top: 4rem; padding-top: 1rem; border-top: 1px solid var(--border
   <img src="https://deploy.workers.cloudflare.com/button" alt="Deploy to Cloudflare">
 </a>
 
-<h2>How it works</h2>
-<ol>
-  <li>You own one or more domains with <strong>Cloudflare Email Routing</strong> (inbound) and <strong>Email Service</strong> (outbound)</li>
-  <li>Someone emails <code>anything@yourdomain.com</code></li>
-  <li>Cutout worker is triggered, matches the recipient against your rules, and forwards the email to your real address</li>
-  <li>A Forward rule can fan out to multiple destinations of mixed kinds: email, Telegram chat, Discord channel</li>
-  <li>For email destinations:
-    <ul>
-      <li><strong>Native mode</strong> preserves original <code>From</code>/<code>To</code>/DKIM/attachments (best for PGP); <code>Reply-To</code> is overlaid for proxying.</li>
-      <li><strong>Proxy mode</strong> reconstructs the message to ensure <code>Reply-To</code> works when replying via the same domain (strips signatures/attachments).</li>
-    </ul>
-    Both modes inject an <code>X-Original-From</code> header for permanent archival in your inbox.
-  </li>
-  <li>For Telegram/Discord: the bot posts the content to the chat; replies route back via email</li>
-</ol>
-
 <h2>Built on</h2>
 <ul>
   <li><strong>Cloudflare Workers</strong> — Rust compiled to WebAssembly</li>
