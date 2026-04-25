@@ -341,7 +341,7 @@ pub fn rule_row(rule: &Rule, index: usize, issues: &[Issue]) -> String {
             replace_reply_to,
         } => {
             let label = if *replace_reply_to {
-                "Forward (Rewrite)"
+                "Forward (Proxy)"
             } else {
                 "Forward"
             };
@@ -555,14 +555,15 @@ fn add_rule_form(enabled: &EnabledChannels) -> String {
       </select>
     </div>
     <div class="form-group" id="dest-group">
-      <label>Destinations</label>
-      {dest_field}
-      <div style="margin-top:0.75rem">
-        <label style="display:flex;align-items:center;font-weight:normal;font-size:0.85rem">
-          <input type="checkbox" name="replace_reply_to" style="margin-right:0.5rem">
-          Rewrite From/Reply-To (guarantees proxy works, but breaks PGP/attachments)
+      <label style="display:flex;align-items:center;justify-content:space-between">
+        Destinations
+        <label style="display:flex;align-items:center;font-weight:normal;font-size:0.85rem;cursor:pointer">
+          <input type="checkbox" name="replace_reply_to" style="margin-right:0.4rem">
+          Proxy via rewrite mode
         </label>
-      </div>
+      </label>
+      {dest_field}
+      <div class="form-help" style="margin-top:0.25rem">Rewrite mode ensures reply-to works when replying via the same domain, but strips PGP and attachments.</div>
     </div>
     <div style="display:flex;gap:8px">
       <button type="submit" class="btn primary">Add Rule</button>
@@ -629,14 +630,15 @@ pub fn edit_rule_form(rule: &Rule, enabled: &EnabledChannels) -> String {
       </select>
     </div>
     <div class="form-group" id="edit-dest-group" style="display:{dest_display}">
-      <label>Destinations</label>
-      {dest_field}
-      <div style="margin-top:0.75rem">
-        <label style="display:flex;align-items:center;font-weight:normal;font-size:0.85rem">
-          <input type="checkbox" name="replace_reply_to" {replace_checked}>
-          <span style="margin-left:0.5rem">Rewrite From/Reply-To (guarantees proxy works, but breaks PGP/attachments)</span>
+      <label style="display:flex;align-items:center;justify-content:space-between">
+        Destinations
+        <label style="display:flex;align-items:center;font-weight:normal;font-size:0.85rem;cursor:pointer">
+          <input type="checkbox" name="replace_reply_to" {replace_checked} style="margin-right:0.4rem">
+          Proxy via rewrite mode
         </label>
-      </div>
+      </label>
+      {dest_field}
+      <div class="form-help" style="margin-top:0.25rem">Rewrite mode ensures reply-to works when replying via the same domain, but strips PGP and attachments.</div>
     </div>
     <div style="display:flex;gap:8px">
       <button type="submit" class="btn primary">Save</button>
@@ -704,7 +706,7 @@ pub fn tester_page(
                             replace_reply_to,
                         } => {
                             let mode = if *replace_reply_to {
-                                " (rewrite mode)"
+                                " (proxy mode)"
                             } else {
                                 " (native mode)"
                             };
