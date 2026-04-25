@@ -5,9 +5,10 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Cutout | Documentation</title>
 <meta name="description" content="Documentation for Cutout, a transparent email alias proxy for Cloudflare Workers.">
+<link rel="icon" type="image/svg+xml" href="cutout-mark.svg">
 <style>
-:root { --bg: #fff; --fg: #1a1a1a; --muted: #555; --accent: #2563eb; --code-bg: #f5f6f8; --border: #e0e0e0; --max-w: 740px; }
-@media (prefers-color-scheme: dark) { :root { --bg: #121212; --fg: #e0e0e0; --muted: #aaa; --accent: #60a5fa; --code-bg: #2a2a2a; --border: #3a3a3a; } }
+:root { --bg: #fff; --fg: #1a1a1a; --muted: #555; --accent: #dd793a; --code-bg: #f5f6f8; --border: #e0e0e0; --max-w: 740px; }
+@media (prefers-color-scheme: dark) { :root { --bg: #121212; --fg: #e0e0e0; --muted: #aaa; --accent: #e89060; --code-bg: #2a2a2a; --border: #3a3a3a; } }
 * { margin: 0; padding: 0; box-sizing: border-box; }
 body { font-family: system-ui, -apple-system, sans-serif; background: var(--bg); color: var(--fg); line-height: 1.6; }
 .container { max-width: var(--max-w); margin: 0 auto; padding: 2rem 1.5rem; }
@@ -36,7 +37,7 @@ footer { margin-top: 4rem; padding-top: 1rem; border-top: 1px solid var(--border
   <a href="https://github.com/ananthb/cutout/blob/main/doc/setup.md">Setup</a>
 </nav>
 
-<h1>Cutout</h1>
+<h1 style="display:flex;align-items:center;gap:0.6rem"><img src="cutout-mark.svg" width="28" height="28" alt="" style="display:block">Cutout</h1>
 <p>Transparent email alias proxy — like SimpleLogin or addy.io, built entirely on Cloudflare Workers. No servers, no containers, no monthly VM bills.</p>
 
 <a class="deploy-btn" href="https://deploy.workers.cloudflare.com/?url=https://github.com/ananthb/cutout">

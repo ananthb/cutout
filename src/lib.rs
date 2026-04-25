@@ -34,9 +34,11 @@ use worker::*;
 mod bots;
 mod db;
 mod email;
+mod events;
 mod helpers;
 pub mod kv;
 mod manage;
+mod stats;
 mod types;
 mod validation;
 
@@ -98,13 +100,29 @@ pub async fn email(
     uint8.copy_to(&mut raw_bytes);
 
     let worker_env: Env = env.into();
+    let size_bytes = raw_bytes.len() as u64;
 
-    let result = email::handler::handle_email(&from, &to, &raw_bytes, &worker_env)
+    let outcome = email::handler::handle_email(&from, &to, &raw_bytes, &worker_env)
         .await
         .map_err(|e| JsValue::from_str(&format!("Email handler error: {e}")))?;
 
-    match result {
+    let mut channels: Vec<String> = Vec::new();
+
+    match outcome.result {
         types::EmailResult::Dispatch(dispatch) => {
+            if dispatch.forward_email.is_some() || !dispatch.send_emails.is_empty() {
+                channels.push("email".into());
+            }
+            for f in &dispatch.bot_forwards {
+                let label = match &f.channel {
+                    types::BotChannel::Telegram { .. } => "telegram",
+                    types::BotChannel::Discord { .. } => "discord",
+                };
+                if !channels.iter().any(|c| c == label) {
+                    channels.push(label.into());
+                }
+            }
+
             if let Some(instr) = &dispatch.forward_email {
                 let headers = web_sys::Headers::new()
                     .map_err(|e| JsValue::from_str(&format!("Headers::new: {e:?}")))?;
@@ -137,6 +155,24 @@ pub async fn email(
         }
         types::EmailResult::Drop => {
             // Silently consume
+        }
+    }
+
+    // Record event after dispatch executes so channel/size reflect what
+    // actually happened. Failures in the analytics path must not affect
+    // the email's outcome.
+    let event = events::Event {
+        ts: events::now_ms(),
+        kind: outcome.event_kind,
+        from: from.clone(),
+        to: to.clone(),
+        rule_id: outcome.matched_rule_id,
+        channels,
+        size_bytes,
+    };
+    if let Ok(kv) = worker_env.kv("KV") {
+        if let Err(e) = events::record(&worker_env, &kv, &event).await {
+            console_log!("event record failed: {e}");
         }
     }
 

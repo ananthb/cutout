@@ -5,8 +5,20 @@ use worker::*;
 
 use super::{forward, mime, routing};
 use crate::db;
+use crate::events::EventKind;
 use crate::kv;
 use crate::types::*;
+
+/// What `handle_email` decided to do with an inbound message, plus the
+/// metadata needed to record an event after the dispatch executes.
+pub struct EmailOutcome {
+    pub result: EmailResult,
+    /// `id` of the rule that fired (if any).
+    pub matched_rule_id: Option<String>,
+    /// Event category for analytics. Channels are derived by the caller
+    /// from the realised `Dispatch`.
+    pub event_kind: EventKind,
+}
 
 /// Handle an incoming email. Called from the wasm_bindgen email() export.
 pub async fn handle_email(
@@ -14,14 +26,20 @@ pub async fn handle_email(
     to: &str,
     raw_bytes: &[u8],
     env: &Env,
-) -> Result<EmailResult> {
+) -> Result<EmailOutcome> {
     let kv_store = env.kv("KV")?;
     let database = env.d1("DB")?;
 
     // Split recipient into local@domain
     let (local, domain) = match to.rsplit_once('@') {
         Some((l, d)) => (l.to_lowercase(), d.to_lowercase()),
-        None => return Ok(EmailResult::Reject("Invalid recipient".into())),
+        None => {
+            return Ok(EmailOutcome {
+                result: EmailResult::Reject("Invalid recipient".into()),
+                matched_rule_id: None,
+                event_kind: EventKind::Reject,
+            });
+        }
     };
 
     // Loop detection: check for our forwarding header in the raw email headers.
@@ -39,13 +57,26 @@ pub async fn handle_email(
         .any(|w| w == b"x-cutout-forwarded:")
     {
         console_log!("Loop detected: {from} -> {to}");
-        return Ok(EmailResult::Reject("Forwarding loop detected".into()));
+        return Ok(EmailOutcome {
+            result: EmailResult::Reject("Forwarding loop detected".into()),
+            matched_rule_id: None,
+            event_kind: EventKind::Reject,
+        });
     }
 
     // Check if this is a reverse alias reply (parse email only for this path).
     if forward::is_reverse_alias(to) {
         let parsed = mime::parse_email(raw_bytes);
-        return handle_reverse_alias(to, &parsed, &database).await;
+        let result = handle_reverse_alias(to, &parsed, &database).await?;
+        let event_kind = match &result {
+            EmailResult::Reject(_) => EventKind::Reject,
+            _ => EventKind::Reply,
+        };
+        return Ok(EmailOutcome {
+            result,
+            matched_rule_id: None,
+            event_kind,
+        });
     }
 
     // Load and match routing rules from KV.
@@ -54,7 +85,7 @@ pub async fn handle_email(
 
     match matched_rule {
         Some(rule) => {
-            execute_action(
+            let result = execute_action(
                 &rule.action,
                 &rule.label,
                 from,
@@ -63,11 +94,25 @@ pub async fn handle_email(
                 &database,
                 &domain,
             )
-            .await
+            .await?;
+            let event_kind = match &result {
+                EmailResult::Dispatch(_) => EventKind::Forward,
+                EmailResult::Drop => EventKind::Drop,
+                EmailResult::Reject(_) => EventKind::Reject,
+            };
+            Ok(EmailOutcome {
+                result,
+                matched_rule_id: Some(rule.id.clone()),
+                event_kind,
+            })
         }
         None => {
             console_log!("No matching rule for {to}, dropping");
-            Ok(EmailResult::Drop)
+            Ok(EmailOutcome {
+                result: EmailResult::Drop,
+                matched_rule_id: None,
+                event_kind: EventKind::Drop,
+            })
         }
     }
 }

@@ -5,8 +5,10 @@ use worker::*;
 use super::templates;
 use crate::bots::EnabledChannels;
 use crate::email::routing;
+use crate::events;
 use crate::helpers::generate_id;
 use crate::kv;
+use crate::stats;
 use crate::types::*;
 use crate::validation;
 
@@ -62,9 +64,32 @@ fn parse_action(form: &serde_json::Value) -> std::result::Result<Action, String>
     }
 }
 
-fn render_rules(rules: &[Rule], enabled: &EnabledChannels) -> String {
+/// Read the requested "selected rule" from a form payload.
+fn selected_from_form(form: &serde_json::Value) -> Option<&str> {
+    form.get("selected")
+        .and_then(|v| v.as_str())
+        .filter(|s| !s.is_empty())
+}
+
+/// Read `?rule=…` from the request URL.
+fn selected_from_query(req: &Request) -> Option<String> {
+    let url = req.url().ok()?;
+    url.query_pairs()
+        .find(|(k, _)| k == "rule")
+        .map(|(_, v)| v.into_owned())
+        .filter(|s| !s.is_empty())
+}
+
+async fn render_workbench(
+    env: &Env,
+    rules: &[Rule],
+    enabled: &EnabledChannels,
+    selected: Option<&str>,
+) -> String {
     let report = validation::validate(rules, enabled);
-    templates::rules_list_partial(rules, &report)
+    let idx = templates::pick_selected_idx(rules, selected);
+    let stats = stats::fetch_7d(env).await;
+    templates::workbench_response(rules, &report, enabled, idx, stats.as_ref())
 }
 
 /// If validation rejects the proposed rule set, return a 400 response with a
@@ -77,13 +102,28 @@ fn validation_error_response(report: &validation::Report) -> Result<Response> {
 }
 
 /// GET /manage — list rules
-pub async fn list_rules(env: &Env, email: &str) -> Result<Response> {
+pub async fn list_rules(req: Request, env: &Env, email: &str) -> Result<Response> {
     let kv_store = env.kv("KV")?;
     let rules = ensure_catch_all(&kv_store).await?;
     let enabled = EnabledChannels::from_env(env);
     let report = validation::validate(&rules, &enabled);
+    let selected = selected_from_query(&req);
+    let stats = stats::fetch_7d(env).await;
 
-    Response::from_html(templates::rules_page(&rules, email, &report, &enabled))
+    Response::from_html(templates::rules_page(
+        &rules,
+        email,
+        &report,
+        &enabled,
+        selected.as_deref(),
+        stats.as_ref(),
+    ))
+}
+
+/// GET /manage/rules/new — return the new-rule modal as an HTMX partial.
+pub async fn new_rule_form(env: &Env) -> Result<Response> {
+    let enabled = EnabledChannels::from_env(env);
+    Response::from_html(templates::new_rule_modal(&enabled))
 }
 
 /// POST /manage/rules — create a new rule (inserted before catch-all)
@@ -118,6 +158,7 @@ pub async fn create_rule(mut req: Request, env: &Env) -> Result<Response> {
             .to_string(),
     };
 
+    let new_id = rule.id.clone();
     let insert_pos = rules.len().saturating_sub(1);
     rules.insert(insert_pos, rule);
 
@@ -128,7 +169,7 @@ pub async fn create_rule(mut req: Request, env: &Env) -> Result<Response> {
     }
 
     kv::save_rules(&kv_store, &rules).await?;
-    Response::from_html(render_rules(&rules, &enabled))
+    Response::from_html(render_workbench(env, &rules, &enabled, Some(&new_id)).await)
 }
 
 /// GET /manage/rules/{id}/edit — return edit form partial
@@ -181,11 +222,11 @@ pub async fn update_rule(mut req: Request, env: &Env, rule_id: &str) -> Result<R
     }
 
     kv::save_rules(&kv_store, &rules).await?;
-    Response::from_html(render_rules(&rules, &enabled))
+    Response::from_html(render_workbench(env, &rules, &enabled, Some(rule_id)).await)
 }
 
 /// DELETE /manage/rules/{id} — delete a rule (blocked for catch-all)
-pub async fn delete_rule(env: &Env, rule_id: &str) -> Result<Response> {
+pub async fn delete_rule(mut req: Request, env: &Env, rule_id: &str) -> Result<Response> {
     let kv_store = env.kv("KV")?;
     let mut rules = kv::get_rules(&kv_store).await?;
 
@@ -195,10 +236,17 @@ pub async fn delete_rule(env: &Env, rule_id: &str) -> Result<Response> {
         }
     }
 
+    // Best-effort selection preservation: if the deleted rule was selected,
+    // fall back to whatever the form said (or default in template).
+    let form: serde_json::Value = req.json().await.unwrap_or(serde_json::Value::Null);
+    let selected = selected_from_form(&form)
+        .filter(|s| *s != rule_id)
+        .map(str::to_string);
+
     rules.retain(|r| r.id != rule_id);
     kv::save_rules(&kv_store, &rules).await?;
     let enabled = EnabledChannels::from_env(env);
-    Response::from_html(render_rules(&rules, &enabled))
+    Response::from_html(render_workbench(env, &rules, &enabled, selected.as_deref()).await)
 }
 
 /// POST /manage/rules/reorder — move a rule up or down
@@ -208,13 +256,16 @@ pub async fn reorder_rules(mut req: Request, env: &Env) -> Result<Response> {
 
     let rule_id = form.get("id").and_then(|v| v.as_str()).unwrap_or("");
     let direction = form.get("direction").and_then(|v| v.as_str()).unwrap_or("");
+    let selected = selected_from_form(&form).map(str::to_string);
 
     let mut rules = kv::get_rules(&kv_store).await?;
 
     let enabled = EnabledChannels::from_env(env);
     if let Some(pos) = rules.iter().position(|r| r.id == rule_id) {
         if rules[pos].is_catch_all() {
-            return Response::from_html(render_rules(&rules, &enabled));
+            return Response::from_html(
+                render_workbench(env, &rules, &enabled, selected.as_deref()).await,
+            );
         }
 
         let catch_all_pos = rules.len().saturating_sub(1);
@@ -231,7 +282,7 @@ pub async fn reorder_rules(mut req: Request, env: &Env) -> Result<Response> {
     }
 
     kv::save_rules(&kv_store, &rules).await?;
-    Response::from_html(render_rules(&rules, &enabled))
+    Response::from_html(render_workbench(env, &rules, &enabled, selected.as_deref()).await)
 }
 
 /// GET /manage/test — rule tester page.
@@ -268,4 +319,38 @@ pub async fn tester_run(mut req: Request, env: &Env, email: &str) -> Result<Resp
         })
     };
     Response::from_html(templates::tester_page(&rules, email, result, &enabled))
+}
+
+/// GET /manage/events?since={unix_ms} — JSON tail of the event ring buffer.
+/// Returns `{events: [...], now: <unix_ms>}`. Polled by the dashboard.
+pub async fn list_events(req: Request, env: &Env) -> Result<Response> {
+    let kv_store = env.kv("KV")?;
+    let since = req
+        .url()
+        .ok()
+        .and_then(|u| {
+            u.query_pairs()
+                .find(|(k, _)| k == "since")
+                .map(|(_, v)| v.into_owned())
+        })
+        .and_then(|s| s.parse::<i64>().ok());
+
+    let events = events::recent(&kv_store, since).await?;
+    let body = serde_json::json!({
+        "events": events,
+        "now": events::now_ms(),
+    });
+    let mut resp = Response::from_json(&body)?;
+    let headers = resp.headers_mut();
+    headers.set("Cache-Control", "no-store")?;
+    Ok(resp)
+}
+
+/// GET /manage/assets/cutout-mark.svg — favicon / brand mark.
+pub async fn brand_mark() -> Result<Response> {
+    let mut resp = Response::ok(templates::LOGO_SVG_FILE)?;
+    let headers = resp.headers_mut();
+    headers.set("Content-Type", "image/svg+xml")?;
+    headers.set("Cache-Control", "public, max-age=86400")?;
+    Ok(resp)
 }

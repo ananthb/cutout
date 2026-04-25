@@ -48,8 +48,15 @@ jobs:
           database_name = "cutout-db"
           database_id = "${D1_DATABASE_ID}"
 
+          [[analytics_engine_datasets]]
+          binding = "EVENTS"
+          dataset = "cutout_events"
+
           [vars]
           ENVIRONMENT = "production"
+          # Account id is non-sensitive; the Worker uses it to build the
+          # Analytics Engine SQL API URL when CF_API_TOKEN is set.
+          CF_ACCOUNT_ID = "${CLOUDFLARE_ACCOUNT_ID}"
 
           [observability.logs]
           enabled = true
@@ -74,6 +81,10 @@ jobs:
         run: |
           echo "${{ secrets.CF_ACCESS_TEAM }}" | nix develop --command wrangler secret put CF_ACCESS_TEAM -c wrangler.production.toml
           echo "${{ secrets.CF_ACCESS_AUD }}" | nix develop --command wrangler secret put CF_ACCESS_AUD -c wrangler.production.toml
+          # Optional: CF_API_TOKEN unlocks the dashboard's stats panels
+          # (Account Analytics: Read scope). Empty value is OK — stats just
+          # stay hidden until you add the secret in repo settings.
+          echo "${{ secrets.CF_API_TOKEN }}" | nix develop --command wrangler secret put CF_API_TOKEN -c wrangler.production.toml
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}

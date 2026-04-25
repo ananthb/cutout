@@ -5,9 +5,10 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>How It Works | Cutout</title>
 <meta name="description" content="How Cutout handles inbound emails, reverse-alias routing, and multi-channel forwarding.">
+<link rel="icon" type="image/svg+xml" href="cutout-mark.svg">
 <style>
-:root { --bg: #fff; --fg: #1a1a1a; --muted: #555; --accent: #2563eb; --code-bg: #f5f6f8; --border: #e0e0e0; --max-w: 740px; }
-@media (prefers-color-scheme: dark) { :root { --bg: #121212; --fg: #e0e0e0; --muted: #aaa; --accent: #60a5fa; --code-bg: #2a2a2a; --border: #3a3a3a; } }
+:root { --bg: #fff; --fg: #1a1a1a; --muted: #555; --accent: #dd793a; --code-bg: #f5f6f8; --border: #e0e0e0; --max-w: 740px; }
+@media (prefers-color-scheme: dark) { :root { --bg: #121212; --fg: #e0e0e0; --muted: #aaa; --accent: #e89060; --code-bg: #2a2a2a; --border: #3a3a3a; } }
 * { margin: 0; padding: 0; box-sizing: border-box; }
 body { font-family: system-ui, -apple-system, sans-serif; background: var(--bg); color: var(--fg); line-height: 1.6; }
 .container { max-width: var(--max-w); margin: 0 auto; padding: 2rem 1.5rem; }
@@ -35,7 +36,7 @@ footer { margin-top: 3rem; padding-top: 1rem; border-top: 1px solid var(--border
   <a href="https://github.com/ananthb/cutout/blob/main/doc/setup.md">Setup</a>
 </nav>
 
-<h1>How It Works</h1>
+<h1 style="display:flex;align-items:center;gap:0.6rem"><img src="cutout-mark.svg" width="28" height="28" alt="" style="display:block">How It Works</h1>
 <p>Cutout sits between the outside world and your real email address, acting as an invisible relay.</p>
 
 <h2>Inbound flow (someone emails one of your addresses)</h2>

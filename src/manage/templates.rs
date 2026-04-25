@@ -1,245 +1,753 @@
 //! HTML templates for the management UI.
+//!
+//! Layout: a "pipeline workbench" — left pane lists routing rules as a
+//! vertical pipeline (top-to-bottom evaluation order), right pane is an
+//! inspector for the selected rule. Edit/add forms render as overlays.
 
 use crate::bots::EnabledChannels;
+use crate::email::routing;
 use crate::helpers::html_escape;
+use crate::stats::Stats7d;
 use crate::types::{Action, Destination, Rule};
-use crate::validation::{Issue, Report};
+use crate::validation::Report;
+
+/// Cutout brand mark, inline. Filled bottom-right square interlocks with
+/// an outlined top-left square; the overlap is "cut out". Colors honor
+/// `--accent` / `--bg-1` so it adapts to light/dark.
+const LOGO_SVG: &str = r##"<svg width="22" height="22" viewBox="0 0 22 22" aria-hidden="true" style="display:block">
+  <rect x="1.5" y="1.5" width="13" height="13" rx="2" fill="none" stroke="var(--accent)" stroke-width="1.6"/>
+  <rect x="7.5" y="7.5" width="13" height="13" rx="2" fill="var(--accent)"/>
+  <rect x="7.5" y="7.5" width="7" height="7" fill="var(--bg-1)" stroke="var(--accent)" stroke-width="1.6"/>
+</svg>"##;
 
 const CSS: &str = r##"
 :root {
-  --bg: #fff; --fg: #1a1a1a; --muted: #666; --accent: #2563eb; --accent-hover: #1d4ed8;
-  --code-bg: #f5f6f8; --border: #e0e0e0; --border-light: #f0f0f0;
-  --ok: #16a34a; --warn: #dc2626;
-  --r-sm: 6px; --r-md: 10px;
+  --font-mono: "JetBrains Mono", ui-monospace, "SF Mono", Menlo, monospace;
+  --font-sans: "Inter", system-ui, -apple-system, sans-serif;
+
+  --bg: oklch(0.99 0.004 80);
+  --bg-1: oklch(0.975 0.005 80);
+  --bg-2: oklch(0.955 0.006 80);
+  --bg-inset: oklch(0.93 0.008 80);
+  --fg: oklch(0.18 0.01 60);
+  --fg-1: oklch(0.36 0.01 60);
+  --fg-2: oklch(0.56 0.012 60);
+  --fg-3: oklch(0.72 0.012 60);
+  --line: oklch(0.9 0.008 70);
+  --line-2: oklch(0.85 0.01 70);
+
+  --accent: oklch(0.68 0.17 48);
+  --accent-fg: oklch(0.99 0.004 80);
+  --accent-soft: oklch(0.95 0.04 60);
+
+  --ok: oklch(0.62 0.14 150);
+  --ok-soft: oklch(0.95 0.04 150);
+  --warn: oklch(0.7 0.15 80);
+  --warn-soft: oklch(0.95 0.04 80);
+  --bad: oklch(0.6 0.17 25);
+  --bad-soft: oklch(0.95 0.04 25);
+  --info: oklch(0.62 0.13 240);
+  --info-soft: oklch(0.95 0.04 240);
+
+  --ch-email: oklch(0.62 0.13 240);
+  --ch-discord: oklch(0.55 0.15 285);
+  --ch-telegram: oklch(0.65 0.13 230);
+
+  --r-xs: 3px; --r-sm: 5px; --r-md: 8px;
 }
 @media (prefers-color-scheme: dark) {
   :root {
-    --bg: #121212; --fg: #e0e0e0; --muted: #999; --accent: #60a5fa; --accent-hover: #93bbfd;
-    --code-bg: #1e1e1e; --border: #333; --border-light: #2a2a2a;
-    --ok: #4ade80; --warn: #f87171;
+    --bg: oklch(0.16 0.005 60);
+    --bg-1: oklch(0.19 0.006 60);
+    --bg-2: oklch(0.22 0.007 60);
+    --bg-inset: oklch(0.13 0.005 60);
+    --fg: oklch(0.95 0.004 80);
+    --fg-1: oklch(0.82 0.005 80);
+    --fg-2: oklch(0.62 0.008 80);
+    --fg-3: oklch(0.45 0.008 80);
+    --line: oklch(0.28 0.008 60);
+    --line-2: oklch(0.35 0.01 60);
+    --accent: oklch(0.74 0.16 52);
+    --accent-fg: oklch(0.16 0.005 60);
+    --accent-soft: oklch(0.28 0.04 50);
+    --ok: oklch(0.72 0.14 150);
+    --ok-soft: oklch(0.26 0.04 150);
+    --warn: oklch(0.78 0.14 80);
+    --warn-soft: oklch(0.26 0.04 80);
+    --bad: oklch(0.7 0.16 25);
+    --bad-soft: oklch(0.26 0.04 25);
+    --info: oklch(0.74 0.12 240);
+    --info-soft: oklch(0.26 0.04 240);
+    --ch-email: oklch(0.74 0.12 240);
+    --ch-discord: oklch(0.7 0.14 285);
+    --ch-telegram: oklch(0.74 0.12 230);
   }
 }
-* { box-sizing: border-box; margin: 0; padding: 0; }
-html, body { background: var(--bg); color: var(--fg); font-family: system-ui, -apple-system, sans-serif;
-  font-size: 15px; line-height: 1.5; }
+
+*, *::before, *::after { box-sizing: border-box; }
+html, body { margin: 0; padding: 0; }
+body {
+  font-family: var(--font-sans);
+  font-size: 14px; line-height: 1.45;
+  color: var(--fg); background: var(--bg);
+  -webkit-font-smoothing: antialiased;
+}
+button { font: inherit; color: inherit; background: none; border: 0; cursor: pointer; padding: 0; }
+input, select, textarea { font: inherit; color: inherit; }
 a { color: var(--accent); text-decoration: none; }
 a:hover { text-decoration: underline; }
-code { background: var(--code-bg); padding: 0.15rem 0.4rem; border-radius: 3px;
-  font-family: ui-monospace, monospace; font-size: 0.85em; }
-.container { max-width: 800px; margin: 0 auto; padding: 2rem 1.5rem; }
-header { border-bottom: 1px solid var(--border); padding: 1rem 1.5rem; }
-header .inner { max-width: 800px; margin: 0 auto; display: flex; align-items: center; justify-content: space-between; }
-header h1 { font-size: 1.1rem; font-weight: 600; }
-header .user { font-size: 0.85rem; color: var(--muted); }
-h2 { font-size: 1.25rem; margin-bottom: 1rem; }
-.btn { display: inline-flex; align-items: center; gap: 6px; padding: 8px 14px;
-  border-radius: var(--r-sm); border: 1px solid var(--border);
-  background: var(--bg); color: var(--fg); font-size: 0.85rem; cursor: pointer;
-  transition: background 0.15s; }
-.btn:hover { background: var(--code-bg); }
-.btn.primary { background: var(--accent); color: #fff; border-color: var(--accent); }
-.btn.primary:hover { background: var(--accent-hover); }
-.btn.danger { color: var(--warn); }
-.btn.danger:hover { background: #fef2f2; }
-.btn.sm { padding: 4px 8px; font-size: 0.8rem; }
+code { font-family: var(--font-mono); font-size: 0.88em; }
+.mono { font-family: var(--font-mono); }
+
+/* page shell -------------------------------------------------------- */
+.workbench-shell {
+  display: flex; flex-direction: column;
+  min-height: 100vh;
+}
+.topbar {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 10px 18px;
+  background: var(--bg-1);
+  border-bottom: 1px solid var(--line);
+}
+.topbar .brand { display: flex; align-items: center; gap: 14px; }
+.topbar .brand .title { display: flex; flex-direction: column; line-height: 1.1; }
+.topbar .brand .title b { font-weight: 600; font-size: 14px; }
+.topbar .brand .title small { font-family: var(--font-mono); font-size: 10.5px; color: var(--fg-2); }
+.topbar .right { display: flex; align-items: center; gap: 12px; font-size: 11.5px; color: var(--fg-2); }
+.topbar .right .health { display: inline-flex; align-items: center; gap: 6px; font-family: var(--font-mono); }
+.topbar .right .health .dot { width: 6px; height: 6px; border-radius: 999px; background: var(--ok); }
+.topbar .right .user { font-family: var(--font-mono); }
+.topbar nav.tabs { display: flex; gap: 0; }
+.topbar nav.tabs a {
+  display: inline-flex; align-items: center; gap: 6px;
+  padding: 6px 10px; font-size: 12px; font-weight: 500;
+  color: var(--fg-2);
+  border-radius: var(--r-sm);
+}
+.topbar nav.tabs a.current { color: var(--fg); background: var(--bg-2); }
+.topbar nav.tabs a:hover { text-decoration: none; background: var(--bg-2); }
+.microstats { display: flex; align-items: center; gap: 14px; }
+.microstat { display: flex; flex-direction: column; line-height: 1.1; gap: 1px; }
+.microstat .v {
+  font-size: 14px; font-weight: 600;
+  font-family: var(--font-mono);
+}
+.microstat .v.fwd  { color: var(--accent); }
+.microstat .v.drp  { color: var(--bad); }
+.microstat .v.muted { color: var(--fg-3); }
+.microstat .k {
+  font-family: var(--font-mono);
+  font-size: 9.5px; color: var(--fg-2);
+  text-transform: uppercase; letter-spacing: 0.06em;
+}
+
+.workbench {
+  flex: 1; min-height: 0;
+  display: grid; grid-template-columns: 440px 1fr;
+}
+@media (max-width: 880px) {
+  .workbench { grid-template-columns: 1fr; }
+}
+
+/* pipeline pane ----------------------------------------------------- */
+.pipeline-pane {
+  border-right: 1px solid var(--line);
+  background: var(--bg-1);
+  display: flex; flex-direction: column;
+  min-height: 0;
+}
+.pipeline-pane > header {
+  padding: 12px 16px; border-bottom: 1px solid var(--line);
+  display: flex; align-items: center; justify-content: space-between;
+}
+.pipeline-pane > header h3 {
+  margin: 0; font-size: 12px; font-family: var(--font-mono);
+  text-transform: uppercase; letter-spacing: 0.08em;
+}
+.pipeline-pane > header small {
+  display: block;
+  font-family: var(--font-mono); font-size: 10.5px; color: var(--fg-2);
+}
+.pipeline-list { padding: 16px 14px; }
+.pipeline-node {
+  display: inline-flex; align-items: center; gap: 10px;
+  padding: 8px 10px;
+  border: 1px dashed var(--line-2);
+  border-radius: var(--r-sm);
+  background: var(--bg-2);
+  font-family: var(--font-mono); font-size: 11px;
+  text-transform: uppercase; letter-spacing: 0.07em; color: var(--fg-1);
+}
+.pipeline-node .dot { width: 8px; height: 8px; border-radius: 999px; background: var(--fg-3); }
+.pipeline-node.enter .dot { background: var(--ok); }
+.pipeline-connector { margin-left: 14px; height: 16px; border-left: 2px dotted var(--line-2); }
+
+.rule-card {
+  display: block;
+  border-radius: var(--r-md);
+  border: 1px solid var(--line);
+  background: var(--bg);
+  overflow: hidden;
+  position: relative;
+  transition: box-shadow 0.15s, border-color 0.15s;
+  text-decoration: none;
+  color: inherit;
+}
+.rule-card:hover { text-decoration: none; border-color: var(--line-2); }
+.rule-card.selected {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px color-mix(in oklch, var(--accent) 18%, transparent);
+}
+.rule-card .grid { display: grid; grid-template-columns: 40px 1fr; }
+.rule-card .order {
+  display: flex; flex-direction: column; align-items: center; justify-content: center;
+  gap: 4px; padding: 10px 0;
+  border-right: 1px solid var(--line);
+  font-family: var(--font-mono); font-size: 14px; font-weight: 700;
+}
+.rule-card .order.fwd  { background: color-mix(in oklch, var(--accent) 12%, var(--bg-1)); color: var(--accent); }
+.rule-card .order.drop { background: color-mix(in oklch, var(--bad) 12%, var(--bg-1)); color: var(--bad); }
+.rule-card .order.catch { background: var(--bg-inset); color: var(--fg-2); }
+.rule-card .body { padding: 10px 12px; display: flex; flex-direction: column; gap: 6px; min-width: 0; }
+.rule-card .row1 { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.rule-card .label {
+  font-size: 13px; font-weight: 600;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.rule-card .row2 { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.rule-card .pat-pill {
+  padding: 3px 6px; background: var(--bg-inset); border-radius: 4px;
+  font-family: var(--font-mono); font-size: 11.5px;
+}
+.rule-card .channels { display: inline-flex; gap: 6px; align-items: center; color: var(--fg-2); }
+.rule-card .move-tools {
+  position: absolute; top: 6px; right: 6px;
+  display: flex; gap: 2px;
+  background: var(--bg-1); padding: 2px;
+  border: 1px solid var(--line); border-radius: 4px;
+  opacity: 0; pointer-events: none; transition: opacity 0.12s;
+}
+.rule-card.selected .move-tools, .rule-card:hover .move-tools { opacity: 1; pointer-events: auto; }
+
+/* inspector pane ---------------------------------------------------- */
+.inspector-pane { overflow-y: auto; min-height: 0; display: flex; flex-direction: column; }
+.inspector-header {
+  padding: 16px 24px; border-bottom: 1px solid var(--line);
+  display: flex; align-items: flex-start; justify-content: space-between; gap: 16px;
+}
+.inspector-header .meta { display: flex; flex-direction: column; gap: 6px; min-width: 0; }
+.inspector-header .meta .id-row {
+  display: flex; align-items: center; gap: 8px;
+  font-family: var(--font-mono); font-size: 10.5px;
+  text-transform: uppercase; letter-spacing: 0.08em; color: var(--fg-2);
+}
+.inspector-header h2 { margin: 0; font-size: 22px; font-weight: 600; }
+.inspector-header .pat-display {
+  display: inline-flex; align-items: center; gap: 6px;
+  background: var(--bg-inset); padding: 4px 10px; border-radius: 5px;
+  width: fit-content;
+  font-family: var(--font-mono); font-size: 13px; font-weight: 500;
+}
+.inspector-body { padding: 24px; display: flex; flex-direction: column; gap: 18px; }
+
+.stat-strip {
+  display: grid; grid-template-columns: repeat(4, 1fr);
+  border: 1px solid var(--line); border-radius: var(--r-md);
+  background: var(--bg-1); overflow: hidden;
+}
+.stat-strip > div { padding: 14px 16px; display: flex; flex-direction: column; gap: 4px; }
+.stat-strip > div + div { border-left: 1px solid var(--line); }
+.stat-strip .k {
+  font-family: var(--font-mono); font-size: 10px;
+  text-transform: uppercase; letter-spacing: 0.07em; color: var(--fg-2);
+}
+.stat-strip .v {
+  font-family: var(--font-mono);
+  font-size: 22px; font-weight: 600;
+}
+.stat-strip .v.fwd { color: var(--accent); }
+.stat-strip .v.drp { color: var(--bad); }
+.stat-strip .v.muted { color: var(--fg-2); }
+.stat-strip .sub {
+  font-family: var(--font-mono); font-size: 10.5px; color: var(--fg-3);
+}
+
+.senders { display: flex; flex-direction: column; gap: 6px; }
+.sender-row { display: grid; grid-template-columns: 1fr 44px; gap: 8px; align-items: center; }
+.sender-bar {
+  position: relative; height: 22px;
+  background: var(--bg-inset); border-radius: 3px; overflow: hidden;
+}
+.sender-bar > .fill {
+  position: absolute; inset: 0;
+  background: color-mix(in oklch, var(--accent) 55%, transparent);
+}
+.sender-bar > .label {
+  position: relative; padding: 0 8px;
+  line-height: 22px; font-family: var(--font-mono);
+  font-size: 11.5px; color: var(--fg);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  display: block;
+}
+.sender-row .n {
+  text-align: right; font-family: var(--font-mono); font-size: 11.5px;
+}
+
+.stats-missing {
+  font-size: 11.5px; color: var(--fg-2);
+  font-family: var(--font-mono);
+}
+
+/* live feed (bottom pane) ----------------------------------------- */
+.live-feed {
+  flex-shrink: 0;
+  border-top: 1px solid var(--line);
+  background: var(--bg-inset);
+  height: 220px;
+  display: flex; flex-direction: column;
+  transition: height 0.18s ease;
+}
+.live-feed.collapsed { height: 36px; }
+.live-feed-bar {
+  height: 36px; flex-shrink: 0;
+  display: flex; align-items: center; gap: 12px;
+  padding: 0 16px;
+  border-bottom: 1px solid var(--line);
+}
+.live-feed.collapsed .live-feed-bar { border-bottom: 0; }
+.live-feed-bar .filters { display: flex; gap: 4px; }
+.live-feed-bar .filter-chip {
+  font-family: var(--font-mono); font-size: 11px;
+  padding: 2px 7px; border-radius: 3px;
+  border: 1px solid transparent;
+  background: transparent; color: var(--fg-2);
+  cursor: pointer;
+}
+.live-feed-bar .filter-chip.active {
+  background: var(--bg-1); color: var(--fg);
+  border-color: var(--line-2);
+}
+.live-feed-body {
+  flex: 1; overflow-y: auto;
+  font-family: var(--font-mono); font-size: 11.5px;
+  padding: 6px 16px 12px;
+}
+.live-row {
+  display: grid;
+  grid-template-columns: 78px 70px 1fr 18px 1fr 70px 60px;
+  gap: 10px; align-items: center;
+  padding: 3px 0;
+  color: var(--fg-1);
+}
+.live-row .ts { color: var(--fg-3); }
+.live-row .evt { font-weight: 600; }
+.live-row.k-forward .evt { color: var(--accent); }
+.live-row.k-drop .evt { color: var(--bad); }
+.live-row.k-reply .evt { color: var(--info); }
+.live-row.k-reject .evt { color: var(--warn); }
+.live-row .addr { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.live-row .arrow { color: var(--fg-3); }
+.live-row .chs { display: flex; gap: 3px; }
+.live-row .ch {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 14px; height: 14px; border-radius: 3px;
+  font-size: 9px; font-weight: 700; color: #fff;
+}
+.live-row .ch.ch-email    { background: var(--ch-email); }
+.live-row .ch.ch-telegram { background: var(--ch-telegram); }
+.live-row .ch.ch-discord  { background: var(--ch-discord); }
+.live-row .size { text-align: right; color: var(--fg-2); }
+.live-feed-body .empty { font-size: 12px; color: var(--fg-2); text-align: center; padding: 18px; }
+
+.card {
+  background: var(--bg-1);
+  border: 1px solid var(--line);
+  border-radius: var(--r-md);
+}
+.card > header {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 12px 16px; border-bottom: 1px solid var(--line);
+}
+.card > header h3 {
+  margin: 0; font-size: 12px; font-weight: 600;
+  font-family: var(--font-mono);
+  text-transform: uppercase; letter-spacing: 0.08em;
+  color: var(--fg-1);
+}
+.card > header small {
+  font-family: var(--font-mono); font-size: 11px; color: var(--fg-2);
+}
+.card-body { padding: 16px; }
+
+.dest-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 10px; }
+.dest-card {
+  display: flex; align-items: center; gap: 10px;
+  border: 1px solid var(--line); border-radius: var(--r-sm);
+  padding: 10px 12px; background: var(--bg);
+}
+.dest-card .icon-wrap {
+  width: 28px; height: 28px; border-radius: 6px;
+  display: inline-flex; align-items: center; justify-content: center;
+}
+.dest-card.email    .icon-wrap { background: color-mix(in oklch, var(--ch-email) 18%, transparent);    color: var(--ch-email); }
+.dest-card.telegram .icon-wrap { background: color-mix(in oklch, var(--ch-telegram) 18%, transparent); color: var(--ch-telegram); }
+.dest-card.discord  .icon-wrap { background: color-mix(in oklch, var(--ch-discord) 18%, transparent);  color: var(--ch-discord); }
+.dest-card .meta { min-width: 0; flex: 1; display: flex; flex-direction: column; gap: 1px; }
+.dest-card .kind {
+  font-family: var(--font-mono); font-size: 11px; color: var(--fg-2);
+  text-transform: uppercase; letter-spacing: 0.06em;
+}
+.dest-card .value {
+  font-family: var(--font-mono); font-size: 12.5px;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+
+/* match sandbox ---------------------------------------------------- */
+.sandbox { display: flex; flex-direction: column; gap: 10px; }
+.sandbox .help { font-size: 11.5px; color: var(--fg-2); }
+.sandbox .input-row { display: flex; gap: 6px; }
+.sandbox .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }
+.sandbox .item {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 6px 10px; border: 1px solid var(--line);
+  border-radius: 4px;
+  font-family: var(--font-mono); font-size: 11.5px;
+  background: var(--bg);
+  color: var(--fg-2);
+}
+.sandbox .item.ok {
+  background: color-mix(in oklch, var(--ok) 9%, transparent);
+  border-color: var(--ok); color: var(--fg);
+}
+.sandbox .item.no { opacity: 0.6; }
+.sandbox .item .mark.ok { color: var(--ok); }
+.sandbox .item .mark.no { color: var(--fg-3); }
+
+/* atoms (chip / tag / btn / field / input) -------------------------- */
+.chip {
+  display: inline-flex; align-items: center; gap: 6px;
+  height: 22px; padding: 0 8px;
+  border-radius: 999px; border: 1px solid var(--line);
+  background: var(--bg-1); color: var(--fg-1);
+  font-family: var(--font-mono); font-size: 11px;
+  letter-spacing: 0.01em; white-space: nowrap;
+}
+.chip .dot { width: 6px; height: 6px; border-radius: 999px; background: currentColor; }
+.chip.email    { color: var(--ch-email); }
+.chip.discord  { color: var(--ch-discord); }
+.chip.telegram { color: var(--ch-telegram); }
+.chip.ok    { color: var(--ok); }
+.chip.warn  { color: var(--warn); }
+.chip.bad   { color: var(--bad); }
+.chip.info  { color: var(--info); }
+
+.tag {
+  display: inline-flex; align-items: center; gap: 4px;
+  height: 20px; padding: 0 6px;
+  border-radius: var(--r-xs);
+  font-family: var(--font-mono); font-size: 11px; font-weight: 500;
+  background: var(--bg-inset); color: var(--fg-1);
+}
+.tag.forward { background: var(--info-soft); color: var(--info); }
+.tag.proxy   { background: var(--accent-soft); color: var(--accent); }
+.tag.drop    { background: var(--bad-soft); color: var(--bad); }
+.tag.catch   { background: var(--warn-soft); color: var(--warn); }
+
+.btn {
+  display: inline-flex; align-items: center; gap: 6px;
+  height: 30px; padding: 0 12px;
+  border: 1px solid var(--line);
+  border-radius: var(--r-sm);
+  background: var(--bg-1); color: var(--fg);
+  font-size: 12.5px; font-weight: 500;
+  white-space: nowrap;
+  transition: background 0.12s, border-color 0.12s;
+  text-decoration: none;
+}
+.btn:hover { background: var(--bg-2); border-color: var(--line-2); text-decoration: none; }
+.btn.primary { background: var(--accent); border-color: var(--accent); color: var(--accent-fg); }
+.btn.primary:hover { filter: brightness(1.04); background: var(--accent); }
+.btn.ghost { border-color: transparent; background: transparent; }
+.btn.ghost:hover { background: var(--bg-2); }
+.btn.danger { color: var(--bad); }
+.btn.danger:hover { background: var(--bad-soft); border-color: var(--bad); }
+.btn.sm { height: 24px; padding: 0 8px; font-size: 11.5px; }
+.btn.icon { width: 30px; padding: 0; justify-content: center; }
+.btn.icon.sm { width: 24px; }
 .btn:disabled { opacity: 0.4; cursor: not-allowed; }
-.rule-list { border: 1px solid var(--border); border-radius: var(--r-md); overflow: hidden; }
-.rule-row { display: grid; grid-template-columns: 40px 1fr 120px 1fr auto; gap: 12px;
-  padding: 12px 16px; align-items: center; border-bottom: 1px solid var(--border-light); font-size: 0.9rem; }
-.rule-row:last-child { border-bottom: none; }
-.rule-row .order { color: var(--muted); font-size: 0.8rem; text-align: center; font-family: ui-monospace, monospace; }
-.rule-row .pattern { font-family: ui-monospace, monospace; font-weight: 500; }
-.rule-row .action-tag { display: inline-flex; padding: 2px 8px; border-radius: 999px;
-  font-size: 0.75rem; font-weight: 500; }
-.action-forward { background: #dbeafe; color: #1e40af; }
-.action-drop { background: #fef2f2; color: #991b1b; }
-@media (prefers-color-scheme: dark) {
-  .action-forward { background: #1e3a5f; color: #93bbfd; }
-  .action-drop { background: #3b1111; color: #f87171; }
-  .btn.danger:hover { background: #3b1111; }
+.htmx-request.btn, .htmx-request .btn { opacity: 0.6; pointer-events: none; }
+
+.field { display: flex; flex-direction: column; gap: 4px; }
+.field > label {
+  font-family: var(--font-mono); font-size: 10.5px;
+  text-transform: uppercase; letter-spacing: 0.06em;
+  color: var(--fg-2);
 }
-.rule-row .actions { display: flex; gap: 4px; }
-.rule-head { display: grid; grid-template-columns: 40px 1fr 120px 1fr auto; gap: 12px;
-  padding: 10px 16px; background: var(--code-bg); font-size: 0.75rem; font-weight: 600;
-  text-transform: uppercase; letter-spacing: 0.05em; color: var(--muted); border-bottom: 1px solid var(--border); }
-.catch-all { background: var(--code-bg); }
-.form-card { border: 1px solid var(--border); border-radius: var(--r-md); padding: 20px; margin-top: 1.5rem; }
-.form-group { margin-bottom: 1rem; }
-.form-group label { display: block; margin-bottom: 4px; font-size: 0.85rem; font-weight: 500; }
-.form-group input, .form-group select { width: 100%; padding: 8px 10px; border: 1px solid var(--border);
-  border-radius: var(--r-sm); font-size: 0.9rem; background: var(--bg); color: var(--fg); }
-.form-group input:focus, .form-group select:focus { outline: none; border-color: var(--accent);
-  box-shadow: 0 0 0 3px rgba(37,99,235,0.15); }
-.form-row { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
-.form-help { font-size: 0.8rem; color: var(--muted); margin-top: 4px; }
-.toast { padding: 12px; border-radius: var(--r-sm); margin-bottom: 1rem; font-size: 0.9rem; }
-.toast.success { background: #dcfce7; color: #166534; }
-.toast.error { background: #fef2f2; color: #991b1b; }
-@media (prefers-color-scheme: dark) {
-  .toast.success { background: #14532d; color: #bbf7d0; }
-  .toast.error { background: #450a0a; color: #fecaca; }
+.field > .help { font-size: 11.5px; color: var(--fg-2); }
+.input, .select {
+  height: 32px; padding: 0 10px;
+  border: 1px solid var(--line); border-radius: var(--r-sm);
+  background: var(--bg); color: var(--fg);
+  font-size: 13px; font-family: var(--font-mono);
+  outline: none;
+  transition: border-color 0.12s, box-shadow 0.12s;
 }
-.htmx-request .btn { opacity: 0.6; pointer-events: none; }
-.dest-tag { display: inline-block; padding: 1px 6px; border-radius: 4px;
-  font-family: ui-monospace, monospace; font-size: 0.75rem; margin-right: 4px; }
-.dest-email    { background: #dbeafe; color: #1e40af; }
-.dest-telegram { background: #e0f2fe; color: #075985; }
-.dest-discord  { background: #ede9fe; color: #5b21b6; }
-@media (prefers-color-scheme: dark) {
-  .dest-email    { background: #1e3a5f; color: #93bbfd; }
-  .dest-telegram { background: #0c4a6e; color: #7dd3fc; }
-  .dest-discord  { background: #3b2463; color: #c4b5fd; }
+.input:focus, .select:focus {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px color-mix(in oklch, var(--accent) 20%, transparent);
 }
-.issues { margin-top: 4px; display: flex; flex-direction: column; gap: 2px; }
-.issue { font-size: 0.75rem; padding: 2px 6px; border-radius: 3px; }
-.issue-err  { background: #fef2f2; color: #991b1b; }
-.issue-warn { background: #fef3c7; color: #92400e; }
-@media (prefers-color-scheme: dark) {
-  .issue-err  { background: #3b1111; color: #f87171; }
-  .issue-warn { background: #3a2a0a; color: #fbbf24; }
+
+.pat-input {
+  display: grid; grid-template-columns: 1fr auto 1fr; gap: 6px;
+  align-items: center; padding: 4px;
+  border: 1px solid var(--line); border-radius: var(--r-sm);
+  background: var(--bg);
 }
-.dest-field { border: 1px solid var(--border); border-radius: var(--r-sm);
-  padding: 6px; background: var(--bg); display: flex; flex-wrap: wrap;
-  gap: 4px; align-items: center; min-height: 38px; cursor: text; }
-.dest-field:focus-within { border-color: var(--accent);
-  box-shadow: 0 0 0 3px rgba(37,99,235,0.15); }
-.dest-field .chip-input { flex: 1; min-width: 180px; border: none;
-  background: transparent; outline: none; padding: 4px; font-size: 0.9rem;
-  color: var(--fg); font-family: ui-monospace, monospace; }
-.chip { display: inline-flex; align-items: center; gap: 2px;
-  padding: 2px 2px 2px 8px; border-radius: 4px;
-  font-family: ui-monospace, monospace; font-size: 0.8rem; }
-.chip button { background: none; border: none; cursor: pointer;
+.pat-input input { border: 0; height: 30px; background: transparent; outline: none;
+  font-family: var(--font-mono); font-size: 13px; padding: 0 8px; color: var(--fg); }
+.pat-input .at { color: var(--fg-3); font-family: var(--font-mono); padding: 0 4px; }
+
+.action-toggle { display: flex; gap: 6px; }
+.action-toggle button {
+  flex: 1; padding: 10px; text-align: left;
+  border: 1px solid var(--line); border-radius: var(--r-sm);
+  background: var(--bg); color: var(--fg-1);
+  display: flex; flex-direction: column; gap: 2px;
+}
+.action-toggle button.active {
+  border-color: var(--accent); background: var(--accent-soft); color: var(--accent);
+}
+.action-toggle button strong { font-weight: 600; font-size: 12.5px; }
+.action-toggle button small { font-size: 11px; color: var(--fg-2); }
+.action-toggle button.active small { color: var(--accent); opacity: 0.8; }
+
+/* destinations chip input (existing widget, restyled) -------------- */
+.dest-field {
+  border: 1px solid var(--line); border-radius: var(--r-sm);
+  padding: 6px; background: var(--bg);
+  display: flex; flex-wrap: wrap; gap: 4px; align-items: center;
+  min-height: 38px; cursor: text;
+}
+.dest-field:focus-within {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px color-mix(in oklch, var(--accent) 20%, transparent);
+}
+.dest-field .chip-input {
+  flex: 1; min-width: 180px; border: none; background: transparent;
+  outline: none; padding: 4px; font-size: 13px;
+  color: var(--fg); font-family: var(--font-mono);
+}
+.dest-chip {
+  display: inline-flex; align-items: center; gap: 2px;
+  padding: 2px 2px 2px 8px;
+  border-radius: 4px;
+  font-family: var(--font-mono); font-size: 11.5px;
+  background: var(--bg-inset); color: var(--fg-1);
+}
+.dest-chip.dest-email    { background: var(--info-soft); color: var(--info); }
+.dest-chip.dest-telegram { background: color-mix(in oklch, var(--ch-telegram) 16%, transparent); color: var(--ch-telegram); }
+.dest-chip.dest-discord  { background: color-mix(in oklch, var(--ch-discord) 16%, transparent);  color: var(--ch-discord); }
+.dest-chip button {
+  background: none; border: none; cursor: pointer;
   font-size: 1rem; line-height: 1; padding: 0 6px; color: inherit;
-  opacity: 0.6; border-radius: 3px; }
-.chip button:hover { opacity: 1; background: rgba(0,0,0,0.08); }
-.chip-error { display: none; font-size: 0.75rem; padding: 4px 6px;
-  border-radius: 3px; margin-top: 4px; background: #fef2f2; color: #991b1b; }
-.chip-error.visible { display: block; }
-@media (prefers-color-scheme: dark) {
-  .chip-error { background: #3b1111; color: #f87171; }
-  .chip button:hover { background: rgba(255,255,255,0.08); }
+  opacity: 0.6; border-radius: 3px;
 }
-.tester-result { border: 1px solid var(--border); border-radius: var(--r-md);
-  padding: 1rem; margin-top: 1rem; }
+.dest-chip button:hover { opacity: 1; background: rgba(0,0,0,0.08); }
+@media (prefers-color-scheme: dark) {
+  .dest-chip button:hover { background: rgba(255,255,255,0.08); }
+}
+.chip-error { display: none; font-size: 11.5px; padding: 4px 6px; border-radius: 3px;
+  margin-top: 4px; background: var(--bad-soft); color: var(--bad); }
+.chip-error.visible { display: block; }
+
+/* validation issues ------------------------------------------------ */
+.issues { display: flex; flex-direction: column; gap: 6px; }
+.issue {
+  display: flex; gap: 8px; align-items: flex-start;
+  padding: 8px 10px; border-radius: var(--r-sm);
+  font-size: 12px;
+}
+.issue.err  { background: var(--bad-soft); color: var(--bad); }
+.issue.warn { background: var(--warn-soft); color: var(--warn); }
+.issue .label {
+  font-family: var(--font-mono); font-size: 10px;
+  text-transform: uppercase; letter-spacing: 0.07em;
+  flex-shrink: 0; padding-top: 1px;
+}
+
+/* modal overlay ---------------------------------------------------- */
+.modal-overlay {
+  position: fixed; inset: 0; z-index: 50;
+  background: rgba(0,0,0,0.45);
+  display: flex; align-items: center; justify-content: center;
+  padding: 20px;
+}
+.modal {
+  width: 540px; max-width: 100%;
+  background: var(--bg-1); border: 1px solid var(--line);
+  border-radius: var(--r-md); overflow: hidden;
+  display: flex; flex-direction: column;
+  max-height: calc(100vh - 40px);
+}
+.modal > header {
+  padding: 14px 18px; border-bottom: 1px solid var(--line);
+  display: flex; justify-content: space-between; align-items: center;
+}
+.modal > header h3 {
+  margin: 0; font-size: 13px;
+  font-family: var(--font-mono);
+  text-transform: uppercase; letter-spacing: 0.08em;
+}
+.modal-body { padding: 18px; display: flex; flex-direction: column; gap: 14px; overflow-y: auto; }
+.modal-footer {
+  padding: 14px 18px; border-top: 1px solid var(--line);
+  display: flex; justify-content: flex-end; gap: 8px;
+}
+
+/* tester page ----------------------------------------------------- */
+.tester-shell { max-width: 720px; margin: 0 auto; padding: 24px; }
+.tester-result {
+  border: 1px solid var(--line); border-radius: var(--r-md);
+  padding: 16px; margin-top: 16px;
+  background: var(--bg-1);
+}
 .tester-result.matched { border-left: 3px solid var(--ok); }
 .tester-result.nomatch { border-left: 3px solid var(--warn); }
-@media (max-width: 640px) {
-  .rule-row, .rule-head { grid-template-columns: 1fr; gap: 4px; }
-  .form-row { grid-template-columns: 1fr; }
+
+/* misc ------------------------------------------------------------ */
+.empty {
+  padding: 28px; color: var(--fg-2); font-size: 12.5px;
+  text-align: center;
+}
+::-webkit-scrollbar { width: 10px; height: 10px; }
+::-webkit-scrollbar-thumb { background: var(--line-2); border-radius: 6px; border: 2px solid var(--bg); }
+::-webkit-scrollbar-track { background: transparent; }
+
+@media (max-width: 880px) {
+  .pipeline-pane { border-right: none; border-bottom: 1px solid var(--line); }
+  .inspector-header { flex-direction: column; align-items: stretch; }
+  .sandbox .grid { grid-template-columns: 1fr; }
 }
 "##;
 
-/// Shared client-side script for the destinations chip input. Defined once
-/// per page in `base_html`; individual destination fields call
-/// `cutoutSetupDestField` from their own inline `<script>` so it works both
-/// on first render and on HTMX-swapped edit forms.
-const CHIP_SCRIPT: &str = r##"
-(function(){
-  function parseDest(raw, enabled) {
-    const text = raw.trim();
-    if (!text) return { empty: true };
-    const idx = text.indexOf(':');
-    if (idx < 0) return { err: "use 'kind:value' (e.g. email:you@example.com)" };
-    const kindIn = text.slice(0, idx).trim().toLowerCase();
-    const value  = text.slice(idx + 1).trim();
-    if (!value) return { err: "value missing after ':'" };
-    const alias = {email:'email', telegram:'telegram', tg:'telegram', discord:'discord', dc:'discord'};
-    const kind = alias[kindIn];
-    if (!kind) return { err: "unknown kind (use email, telegram, or discord)" };
-    if (enabled.indexOf(kind) < 0) return { err: kind + " is not enabled on this deployment" };
-    if (kind === 'email') {
-      if (!value.includes('@') || value.startsWith('@') || value.endsWith('@'))
-        return { err: "email address must contain '@'" };
-      return { kind: kind, value: value.toLowerCase() };
-    }
-    if (kind === 'telegram') {
-      if (!/^-?\d+$/.test(value)) return { err: "telegram chat_id must be an integer" };
-      return { kind: kind, value: value };
-    }
-    if (kind === 'discord') {
-      if (!/^\d+$/.test(value)) return { err: "discord channel_id must be a positive integer" };
-      return { kind: kind, value: value };
-    }
-  }
-  function esc(s) { return s.replace(/[<>&"']/g, c =>
-    ({'<':'&lt;','>':'&gt;','&':'&amp;','"':'&quot;',"'":'&#x27;'}[c])); }
-  function setupDestField(root) {
-    if (!root || root.dataset.ready === '1') return;
-    root.dataset.ready = '1';
-    const field = root.querySelector('.dest-field');
-    const input = root.querySelector('.chip-input');
-    const hidden = root.querySelector('input[type=hidden]');
-    const errEl = root.querySelector('.chip-error');
-    const enabled = (root.dataset.enabled || '').split(',').filter(Boolean);
-
-    function sync() {
-      const lines = Array.from(root.querySelectorAll('.chip'))
-        .map(el => el.dataset.kind + ':' + el.dataset.value);
-      hidden.value = lines.join('\n');
-    }
-    function showErr(msg) {
-      errEl.textContent = msg || '';
-      errEl.classList.toggle('visible', !!msg);
-    }
-    function addChip(kind, value) {
-      const chip = document.createElement('span');
-      chip.className = 'chip dest-' + kind;
-      chip.dataset.kind = kind;
-      chip.dataset.value = value;
-      chip.innerHTML = esc(kind + ':' + value);
-      const btn = document.createElement('button');
-      btn.type = 'button';
-      btn.setAttribute('aria-label', 'remove');
-      btn.textContent = '\u00d7';
-      btn.onclick = () => { chip.remove(); sync(); input.focus(); };
-      chip.appendChild(btn);
-      field.insertBefore(chip, input);
-      sync();
-    }
-    function commit() {
-      const r = parseDest(input.value, enabled);
-      if (r.empty) { showErr(''); return true; }
-      if (r.err)   { showErr(r.err); return false; }
-      addChip(r.kind, r.value);
-      input.value = ''; showErr(''); return true;
-    }
-
-    // Wire up chips rendered server-side (edit form pre-fill).
-    root.querySelectorAll('.chip').forEach(chip => {
-      let btn = chip.querySelector('button');
-      if (!btn) {
-        btn = document.createElement('button');
-        btn.type = 'button';
-        btn.setAttribute('aria-label', 'remove');
-        btn.textContent = '\u00d7';
-        chip.appendChild(btn);
+/// Alpine.js component factory for the rule editor modal — owns form state
+/// (action type, destination chips, draft input, error message) and the
+/// chip-input parsing/validation logic. Mirrors `Destination::parse_line`
+/// in src/types.rs so the client gives the same errors the server would.
+/// Also exposes `cutoutCloseModal` for HTMX-injected modals.
+const ALPINE_SCRIPT: &str = r##"
+function ruleEditor(initial) {
+  return {
+    action: initial.action,
+    chips: initial.chips || [],
+    draft: '',
+    err: '',
+    enabled: initial.enabled || [],
+    serialize() { return this.chips.map(c => c.kind + ':' + c.value).join('\n'); },
+    parse(raw) {
+      const text = raw.trim();
+      if (!text) return { empty: true };
+      const idx = text.indexOf(':');
+      if (idx < 0) return { err: "use 'kind:value' (e.g. email:you@example.com)" };
+      const kindIn = text.slice(0, idx).trim().toLowerCase();
+      const value  = text.slice(idx + 1).trim();
+      if (!value) return { err: "value missing after ':'" };
+      const alias = { email: 'email', telegram: 'telegram', tg: 'telegram', discord: 'discord', dc: 'discord' };
+      const kind = alias[kindIn];
+      if (!kind) return { err: "unknown kind (use email, telegram, or discord)" };
+      if (this.enabled.indexOf(kind) < 0) return { err: kind + " is not enabled on this deployment" };
+      if (kind === 'email') {
+        if (!value.includes('@') || value.startsWith('@') || value.endsWith('@'))
+          return { err: "email address must contain '@'" };
+        return { kind, value: value.toLowerCase() };
       }
-      btn.onclick = () => { chip.remove(); sync(); input.focus(); };
-    });
-    sync();
+      if (kind === 'telegram') {
+        if (!/^-?\d+$/.test(value)) return { err: "telegram chat_id must be an integer" };
+        return { kind, value };
+      }
+      if (kind === 'discord') {
+        if (!/^\d+$/.test(value)) return { err: "discord channel_id must be a positive integer" };
+        return { kind, value };
+      }
+      return { err: "unknown kind" };
+    },
+    commit() {
+      const r = this.parse(this.draft);
+      if (r.empty) { this.err = ''; return true; }
+      if (r.err)   { this.err = r.err; return false; }
+      this.chips.push({ kind: r.kind, value: r.value });
+      this.draft = ''; this.err = '';
+      return true;
+    },
+    onSubmit(e) {
+      if (this.action === 'forward' && this.draft && !this.commit()) e.preventDefault();
+    },
+  };
+}
 
-    field.addEventListener('click', e => {
-      if (e.target === field) input.focus();
-    });
-    input.addEventListener('keydown', e => {
-      if (e.key === 'Enter' || e.key === ',') { e.preventDefault(); commit(); }
-      else if (e.key === 'Backspace' && !input.value) {
-        const chips = root.querySelectorAll('.chip');
-        if (chips.length) { chips[chips.length - 1].remove(); sync(); }
-      } else { showErr(''); }
-    });
-    const form = root.closest('form');
-    if (form) form.addEventListener('submit', e => {
-      if (!commit()) e.preventDefault();
-    });
-  }
-  window.cutoutSetupDestField = setupDestField;
-})();
+function cutoutCloseModal() {
+  const slot = document.getElementById('editor-modal');
+  if (slot) slot.innerHTML = '';
+}
+
+function liveFeed() {
+  return {
+    events: [],
+    lastTs: 0,
+    filter: 'all',
+    collapsed: false,
+    intervalId: null,
+    async init() {
+      await this.poll(true);
+      this.start();
+    },
+    start() {
+      if (this.intervalId) return;
+      this.intervalId = setInterval(() => {
+        if (!this.collapsed) this.poll(false);
+      }, 2000);
+    },
+    async poll(initial) {
+      try {
+        const url = initial ? '/manage/events'
+                            : '/manage/events?since=' + this.lastTs;
+        const r = await fetch(url, { credentials: 'same-origin' });
+        if (!r.ok) return;
+        const j = await r.json();
+        if (initial) {
+          this.events = j.events || [];
+        } else if (Array.isArray(j.events) && j.events.length) {
+          this.events = j.events.concat(this.events).slice(0, 80);
+        }
+        if (typeof j.now === 'number') this.lastTs = j.now;
+      } catch (_) { /* swallow — polling will retry */ }
+    },
+    toggle() {
+      this.collapsed = !this.collapsed;
+      if (!this.collapsed) this.poll(false);
+    },
+    visible() {
+      if (this.filter === 'all') return this.events;
+      return this.events.filter(e => e.kind === this.filter);
+    },
+    fmt_ts(ms) {
+      const d = new Date(ms);
+      const pad = n => String(n).padStart(2, '0');
+      return pad(d.getHours()) + ':' + pad(d.getMinutes()) + ':' + pad(d.getSeconds());
+    },
+    fmt_size(b) {
+      if (!b && b !== 0) return '';
+      if (b < 1024) return b + 'B';
+      if (b < 1048576) return (b / 1024).toFixed(1) + 'kb';
+      return (b / 1048576).toFixed(1) + 'mb';
+    },
+  };
+}
 "##;
 
-/// Base HTML wrapper.
-pub fn base_html(title: &str, email: &str, content: &str) -> String {
+/// Render the base HTML wrapper used by every /manage page.
+pub fn base_html(title: &str, content: &str) -> String {
     format!(
         r##"<!DOCTYPE html>
 <html lang="en">
@@ -247,236 +755,741 @@ pub fn base_html(title: &str, email: &str, content: &str) -> String {
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>{title} — Cutout</title>
+<link rel="icon" type="image/svg+xml" href="/manage/assets/cutout-mark.svg">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet">
 <style>{css}</style>
 <script src="https://unpkg.com/htmx.org@2.0.8/dist/htmx.min.js" crossorigin="anonymous"></script>
 <script src="https://unpkg.com/htmx-ext-json-enc@2.0.3/json-enc.js" crossorigin="anonymous"></script>
-<script>{chip_script}</script>
+<script>{alpine_script}</script>
+<script defer src="https://unpkg.com/alpinejs@3.14.1/dist/cdn.min.js" crossorigin="anonymous"></script>
 </head>
 <body>
-<header><div class="inner"><h1>Cutout</h1><span class="user">{email}</span></div></header>
-<div class="container">{content}</div>
+{content}
+<div id="editor-modal"></div>
 </body>
 </html>"##,
         title = html_escape(title),
         css = CSS,
-        chip_script = CHIP_SCRIPT,
-        email = html_escape(email),
+        alpine_script = ALPINE_SCRIPT,
         content = content,
     )
 }
 
-/// Full rules management page.
+/// Top bar shared across /manage pages.
+fn topbar(email: &str, current: &str, stats: Option<&Stats7d>) -> String {
+    let tab = |href: &str, label: &str, key: &str| {
+        let cls = if key == current { "current" } else { "" };
+        format!(r#"<a href="{href}" class="{cls}">{label}</a>"#)
+    };
+    let microstats = match stats {
+        Some(s) => format!(
+            r##"<span style="width:1px;height:22px;background:var(--line)"></span>
+<div class="microstats">
+  <div class="microstat"><span class="v fwd">{fwd}</span><span class="k">forwarded · 7d</span></div>
+  <div class="microstat"><span class="v drp">{drp}</span><span class="k">dropped · 7d</span></div>
+</div>"##,
+            fwd = s.forwarded_total,
+            drp = s.dropped_total,
+        ),
+        None => String::new(),
+    };
+    format!(
+        r##"<header class="topbar">
+  <div class="brand">
+    {logo}
+    <div class="title">
+      <b>Cutout</b>
+      <small>routing pipeline</small>
+    </div>
+    <span style="width:1px;height:22px;background:var(--line);margin:0 4px"></span>
+    <nav class="tabs">
+      {rules_tab}
+      {test_tab}
+    </nav>
+    {microstats}
+  </div>
+  <div class="right">
+    <span class="health"><span class="dot"></span>worker live</span>
+    <span class="user">{email}</span>
+  </div>
+</header>"##,
+        logo = LOGO_SVG,
+        rules_tab = tab("/manage", "Rules", "rules"),
+        test_tab = tab("/manage/test", "Tester", "tester"),
+        email = html_escape(email),
+    )
+}
+
+/// Full rules management page (the workbench).
 pub fn rules_page(
     rules: &[Rule],
     email: &str,
     report: &Report,
     enabled: &EnabledChannels,
+    selected_id: Option<&str>,
+    stats: Option<&Stats7d>,
 ) -> String {
-    let rows: String = rules
+    let selected_idx = pick_selected_idx(rules, selected_id);
+    let workbench = workbench(rules, report, enabled, selected_idx, stats);
+    let content = format!(
+        r##"<div class="workbench-shell">
+{topbar}
+{workbench}
+{live_feed}
+</div>"##,
+        topbar = topbar(email, "rules", stats),
+        workbench = workbench,
+        live_feed = LIVE_FEED_PANE,
+    );
+    base_html("Rules", &content)
+}
+
+/// The bottom live feed pane. Sits outside `#workbench` so its Alpine
+/// component (and the polling interval it owns) survives HTMX swaps.
+const LIVE_FEED_PANE: &str = r##"<div class="live-feed" :class="{ collapsed }"
+  x-data="liveFeed()" x-init="init()">
+  <div class="live-feed-bar">
+    <button class="btn ghost sm" @click="toggle()" type="button" style="padding:0 6px">
+      <span x-text="collapsed ? '▸' : '▾'"></span>
+      <span class="mono" style="text-transform:uppercase;letter-spacing:0.08em;font-size:11px">Live feed</span>
+    </button>
+    <span class="chip ok" style="height:20px;font-size:10.5px"><span class="dot"></span>streaming</span>
+    <div class="filters" x-show="!collapsed">
+      <template x-for="f in ['all','forward','drop','reply','reject']" :key="f">
+        <button class="filter-chip" :class="{ active: filter === f }" @click="filter = f" x-text="f" type="button"></button>
+      </template>
+    </div>
+    <span class="mono" style="margin-left:auto;font-size:11px;color:var(--fg-2)" x-text="visible().length + ' events'"></span>
+  </div>
+  <div class="live-feed-body" x-show="!collapsed">
+    <template x-for="(e, i) in visible()" :key="i + ':' + e.ts">
+      <div class="live-row" :class="'k-' + e.kind">
+        <span class="ts" x-text="fmt_ts(e.ts)"></span>
+        <span class="evt" x-text="e.kind.toUpperCase()"></span>
+        <span class="addr" x-text="e.from"></span>
+        <span class="arrow">→</span>
+        <span class="addr" x-text="e.to"></span>
+        <span class="chs">
+          <template x-for="c in e.channels" :key="c">
+            <span class="ch" :class="'ch-' + c" x-text="c[0].toUpperCase()"></span>
+          </template>
+        </span>
+        <span class="size" x-text="fmt_size(e.size_bytes)"></span>
+      </div>
+    </template>
+    <div x-show="visible().length === 0" class="empty">No events yet — they'll appear here as mail flows.</div>
+  </div>
+</div>"##;
+
+/// Pick the index of the rule to show in the inspector. Falls back to the
+/// first non-catch-all rule, or the catch-all if it's the only one.
+pub fn pick_selected_idx(rules: &[Rule], requested: Option<&str>) -> usize {
+    if let Some(id) = requested {
+        if let Some(i) = rules.iter().position(|r| r.id == id) {
+            return i;
+        }
+    }
+    rules
+        .iter()
+        .position(|r| !r.is_catch_all())
+        .unwrap_or(0)
+        .min(rules.len().saturating_sub(1))
+}
+
+/// Standalone SVG for the favicon — same mark as `LOGO_SVG`, but with
+/// colors hardcoded (no CSS vars) so it renders correctly when served as
+/// a static asset. Inner cutout uses `prefers-color-scheme` so it sits
+/// flush against light or dark browser-tab backgrounds.
+pub const LOGO_SVG_FILE: &str = r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 22 22" width="22" height="22">
+  <style>
+    .bg { fill: #ffffff; }
+    @media (prefers-color-scheme: dark) { .bg { fill: #1a1a1a; } }
+  </style>
+  <rect x="1.5" y="1.5" width="13" height="13" rx="2" fill="none" stroke="#dd793a" stroke-width="1.6"/>
+  <rect x="7.5" y="7.5" width="13" height="13" rx="2" fill="#dd793a"/>
+  <rect class="bg" x="7.5" y="7.5" width="7" height="7" stroke="#dd793a" stroke-width="1.6"/>
+</svg>"##;
+
+/// The two-pane workbench (pipeline + inspector). Wrapped in `#workbench`
+/// so HTMX endpoints can swap the whole region after CRUD.
+pub fn workbench(
+    rules: &[Rule],
+    report: &Report,
+    enabled: &EnabledChannels,
+    selected_idx: usize,
+    stats: Option<&Stats7d>,
+) -> String {
+    let pipeline = pipeline_pane(rules, selected_idx);
+    let inspector = if rules.is_empty() {
+        r#"<section class="inspector-pane"><div class="empty">No rules yet — add one to get started.</div></section>"#.to_string()
+    } else {
+        inspector_pane(rules, selected_idx, report, enabled, stats)
+    };
+    format!(
+        r##"<div id="workbench" class="workbench">
+{pipeline}
+{inspector}
+</div>"##
+    )
+}
+
+/// HTMX-targeted response: same as `workbench`, plus an out-of-band
+/// `#editor-modal` clear so any open modal closes after a successful CRUD.
+pub fn workbench_response(
+    rules: &[Rule],
+    report: &Report,
+    enabled: &EnabledChannels,
+    selected_idx: usize,
+    stats: Option<&Stats7d>,
+) -> String {
+    let body = workbench(rules, report, enabled, selected_idx, stats);
+    format!("{body}\n<div id=\"editor-modal\" hx-swap-oob=\"true\"></div>")
+}
+
+/// Left pane: pipeline of rule cards, top-to-bottom.
+fn pipeline_pane(rules: &[Rule], selected_idx: usize) -> String {
+    let cards: String = rules
         .iter()
         .enumerate()
-        .map(|(i, rule)| {
-            rule_row(
-                rule,
-                i,
-                report.issues.get(i).map(|v| v.as_slice()).unwrap_or(&[]),
-            )
+        .map(|(i, r)| {
+            let connector = r#"<div class="pipeline-connector"></div>"#;
+            format!("{connector}{}", pipeline_card(r, i, i == selected_idx))
         })
         .collect();
-
-    let nav = nav_links("rules");
-
-    let content = format!(
-        r#"{nav}
-<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:1rem">
-  <h2 style="margin:0">Routing Rules</h2>
-  <button class="btn primary" onclick="document.getElementById(&#39;add-form&#39;).style.display=&#39;block&#39;">Add Rule</button>
-</div>
-<p style="color:var(--muted);font-size:0.85rem;margin-bottom:1.5rem">
-  Rules are evaluated top-to-bottom. The first match wins. The <code>*@*</code> catch-all is always last.
-  Email destinations must be verified in Cloudflare's
-  <a href="https://dash.cloudflare.com/?to=/:account/email/routing/destination-addresses" target="_blank">Email Routing → Destination Addresses</a>
-  list.
-</p>
-<div id="rules-list" class="rule-list">
-  <div class="rule-head">
-    <div>#</div><div>Label</div><div>Pattern</div><div>Action</div><div></div>
+    format!(
+        r##"<aside class="pipeline-pane">
+  <header>
+    <div>
+      <h3>Routing pipeline</h3>
+      <small>{n} rules · evaluated top → bottom</small>
+    </div>
+    <button class="btn primary sm"
+      hx-get="/manage/rules/new"
+      hx-target="#editor-modal"
+      hx-swap="innerHTML">
+      + Rule
+    </button>
+  </header>
+  <div class="pipeline-list">
+    <div class="pipeline-node enter"><span class="dot"></span>INBOUND · email_routing</div>
+    {cards}
+    <div class="pipeline-connector"></div>
+    <div class="pipeline-node"><span class="dot"></span>END · all rules evaluated</div>
   </div>
-  {rows}
-</div>
-{add_form}"#,
-        nav = nav,
-        rows = rows,
-        add_form = add_rule_form(enabled),
-    );
-
-    base_html("Rules", email, &content)
+</aside>"##,
+        n = rules.len(),
+    )
 }
 
-fn render_destinations(destinations: &[Destination]) -> String {
-    destinations
-        .iter()
-        .map(|d| {
+/// One card in the pipeline.
+fn pipeline_card(rule: &Rule, index: usize, selected: bool) -> String {
+    let is_catch = rule.is_catch_all();
+    let is_fwd = matches!(rule.action, Action::Forward { .. });
+    let order_cls = if is_catch {
+        "order catch"
+    } else if is_fwd {
+        "order fwd"
+    } else {
+        "order drop"
+    };
+    let card_cls = if selected {
+        "rule-card selected"
+    } else {
+        "rule-card"
+    };
+
+    let action_cell = match &rule.action {
+        Action::Drop if is_catch => {
+            r#"<span class="tag catch">drop · catch-all</span>"#.to_string()
+        }
+        Action::Drop => r#"<span class="tag drop">drop</span>"#.to_string(),
+        Action::Forward { destinations, .. } => channel_dots(destinations),
+    };
+
+    let move_tools = if is_catch {
+        String::new()
+    } else {
+        let id_e = html_escape(&rule.id);
+        let up_vals = format!(r#"{{"id":"{id_e}","direction":"up"}}"#);
+        let down_vals = format!(r#"{{"id":"{id_e}","direction":"down"}}"#);
+        format!(
+            r##"<div class="move-tools" onclick="event.preventDefault();event.stopPropagation();">
+  <button class="btn ghost icon sm" title="Move up"
+    hx-post="/manage/rules/reorder" hx-vals='{up_vals}'
+    hx-target="#workbench" hx-swap="outerHTML"
+    hx-ext="json-enc"
+    hx-include="[name=selected]">↑</button>
+  <button class="btn ghost icon sm" title="Move down"
+    hx-post="/manage/rules/reorder" hx-vals='{down_vals}'
+    hx-target="#workbench" hx-swap="outerHTML"
+    hx-ext="json-enc"
+    hx-include="[name=selected]">↓</button>
+</div>"##,
+        )
+    };
+
+    format!(
+        r##"<a href="/manage?rule={id}" class="{card_cls}" data-rule-id="{id}">
+  <div class="grid">
+    <div class="{order_cls}"><span>{order:02}</span></div>
+    <div class="body">
+      <div class="row1">
+        <span class="label">{label}</span>
+      </div>
+      <div class="row2">
+        <span class="pat-pill">{pattern}</span>
+        {action_cell}
+      </div>
+    </div>
+  </div>
+  {move_tools}
+</a>"##,
+        id = html_escape(&rule.id),
+        order = index + 1,
+        label = html_escape(&rule.label),
+        pattern = pattern_html(&rule.local_pattern, &rule.domain_pattern),
+    )
+}
+
+/// Compact channel-dot row for the pipeline card (no labels, just icons).
+fn channel_dots(destinations: &[Destination]) -> String {
+    if destinations.is_empty() {
+        return r#"<span class="tag forward">forward · 0</span>"#.to_string();
+    }
+    let mut email = 0;
+    let mut telegram = 0;
+    let mut discord = 0;
+    for d in destinations {
+        match d {
+            Destination::Email { .. } => email += 1,
+            Destination::Telegram { .. } => telegram += 1,
+            Destination::Discord { .. } => discord += 1,
+        }
+    }
+    let mut parts: Vec<String> = Vec::new();
+    let push = |parts: &mut Vec<String>, ch: &str, n: usize| {
+        if n == 0 {
+            return;
+        }
+        let count = if n > 1 {
+            format!(" {n}")
+        } else {
+            String::new()
+        };
+        parts.push(format!(
+            r##"<span class="chip {ch}" style="height:20px;font-size:10.5px;padding:0 6px"><span class="dot"></span>{ch}{count}</span>"##,
+        ));
+    };
+    push(&mut parts, "email", email);
+    push(&mut parts, "telegram", telegram);
+    push(&mut parts, "discord", discord);
+    format!(r#"<span class="channels">{}</span>"#, parts.join("&nbsp;"))
+}
+
+/// Pattern with the wildcard pieces tinted accent.
+fn pattern_html(local: &str, domain: &str) -> String {
+    let piece = |s: &str| {
+        if s == "*" {
             format!(
-                r#"<span class="dest-tag dest-{kind}" title="{kind}">{kind}:{value}</span>"#,
-                kind = d.kind_label(),
-                value = html_escape(d.value()),
+                r##"<span style="color:var(--accent);font-weight:600">{}</span>"##,
+                html_escape(s)
             )
-        })
-        .collect::<Vec<_>>()
-        .join(" ")
+        } else {
+            format!(r##"<span>{}</span>"##, html_escape(s))
+        }
+    };
+    format!(
+        r##"{}<span style="color:var(--fg-3);padding:0 1px">@</span>{}"##,
+        piece(local),
+        piece(domain),
+    )
 }
 
-/// Single rule row. `issues` is the validation report for this rule only.
-pub fn rule_row(rule: &Rule, index: usize, issues: &[Issue]) -> String {
-    let pattern = format!(
-        "{}@{}",
-        html_escape(&rule.local_pattern),
-        html_escape(&rule.domain_pattern)
+/// Right pane: details for the selected rule.
+fn inspector_pane(
+    rules: &[Rule],
+    selected_idx: usize,
+    report: &Report,
+    _enabled: &EnabledChannels,
+    stats: Option<&Stats7d>,
+) -> String {
+    let rule = &rules[selected_idx];
+    let issues = report
+        .issues
+        .get(selected_idx)
+        .map(Vec::as_slice)
+        .unwrap_or(&[]);
+    let is_catch = rule.is_catch_all();
+    let is_fwd = matches!(rule.action, Action::Forward { .. });
+    let dest_count = match &rule.action {
+        Action::Forward { destinations, .. } => destinations.len(),
+        Action::Drop => 0,
+    };
+    let stat_strip = render_stat_strip(rule, dest_count, stats);
+    let top_senders_card = stats
+        .map(|s| render_top_senders(&s.top_senders))
+        .unwrap_or_default();
+
+    let action_tag = match &rule.action {
+        Action::Forward {
+            replace_reply_to: true,
+            ..
+        } => r#"<span class="tag proxy">forward · proxy</span>"#.to_string(),
+        Action::Forward { .. } => r#"<span class="tag forward">forward</span>"#.to_string(),
+        Action::Drop if is_catch => {
+            r#"<span class="tag catch">drop · catch-all</span>"#.to_string()
+        }
+        Action::Drop => r#"<span class="tag drop">drop</span>"#.to_string(),
+    };
+
+    let edit_btn = format!(
+        r##"<button class="btn"
+  hx-get="/manage/rules/{id}/edit"
+  hx-target="#editor-modal"
+  hx-swap="innerHTML">Edit</button>"##,
+        id = html_escape(&rule.id),
+    );
+    let delete_btn = if is_catch {
+        String::new()
+    } else {
+        format!(
+            r##"<button class="btn danger"
+  hx-delete="/manage/rules/{id}"
+  hx-confirm="Delete this rule?"
+  hx-target="#workbench" hx-swap="outerHTML"
+  hx-ext="json-enc"
+  hx-include="[name=selected]">Delete</button>"##,
+            id = html_escape(&rule.id),
+        )
+    };
+
+    // Hidden form holding the currently-selected rule id, picked up by
+    // hx-include on every CRUD button so the server can preserve selection
+    // across swaps.
+    let selected_form = format!(
+        r#"<form id="selection-form" style="display:none">
+  <input type="hidden" name="selected" value="{id}">
+</form>"#,
+        id = html_escape(&rule.id),
     );
 
-    let (action_class, action_label, action_detail) = match &rule.action {
+    let destinations_card = match &rule.action {
         Action::Forward {
             destinations,
             replace_reply_to,
-        } => {
-            let label = if *replace_reply_to {
-                "Forward (Proxy)"
-            } else {
-                "Forward"
-            };
-            ("action-forward", label, render_destinations(destinations))
-        }
-        Action::Drop => ("action-drop", "Drop", String::new()),
+        } => destinations_card(destinations, *replace_reply_to),
+        Action::Drop => String::new(),
     };
 
-    let is_catch_all = rule.is_catch_all();
-    let row_class = if is_catch_all {
-        "rule-row catch-all"
-    } else {
-        "rule-row"
-    };
-
-    let move_buttons = if is_catch_all {
-        String::new()
-    } else {
-        let id_escaped = html_escape(&rule.id);
-        let up_vals = format!(r#"{{"id":"{}","direction":"up"}}"#, id_escaped);
-        let down_vals = format!(r#"{{"id":"{}","direction":"down"}}"#, id_escaped);
-        format!(
-            "<button class=\"btn sm\" hx-post=\"/manage/rules/reorder\" hx-vals='{}' hx-target=\"#rules-list\" hx-swap=\"innerHTML\" hx-ext=\"json-enc\">&uarr;</button>\
-             <button class=\"btn sm\" hx-post=\"/manage/rules/reorder\" hx-vals='{}' hx-target=\"#rules-list\" hx-swap=\"innerHTML\" hx-ext=\"json-enc\">&darr;</button>",
-            up_vals, down_vals,
-        )
-    };
-
-    let delete_button = if is_catch_all {
-        String::new()
-    } else {
-        format!(
-            "<button class=\"btn sm danger\" hx-delete=\"/manage/rules/{}\" hx-target=\"#rules-list\" hx-swap=\"innerHTML\" hx-confirm=\"Delete this rule?\">Del</button>",
-            html_escape(&rule.id),
-        )
-    };
-
-    let edit_button = format!(
-        "<button class=\"btn sm\" hx-get=\"/manage/rules/{}/edit\" hx-target=\"#edit-area\" hx-swap=\"innerHTML\">Edit</button>",
-        html_escape(&rule.id),
-    );
-
-    let action_html = if action_detail.is_empty() {
-        format!(r#"<span class="action-tag {action_class}">{action_label}</span>"#)
-    } else {
-        format!(
-            r#"<span class="action-tag {action_class}">{action_label}</span> <span style="font-size:0.8rem">{action_detail}</span>"#,
-        )
-    };
-
-    let issues_html = if issues.is_empty() {
+    let issues_card = if issues.is_empty() {
         String::new()
     } else {
         let lines: String = issues
             .iter()
             .map(|i| {
-                let class = if i.is_error() { "err" } else { "warn" };
+                let (cls, label) = if i.is_error() {
+                    ("err", "ERROR")
+                } else {
+                    ("warn", "WARN")
+                };
                 format!(
-                    r#"<div class="issue issue-{class}">{msg}</div>"#,
-                    class = class,
-                    msg = html_escape(i.message())
+                    r##"<div class="issue {cls}"><span class="label">{label}</span><span>{msg}</span></div>"##,
+                    msg = html_escape(i.message()),
                 )
             })
             .collect();
-        format!(r#"<div class="issues">{lines}</div>"#)
+        format!(
+            r##"<div class="card">
+  <header><h3>Validation</h3></header>
+  <div class="card-body"><div class="issues">{lines}</div></div>
+</div>"##,
+        )
+    };
+
+    let sandbox = match_sandbox(rule);
+
+    let action_summary_card = if is_fwd {
+        String::new()
+    } else {
+        format!(
+            r##"<div class="card">
+  <header><h3>Action</h3></header>
+  <div class="card-body">
+    <p style="margin:0;color:var(--fg-2);font-size:12.5px">
+      Inbound mail matching this rule is silently dropped — no notification, no bounce.
+      {extra}
+    </p>
+  </div>
+</div>"##,
+            extra = if is_catch {
+                "This is the pinned catch-all; it always sits at the end and can't be deleted or moved."
+            } else {
+                ""
+            },
+        )
     };
 
     format!(
-        r#"<div class="{row_class}">
-  <div class="order">{order}</div>
-  <div>{label}{issues}</div>
-  <div class="pattern"><code>{pattern}</code></div>
-  <div>{action_html}</div>
-  <div class="actions">{move_buttons}{edit_button}{delete_button}</div>
-</div>"#,
-        row_class = row_class,
-        order = index + 1,
+        r##"<section class="inspector-pane">
+  <div class="inspector-header">
+    <div class="meta">
+      <div class="id-row"><span>rule · {id}</span>{action_tag}</div>
+      <h2>{label}</h2>
+      <span class="pat-display">{pattern}</span>
+    </div>
+    <div style="display:flex;gap:6px;flex-shrink:0">{edit_btn}{delete_btn}</div>
+  </div>
+  <div class="inspector-body">
+    {stat_strip}
+    {issues_card}
+    {destinations_card}
+    {action_summary_card}
+    {top_senders_card}
+    {sandbox}
+    {selected_form}
+  </div>
+</section>"##,
+        id = html_escape(&rule.id),
         label = html_escape(&rule.label),
-        issues = issues_html,
-        pattern = pattern,
-        action_html = action_html,
-        move_buttons = move_buttons,
-        edit_button = edit_button,
-        delete_button = delete_button,
+        pattern = pattern_html(&rule.local_pattern, &rule.domain_pattern),
     )
 }
 
-/// Rules list partial (just the rows, for HTMX swap).
-pub fn rules_list_partial(rules: &[Rule], report: &Report) -> String {
-    let rows: String = rules
+/// Stats strip at the top of the inspector body. Shows matches·7d /
+/// last-match (from AE) when available, plus destinations count + channels.
+fn render_stat_strip(rule: &Rule, dest_count: usize, stats: Option<&Stats7d>) -> String {
+    let rule_stats = stats.and_then(|s| s.by_rule.get(&rule.id));
+    let matches_cell = match rule_stats {
+        Some(rs) => format!(
+            r##"<div><span class="k">matches · 7d</span><span class="v fwd">{}</span></div>"##,
+            rs.matches
+        ),
+        None => format!(
+            r##"<div><span class="k">matches · 7d</span><span class="v muted">—</span><span class="sub">{}</span></div>"##,
+            if stats.is_none() {
+                "stats unavailable"
+            } else {
+                "no recent traffic"
+            }
+        ),
+    };
+    let last_cell = match rule_stats.and_then(|rs| rs.last_match_s) {
+        Some(ts_s) => format!(
+            r##"<div><span class="k">last match</span><span class="v">{}</span><span class="sub">unix · {ts_s}</span></div>"##,
+            relative_time_from_seconds(ts_s, stats.map(|s| s.generated_at).unwrap_or(0))
+        ),
+        None => r##"<div><span class="k">last match</span><span class="v muted">—</span></div>"##
+            .to_string(),
+    };
+
+    let channels = match &rule.action {
+        Action::Forward { destinations, .. } => {
+            let mut e = 0;
+            let mut t = 0;
+            let mut d = 0;
+            for x in destinations {
+                match x {
+                    Destination::Email { .. } => e += 1,
+                    Destination::Telegram { .. } => t += 1,
+                    Destination::Discord { .. } => d += 1,
+                }
+            }
+            let mut parts = Vec::new();
+            if e > 0 {
+                parts.push(format!("{e} email"));
+            }
+            if t > 0 {
+                parts.push(format!("{t} tg"));
+            }
+            if d > 0 {
+                parts.push(format!("{d} dc"));
+            }
+            if parts.is_empty() {
+                "—".to_string()
+            } else {
+                parts.join(" · ")
+            }
+        }
+        Action::Drop => "—".to_string(),
+    };
+
+    format!(
+        r##"<div class="stat-strip">
+  {matches_cell}
+  {last_cell}
+  <div><span class="k">destinations</span><span class="v">{dest_count}</span></div>
+  <div><span class="k">channels</span><span class="v" style="font-size:14px">{channels}</span></div>
+</div>"##,
+    )
+}
+
+/// "Top senders" card. Always renders (under the inspector body), since
+/// the data is global rather than per-rule.
+fn render_top_senders(senders: &[crate::stats::TopSender]) -> String {
+    if senders.is_empty() {
+        return r##"<div class="card">
+  <header><h3>Top senders · 7d</h3><small>global</small></header>
+  <div class="card-body"><div class="empty">No forwarded mail in the last 7 days.</div></div>
+</div>"##
+            .to_string();
+    }
+    let max = senders.iter().map(|s| s.n).max().unwrap_or(1).max(1);
+    let rows: String = senders
         .iter()
-        .enumerate()
-        .map(|(i, rule)| {
-            rule_row(
-                rule,
-                i,
-                report.issues.get(i).map(|v| v.as_slice()).unwrap_or(&[]),
+        .map(|s| {
+            let pct = (s.n as f64 / max as f64 * 100.0).round();
+            format!(
+                r##"<div class="sender-row">
+  <div class="sender-bar">
+    <div class="fill" style="width:{pct}%"></div>
+    <span class="label">{addr}</span>
+  </div>
+  <span class="n">{n}</span>
+</div>"##,
+                addr = html_escape(&s.address),
+                n = s.n,
             )
         })
         .collect();
-
     format!(
-        r#"<div class="rule-head">
-  <div>#</div><div>Label</div><div>Pattern</div><div>Action</div><div></div>
-</div>
-{rows}
-<div id="edit-area" hx-swap-oob="true"></div>"#,
+        r##"<div class="card">
+  <header><h3>Top senders · 7d</h3><small>global · forwarded only</small></header>
+  <div class="card-body"><div class="senders">{rows}</div></div>
+</div>"##,
     )
 }
 
-/// Navigation links at the top of every manage page.
-fn nav_links(current: &str) -> String {
-    fn link(href: &str, label: &str, active: bool) -> String {
-        let style = if active {
-            "color:var(--fg);font-weight:600"
-        } else {
-            "color:var(--muted)"
-        };
-        format!(r#"<a href="{href}" style="{style};margin-right:1rem">{label}</a>"#)
+/// Render a "5m ago" / "3h ago" style relative time from a unix-second
+/// timestamp, anchored to `now_ms` (unix milliseconds).
+fn relative_time_from_seconds(ts_s: i64, now_ms: i64) -> String {
+    if ts_s <= 0 {
+        return "—".into();
     }
+    let now_s = if now_ms > 0 { now_ms / 1000 } else { 0 };
+    if now_s == 0 {
+        return format!("@{ts_s}");
+    }
+    let delta = (now_s - ts_s).max(0);
+    if delta < 60 {
+        format!("{delta}s ago")
+    } else if delta < 3600 {
+        format!("{}m ago", delta / 60)
+    } else if delta < 86400 {
+        format!("{}h ago", delta / 3600)
+    } else {
+        format!("{}d ago", delta / 86400)
+    }
+}
+
+/// "Destinations" card in the inspector, with a card per destination plus
+/// a tag indicating native vs. proxy mode.
+fn destinations_card(destinations: &[Destination], replace_reply_to: bool) -> String {
+    let mode_tag = if replace_reply_to {
+        r#"<span class="tag proxy">proxy mode</span>"#
+    } else {
+        r#"<span class="tag forward">native mode</span>"#
+    };
+    let body = if destinations.is_empty() {
+        r#"<div class="empty">No destinations — this forward is a no-op until you add at least one.</div>"#.to_string()
+    } else {
+        let cards: String = destinations
+            .iter()
+            .map(|d| {
+                let kind = d.kind_label();
+                let icon = channel_icon(kind);
+                format!(
+                    r##"<div class="dest-card {kind}">
+  <span class="icon-wrap">{icon}</span>
+  <div class="meta">
+    <span class="kind">{kind}</span>
+    <span class="value">{value}</span>
+  </div>
+</div>"##,
+                    value = html_escape(d.value()),
+                )
+            })
+            .collect();
+        format!(r#"<div class="dest-grid">{cards}</div>"#)
+    };
+
     format!(
-        r#"<nav style="margin-bottom:1.5rem;font-size:0.9rem">{rules}{test}</nav>"#,
-        rules = link("/manage", "Rules", current == "rules"),
-        test = link("/manage/test", "Rule tester", current == "test"),
+        r##"<div class="card">
+  <header>
+    <h3>Destinations <small>({n})</small></h3>
+    {mode_tag}
+  </header>
+  <div class="card-body">{body}</div>
+</div>"##,
+        n = destinations.len(),
     )
 }
 
-/// Emit the chip-style destinations field. `id_prefix` must be unique on the
-/// page (one for the add form, one for the edit form). `initial` pre-fills
-/// chips for the edit form.
-fn destinations_field(
-    id_prefix: &str,
-    enabled: &EnabledChannels,
-    initial: &[Destination],
-) -> String {
+/// Inline channel icon (12px). Matches the design's atoms.jsx ICONS table.
+fn channel_icon(kind: &str) -> &'static str {
+    match kind {
+        "email" => {
+            r##"<svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4"><rect x="2" y="3.5" width="12" height="9" rx="1.5"/><path d="M2.5 4.5l5.5 4 5.5-4"/></svg>"##
+        }
+        "discord" => {
+            r##"<svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor"><path d="M13 3.5a11 11 0 0 0-2.7-.8l-.2.5a9.7 9.7 0 0 0-4.2 0l-.2-.5a11 11 0 0 0-2.7.8C1 7 1 9.5 1 12c0 0 1.4 1 3.4 1.4l.5-.9a6 6 0 0 1-1.1-.5l.3-.2a8 8 0 0 0 7.8 0l.3.2a6 6 0 0 1-1.1.5l.5.9c2-.4 3.4-1.4 3.4-1.4 0-2.5 0-5-2-8.5zM6 10c-.6 0-1.1-.6-1.1-1.3 0-.7.5-1.3 1.1-1.3.7 0 1.2.6 1.1 1.3 0 .7-.5 1.3-1.1 1.3zm4 0c-.6 0-1.1-.6-1.1-1.3 0-.7.5-1.3 1.1-1.3.7 0 1.2.6 1.1 1.3 0 .7-.5 1.3-1.1 1.3z"/></svg>"##
+        }
+        "telegram" => {
+            r##"<svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor"><path d="M14.4 2.3 1.7 7.2c-.9.3-.8 1.5.1 1.7l3 .8 1.2 3.7c.2.6.9.7 1.3.3l1.7-1.5 3.3 2.4c.6.4 1.4 0 1.5-.7l2-9.7c.2-.9-.7-1.5-1.4-1.2zm-2.3 3-5.3 4.7-.2 2.5-1-2.9 6.5-4.3z"/></svg>"##
+        }
+        _ => "",
+    }
+}
+
+/// Per-rule "match sandbox": six static sample addresses, server-side
+/// glob-matched against the rule's pattern. Mirrors the design's V3 sandbox.
+fn match_sandbox(rule: &Rule) -> String {
+    const SAMPLES: &[&str] = &[
+        "news+hn@alias.dev",
+        "shop@alias.dev",
+        "gh+anthropic@alias.dev",
+        "jobs@alias.dev",
+        "mom@family.alias.dev",
+        "random@alias.dev",
+    ];
+    let items: String = SAMPLES
+        .iter()
+        .map(|addr| {
+            let (local, domain) = addr.rsplit_once('@').unwrap();
+            let ok = routing::matches_rule(rule, local, domain);
+            let (cls, mark, sym) = if ok {
+                ("ok", "ok", "✓")
+            } else {
+                ("no", "no", "·")
+            };
+            format!(
+                r##"<div class="item {cls}"><span>{addr}</span><span class="mark {mark}">{sym}</span></div>"##,
+                addr = html_escape(addr),
+            )
+        })
+        .collect();
+    format!(
+        r##"<div class="card">
+  <header><h3>Match sandbox</h3></header>
+  <div class="card-body">
+    <div class="sandbox">
+      <span class="help">Test which addresses this rule's pattern would catch (ignoring earlier rules).</span>
+      <div class="grid">{items}</div>
+    </div>
+  </div>
+</div>"##
+    )
+}
+
+// ---------------------------------------------------------------------------
+// Editor modal — used for both add and edit.
+// ---------------------------------------------------------------------------
+
+/// Render the destinations chip-input field. The Alpine `x-data` factory is
+/// installed once on the surrounding form (`ruleEditor(...)`); this just
+/// emits the markup that binds to that scope.
+fn destinations_field(enabled: &EnabledChannels) -> String {
     let mut kinds: Vec<&str> = vec!["email"];
     if enabled.telegram {
         kinds.push("telegram");
@@ -484,7 +1497,6 @@ fn destinations_field(
     if enabled.discord {
         kinds.push("discord");
     }
-    let kinds_attr = kinds.join(",");
     let kinds_help = kinds
         .iter()
         .map(|k| format!("<code>{k}</code>"))
@@ -496,166 +1508,172 @@ fn destinations_field(
         (true, false) => " (set <code>DISCORD_BOT_TOKEN</code> + <code>DISCORD_APP_ID</code> + <code>DISCORD_PUBLIC_KEY</code> to enable discord)".into(),
         (false, false) => " (set the telegram / discord bot secrets to enable those kinds)".into(),
     };
-    let initial_chips: String = initial
-        .iter()
-        .map(|d| {
-            let kind = d.kind_label();
-            let value = d.value();
-            format!(
-                r#"<span class="chip dest-{kind}" data-kind="{kind}" data-value="{v_attr}">{text}</span>"#,
-                kind = kind,
-                v_attr = html_escape(value),
-                text = html_escape(&format!("{kind}:{value}")),
-            )
-        })
-        .collect();
     format!(
-        r##"<div id="{id}" class="dest-wrapper" data-enabled="{kinds_attr}">
-  <div class="dest-field">{initial_chips}<input class="chip-input" type="text" placeholder="email:you@example.com" autocomplete="off" spellcheck="false"><input type="hidden" name="destinations" value=""></div>
-  <div class="chip-error"></div>
+        r##"<div class="dest-wrapper">
+  <div class="dest-field" @click.self="$refs.chipInput.focus()">
+    <template x-for="(c, i) in chips" :key="i + ':' + c.kind + ':' + c.value">
+      <span class="dest-chip" :class="'dest-' + c.kind">
+        <span x-text="c.kind + ':' + c.value"></span>
+        <button type="button" aria-label="remove" @click="chips.splice(i, 1)">×</button>
+      </span>
+    </template>
+    <input x-ref="chipInput"
+      class="chip-input" type="text" x-model="draft"
+      placeholder="email:you@example.com"
+      autocomplete="off" spellcheck="false"
+      @keydown.enter.prevent="commit()"
+      @keydown.window.escape="cutoutCloseModal()"
+      @keydown="if ($event.key === ',') {{ $event.preventDefault(); commit(); }}
+                else if ($event.key === 'Backspace' && !draft && chips.length) {{ chips.pop(); }}
+                else {{ err = ''; }}">
+    <input type="hidden" name="destinations" :value="serialize()">
+  </div>
+  <div class="chip-error" :class="{{ visible: !!err }}" x-text="err"></div>
 </div>
-<div class="form-help">Press Enter or comma to add. Each entry must be <code>kind:value</code>. Available kinds: {kinds_help}.{missing}</div>
-<script>cutoutSetupDestField(document.getElementById('{id}'));</script>"##,
-        id = id_prefix,
-        kinds_attr = kinds_attr,
-        initial_chips = initial_chips,
-        kinds_help = kinds_help,
-        missing = missing,
+<div class="help" style="margin-top:6px">Press Enter or comma to add. Each entry must be <code>kind:value</code>. Available: {kinds_help}.{missing}</div>"##,
     )
 }
 
-/// Add rule form (hidden by default).
-fn add_rule_form(enabled: &EnabledChannels) -> String {
-    let dest_field = destinations_field("add-dest", enabled, &[]);
-    format!(
-        r##"<div id="add-form" class="form-card" style="display:none">
-  <h3 style="margin-bottom:1rem">Add Rule</h3>
-  <form hx-post="/manage/rules" hx-target="#rules-list" hx-swap="innerHTML" hx-ext="json-enc">
-    <div class="form-group">
-      <label for="label">Label</label>
-      <input id="label" name="label" type="text" placeholder="e.g. Newsletter drop" required>
-    </div>
-    <div class="form-row">
-      <div class="form-group">
-        <label for="local_pattern">Local part pattern</label>
-        <input id="local_pattern" name="local_pattern" type="text" placeholder="*" value="*" required>
-        <div class="form-help">The part before @. Use <code>*</code> for any.</div>
-      </div>
-      <div class="form-group">
-        <label for="domain_pattern">Domain pattern</label>
-        <input id="domain_pattern" name="domain_pattern" type="text" placeholder="*" value="*" required>
-        <div class="form-help">The part after @. Use <code>*</code> for any.</div>
-      </div>
-    </div>
-    <div class="form-group">
-      <label for="action_type">Action</label>
-      <select id="action_type" name="action_type" onchange="document.getElementById('dest-group').style.display=this.value==='forward'?'block':'none'">
-        <option value="forward">Forward</option>
-        <option value="drop">Drop</option>
-      </select>
-    </div>
-    <div class="form-group" id="dest-group">
-      <label style="display:flex;align-items:center;justify-content:space-between">
-        Destinations
-        <label style="display:flex;align-items:center;font-weight:normal;font-size:0.85rem;cursor:pointer">
-          <input type="checkbox" name="replace_reply_to" style="margin-right:0.4rem">
-          Proxy via rewrite mode
-        </label>
-      </label>
-      {dest_field}
-      <div class="form-help" style="margin-top:0.25rem">Rewrite mode ensures reply-to works when replying via the same domain, but strips PGP and attachments.</div>
-    </div>
-    <div style="display:flex;gap:8px">
-      <button type="submit" class="btn primary">Add Rule</button>
-      <button type="button" class="btn" onclick="document.getElementById('add-form').style.display='none'">Cancel</button>
-    </div>
-  </form>
-</div>
-<div id="edit-area"></div>"##,
-        dest_field = dest_field,
-    )
+/// New-rule modal.
+pub fn new_rule_modal(enabled: &EnabledChannels) -> String {
+    editor_modal(None, enabled, "/manage/rules", "post", "Create rule")
 }
 
-/// Edit rule form partial (returned for HTMX swap into #edit-area).
+/// Edit-rule modal — returned for HTMX swap into `#editor-modal`.
 pub fn edit_rule_form(rule: &Rule, enabled: &EnabledChannels) -> String {
+    let action = format!("/manage/rules/{}", html_escape(&rule.id));
+    editor_modal(Some(rule), enabled, &action, "put", "Save")
+}
+
+fn editor_modal(
+    rule: Option<&Rule>,
+    enabled: &EnabledChannels,
+    form_action: &str,
+    method: &str,
+    submit_label: &str,
+) -> String {
+    let id = rule.map(|r| r.id.as_str()).unwrap_or("");
+    let label = rule.map(|r| r.label.as_str()).unwrap_or("");
+    let local = rule.map(|r| r.local_pattern.as_str()).unwrap_or("*");
+    let domain = rule.map(|r| r.domain_pattern.as_str()).unwrap_or("*");
+
     let (action_type, destinations, replace_reply_to): (&str, &[Destination], bool) =
-        match &rule.action {
-            Action::Forward {
+        match rule.map(|r| &r.action) {
+            Some(Action::Forward {
                 destinations,
                 replace_reply_to,
-            } => ("forward", destinations.as_slice(), *replace_reply_to),
-            Action::Drop => ("drop", &[], false),
+            }) => ("forward", destinations.as_slice(), *replace_reply_to),
+            Some(Action::Drop) => ("drop", &[], false),
+            None => ("forward", &[], false),
         };
-    let dest_display = if action_type == "forward" {
-        "block"
+
+    let title = if rule.is_some() {
+        format!("Edit rule · {}", html_escape(id))
     } else {
-        "none"
+        "New rule".to_string()
     };
-    let forward_selected = if action_type == "forward" {
-        " selected"
-    } else {
-        ""
-    };
-    let drop_selected = if action_type == "drop" {
-        " selected"
-    } else {
-        ""
-    };
+
+    let dest_field = destinations_field(enabled);
     let replace_checked = if replace_reply_to { " checked" } else { "" };
-    let dest_field = destinations_field("edit-dest", enabled, destinations);
+    let hx_attr = match method {
+        "put" => format!(r#"hx-put="{form_action}""#),
+        _ => format!(r#"hx-post="{form_action}""#),
+    };
+
+    // Build the Alpine x-data initializer (JSON, then HTML-escape for the
+    // single-quoted attribute). The browser will un-escape entities back
+    // into the JS expression at parse time.
+    let mut enabled_kinds: Vec<&str> = vec!["email"];
+    if enabled.telegram {
+        enabled_kinds.push("telegram");
+    }
+    if enabled.discord {
+        enabled_kinds.push("discord");
+    }
+    let chips_json: Vec<serde_json::Value> = destinations
+        .iter()
+        .map(|d| serde_json::json!({ "kind": d.kind_label(), "value": d.value() }))
+        .collect();
+    let init_json = serde_json::json!({
+        "action": action_type,
+        "chips": chips_json,
+        "enabled": enabled_kinds,
+    })
+    .to_string();
+    let init_attr = html_escape(&init_json);
 
     format!(
-        r##"<div class="form-card">
-  <h3 style="margin-bottom:1rem">Edit Rule</h3>
-  <form hx-put="/manage/rules/{id}" hx-target="#rules-list" hx-swap="innerHTML" hx-ext="json-enc">
-    <div class="form-group">
-      <label for="edit-label">Label</label>
-      <input id="edit-label" name="label" type="text" value="{label}" required>
-    </div>
-    <div class="form-row">
-      <div class="form-group">
-        <label for="edit-local">Local part pattern</label>
-        <input id="edit-local" name="local_pattern" type="text" value="{local}" required>
+        r##"<div class="modal-overlay"
+  @click.self="cutoutCloseModal()"
+  @keydown.escape.window="cutoutCloseModal()">
+<div class="modal">
+  <header>
+    <h3>{title}</h3>
+    <button class="btn ghost icon sm" type="button" aria-label="Close" @click="cutoutCloseModal()">×</button>
+  </header>
+  <form x-data='ruleEditor({init_attr})'
+    {hx_attr}
+    hx-target="#workbench" hx-swap="outerHTML"
+    hx-ext="json-enc"
+    hx-include="[name=selected]"
+    @submit="onSubmit($event)">
+    <div class="modal-body">
+      <div class="field">
+        <label>Label</label>
+        <input class="input" name="label" type="text" value="{label}" placeholder="e.g. Newsletter drop" required style="font-family:var(--font-sans)">
       </div>
-      <div class="form-group">
-        <label for="edit-domain">Domain pattern</label>
-        <input id="edit-domain" name="domain_pattern" type="text" value="{domain}" required>
+      <div class="field">
+        <label>Pattern</label>
+        <div class="pat-input">
+          <input name="local_pattern" type="text" value="{local}" placeholder="*" required>
+          <span class="at">@</span>
+          <input name="domain_pattern" type="text" value="{domain}" placeholder="*" required>
+        </div>
+        <span class="help"><span style="color:var(--accent)">*</span> matches anything · <span style="color:var(--accent)">?</span> matches one char</span>
       </div>
-    </div>
-    <div class="form-group">
-      <label for="edit-action">Action</label>
-      <select id="edit-action" name="action_type" onchange="document.getElementById('edit-dest-group').style.display=this.value==='forward'?'block':'none'">
-        <option value="forward"{forward_selected}>Forward</option>
-        <option value="drop"{drop_selected}>Drop</option>
-      </select>
-    </div>
-    <div class="form-group" id="edit-dest-group" style="display:{dest_display}">
-      <label style="display:flex;align-items:center;justify-content:space-between">
-        Destinations
-        <label style="display:flex;align-items:center;font-weight:normal;font-size:0.85rem;cursor:pointer">
-          <input type="checkbox" name="replace_reply_to" {replace_checked} style="margin-right:0.4rem">
-          Proxy via rewrite mode
+      <div class="field">
+        <label>Action</label>
+        <div class="action-toggle">
+          <button type="button" :class="{{ active: action === 'forward' }}" @click="action = 'forward'">
+            <strong>Forward</strong>
+            <small>Send to one or more destinations</small>
+          </button>
+          <button type="button" :class="{{ active: action === 'drop' }}" @click="action = 'drop'">
+            <strong>Drop</strong>
+            <small>Silently discard inbound mail</small>
+          </button>
+        </div>
+        <input type="hidden" name="action_type" :value="action">
+      </div>
+      <div class="field" x-show="action === 'forward'">
+        <label style="display:flex;justify-content:space-between;align-items:center">
+          <span>Destinations</span>
+          <label style="display:flex;align-items:center;gap:6px;font-family:var(--font-sans);font-size:11.5px;text-transform:none;letter-spacing:0;color:var(--fg-1);cursor:pointer">
+            <input type="checkbox" name="replace_reply_to"{replace_checked}>
+            Proxy via rewrite mode
+          </label>
         </label>
-      </label>
-      {dest_field}
-      <div class="form-help" style="margin-top:0.25rem">Rewrite mode ensures reply-to works when replying via the same domain, but strips PGP and attachments.</div>
+        {dest_field}
+        <span class="help">Rewrite mode ensures reply-to works when replying via the same domain, but strips PGP and attachments.</span>
+      </div>
     </div>
-    <div style="display:flex;gap:8px">
-      <button type="submit" class="btn primary">Save</button>
-      <button type="button" class="btn" onclick="document.getElementById('edit-area').innerHTML=''">Cancel</button>
+    <div class="modal-footer">
+      <button type="button" class="btn" @click="cutoutCloseModal()">Cancel</button>
+      <button type="submit" class="btn primary">{submit_label}</button>
     </div>
   </form>
+</div>
 </div>"##,
-        id = html_escape(&rule.id),
-        label = html_escape(&rule.label),
-        local = html_escape(&rule.local_pattern),
-        domain = html_escape(&rule.domain_pattern),
-        forward_selected = forward_selected,
-        drop_selected = drop_selected,
-        dest_display = dest_display,
-        dest_field = dest_field,
+        title = title,
+        label = html_escape(label),
+        local = html_escape(local),
+        domain = html_escape(domain),
     )
 }
+
+// ---------------------------------------------------------------------------
+// Tester page — full-ruleset dry run against a single inbound address.
+// ---------------------------------------------------------------------------
 
 /// Result of running the rule tester.
 pub struct TesterResult {
@@ -663,44 +1681,45 @@ pub struct TesterResult {
     pub matched_index: Option<usize>,
 }
 
-/// Rule tester page.
 pub fn tester_page(
     rules: &[Rule],
     email: &str,
     result: Option<TesterResult>,
     enabled: &EnabledChannels,
 ) -> String {
-    let nav = nav_links("test");
-    let channels_badge = {
-        let badges = [
+    let badges = {
+        let bs = [
             ("email", true),
             ("telegram", enabled.telegram),
             ("discord", enabled.discord),
         ];
-        badges
-            .iter()
-            .map(|(kind, on)| {
-                let style = if *on {
-                    "background:var(--code-bg);color:var(--fg)"
+        bs.iter()
+            .map(|(k, on)| {
+                let cls = if *on {
+                    format!("chip {k}")
                 } else {
-                    "background:var(--code-bg);color:var(--muted);text-decoration:line-through"
+                    "chip".into()
+                };
+                let style = if *on {
+                    ""
+                } else {
+                    "text-decoration:line-through;opacity:0.6"
                 };
                 format!(
-                    r#"<span class="dest-tag dest-{kind}" style="{style}">{kind}</span>"#,
-                    kind = kind,
-                    style = style
+                    r#"<span class="{cls}" style="{style}"><span class="dot"></span>{k}</span>"#
                 )
             })
             .collect::<String>()
     };
+
     let result_html = match result {
         None => String::new(),
         Some(r) => {
-            let to_esc = html_escape(&r.to);
+            let to_e = html_escape(&r.to);
             match r.matched_index {
                 Some(idx) => {
                     let rule = &rules[idx];
-                    let action_detail = match &rule.action {
+                    let detail = match &rule.action {
                         Action::Forward {
                             destinations,
                             replace_reply_to,
@@ -717,50 +1736,57 @@ pub fn tester_page(
                                     .map(|d| format!("{}:{}", d.kind_label(), d.value()))
                                     .collect::<Vec<_>>()
                                     .join(", "),
-                                mode
+                                mode,
                             )
                         }
-                        Action::Drop => "Drop".to_string(),
+                        Action::Drop => "Drop".into(),
                     };
                     format!(
                         r#"<div class="tester-result matched">
-<p>Input: <code>{to}</code></p>
-<p>Matched <strong>rule {n}</strong>: <em>{label}</em> ({pattern})</p>
-<p>Action: {action}</p>
+<p style="margin:0 0 6px">Input: <code>{to}</code></p>
+<p style="margin:0 0 6px">Matched <strong>rule {n}</strong>: <em>{label}</em> ({pattern})</p>
+<p style="margin:0">Action: {action}</p>
 </div>"#,
-                        to = to_esc,
+                        to = to_e,
                         n = idx + 1,
                         label = html_escape(&rule.label),
                         pattern =
                             html_escape(&format!("{}@{}", rule.local_pattern, rule.domain_pattern)),
-                        action = html_escape(&action_detail),
+                        action = html_escape(&detail),
                     )
                 }
                 None => format!(
-                    r#"<div class="tester-result nomatch"><p>No rule matches <code>{to}</code>.</p></div>"#,
-                    to = to_esc
+                    r#"<div class="tester-result nomatch"><p style="margin:0">No rule matches <code>{to_e}</code>.</p></div>"#
                 ),
             }
         }
     };
 
     let content = format!(
-        r##"{nav}
-<h2>Rule tester</h2>
-<p style="color:var(--muted);font-size:0.85rem;margin-bottom:0.5rem">Enter an inbound recipient address. The tester runs the configured rule set against it and shows which rule would fire.</p>
-<p style="font-size:0.85rem;margin-bottom:1rem">Enabled destination kinds: {badges}</p>
-<form hx-post="/manage/test" hx-target="#tester-target" hx-swap="innerHTML" hx-ext="json-enc">
-  <div class="form-group">
-    <label for="to">Inbound address</label>
-    <input id="to" name="to" type="text" placeholder="shop.swizzles@kedi.dev" required>
-  </div>
-  <button type="submit" class="btn primary">Test</button>
-</form>
-<div id="tester-target">{result}</div>"##,
-        nav = nav,
-        badges = channels_badge,
+        r##"<div class="workbench-shell">
+{topbar}
+<div class="tester-shell">
+  <h2 style="margin:0 0 6px;font-size:20px;font-weight:600">Rule tester</h2>
+  <p style="margin:0 0 4px;color:var(--fg-2);font-size:12.5px">
+    Enter an inbound recipient address. The tester runs the configured rule set against it and shows which rule would fire.
+  </p>
+  <p style="margin:0 0 16px;font-size:12.5px;display:flex;gap:6px;align-items:center">
+    <span style="color:var(--fg-2)">Enabled kinds:</span> {badges}
+  </p>
+  <form hx-post="/manage/test" hx-target="#tester-target" hx-swap="innerHTML" hx-ext="json-enc"
+    style="display:flex;gap:8px;align-items:flex-end">
+    <div class="field" style="flex:1">
+      <label>Inbound address</label>
+      <input class="input" name="to" type="text" placeholder="shop@yourdomain.example" required>
+    </div>
+    <button type="submit" class="btn primary" style="height:32px">Test</button>
+  </form>
+  <div id="tester-target">{result}</div>
+</div>
+</div>"##,
+        topbar = topbar(email, "tester", None),
         result = result_html,
     );
 
-    base_html("Rule tester", email, &content)
+    base_html("Rule tester", &content)
 }

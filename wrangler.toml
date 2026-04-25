@@ -22,10 +22,23 @@ binding = "KV"
 [[send_email]]
 name = "EMAIL"
 
+# ============================================================================
+# Analytics Engine dataset for aggregated stats (forwarded/dropped 7d,
+# per-rule matches, top senders). Optional: if the dataset isn't created
+# the worker silently skips writes and the dashboard hides stats.
+# ============================================================================
+[[analytics_engine_datasets]]
+binding = "EVENTS"
+dataset = "cutout_events"
+
 [vars]
 ENVIRONMENT = "development"
 CF_ACCESS_TEAM = ""             # Your Cloudflare Access team name
 CF_ACCESS_AUD = ""              # Application Audience (AUD) tag from Access
+# Set CF_ACCOUNT_ID and CF_API_TOKEN as wrangler secrets to enable stats.
+# CF_API_TOKEN needs "Account Analytics: Read" scope. Without these, the
+# dashboard renders without aggregated stats.
+CF_ACCOUNT_ID = ""
 
 [observability.logs]
 enabled = true

@@ -1,4 +1,7 @@
-# Cutout
+<h1>
+  <img src="doc/cutout-mark.svg" width="28" height="28" align="absmiddle" alt="">
+  Cutout
+</h1>
 
 Transparent email alias proxy — like [SimpleLogin](https://simplelogin.io) or [addy.io](https://addy.io), built entirely on Cloudflare Workers. No servers, no containers, no monthly VM bills.
 
