@@ -52,8 +52,14 @@ footer { margin-top: 3rem; padding-top: 1rem; border-top: 1px solid var(--border
   <li>You own one or more domains with <strong>Cloudflare Email Routing</strong> (inbound) and <strong>Email Service</strong> (outbound) enabled</li>
   <li>Write <strong>rules</strong> in the <code>/manage</code> UI — glob patterns on the address's local part and domain, with a <em>Forward</em> or <em>Drop</em> action; first-match-wins, with a catch-all Drop pinned to the end</li>
   <li>A Forward rule can fan out to multiple destinations of mixed kinds: email, Telegram chat, Discord channel</li>
-  <li>For email destinations: Cloudflare's native <code>EmailMessage.forward()</code> preserves original <code>From</code>/<code>To</code>/DKIM/attachments; a <code>Reply-To: reply+&lt;uuid&gt;@yourdomain.com</code> is overlaid so replies route back through the proxy</li>
-  <li>For Telegram/Discord: the bot posts the content to the chat; replies (Telegram's native reply, Discord's Reply button → modal) route back to the original sender via email</li>
+  <li>For email destinations:
+    <ul>
+      <li><strong>Native mode</strong> preserves original <code>From</code>/<code>To</code>/DKIM/attachments (best for PGP); <code>Reply-To</code> is overlaid for proxying.</li>
+      <li><strong>Proxy mode</strong> reconstructs the message to ensure <code>Reply-To</code> works when replying via the same domain (strips signatures/attachments).</li>
+    </ul>
+    Both modes inject an <code>X-Original-From</code> header for permanent archival in your inbox.
+  </li>
+  <li>For Telegram/Discord: the bot posts the content to the chat; replies route back via email</li>
 </ol>
 
 <h2>Built on</h2>

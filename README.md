@@ -11,15 +11,19 @@ Transparent email alias proxy — like [SimpleLogin](https://simplelogin.io) or 
 1. You own one or more domains with **Cloudflare Email Routing** (inbound) and **Email Service** (outbound) enabled
 2. Write routing rules in the `/manage` UI — glob patterns on the local and domain parts, with a Forward or Drop action
 3. A Forward rule can fan out to **one or more destinations** of mixed kinds: email, Telegram chat, Discord channel
-4. For email destinations: CF's native `EmailMessage.forward()` preserves original `From`/`To`/DKIM/attachments; a `Reply-To: reply+<uuid>@yourdomain.com` header is overlaid so replies route through the proxy
+4. For email destinations:
+    - **Native mode** uses CF's native `EmailMessage.forward()`; original bytes (PGP, attachments) pass through untouched.
+    - **Proxy mode** reconstructs the email via `send_email` to ensure `Reply-To` works reliably when replying via the same domain (strips signatures/attachments).
+    Both modes inject an `X-Original-From` header for permanent archival in your inbox.
 5. For Telegram/Discord destinations: the bot posts the content to the chat and stores a reply context in KV. Replies in the chat (Telegram's native reply, Discord's "Reply" button → modal) route back to the original sender via email
 6. Destination availability is driven by which secrets are set — telegram/discord only appear in the UI when their bot tokens are configured
 
 ## Features
 
 - **Rule-based routing**: ordered glob patterns on local and domain parts, evaluated top-to-bottom, first match wins; a `*@*` Drop catch-all is always pinned at the end
+- **Dual-mode email forwarding**: choose between high-fidelity **Native mode** (preserves PGP/attachments) and reliable **Proxy mode** (ensures <code>Reply-To</code> routing works via your custom domain)
+- **Permanent Archival**: an <code>X-Original-From</code> header is injected into all forwarded mail so you never lose the sender's identity even if KV mappings expire
 - **Multi-destination forwards**: one rule can forward to any mix of email / Telegram / Discord targets
-- **CF-native email forwarding** via `EmailMessage.forward()`: original `From`, `To`, DKIM, and attachments preserved exactly
 - **Chat forwarding**: email → Telegram chat and email → Discord channel, with replies routed back to the sender as email
 - **Reverse-alias reply routing** across all channels: a reply in any channel reaches the original sender without exposing your real address
 - **Rule validation** on save: empty patterns, empty destinations, duplicate patterns, unreachable rules (via glob subsumption), and destinations using unconfigured channels are all caught
@@ -30,8 +34,8 @@ Transparent email alias proxy — like [SimpleLogin](https://simplelogin.io) or 
 ## Architecture
 
 - [Cloudflare Workers](https://workers.cloudflare.com/) (Rust compiled to WebAssembly)
-- [Cloudflare Email Routing](https://developers.cloudflare.com/email-routing/) — inbound MX + catch-all → worker, plus `EmailMessage.forward()` for the Forward path (destinations are verified via Email Routing's built-in Destination Addresses flow)
-- [Cloudflare Email Service](https://developers.cloudflare.com/email-service/) — used only on the reverse-alias reply path, where the recipient (the original sender of the forwarded mail) isn't in Destination Addresses
+- [Cloudflare Email Routing](https://developers.cloudflare.com/email-routing/) — inbound MX + catch-all → worker, plus `EmailMessage.forward()` for the Native Forward path
+- [Cloudflare Email Service](https://developers.cloudflare.com/email-service/) — used for reverse-alias replies, Proxy mode forwarding, and fanning out beyond the first destination
 - [Cloudflare KV](https://developers.cloudflare.com/kv/) — rule list, reverse-alias mappings, and per-message bot reply contexts
 - [Cloudflare Access](https://developers.cloudflare.com/cloudflare-one/applications/) — protects `/manage`
 - [botrelay-rs](https://github.com/ananthb/botrelay-rs) — shared crate providing the Telegram + Discord bot clients and reply-context primitives

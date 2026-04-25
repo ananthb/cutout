@@ -65,10 +65,15 @@ footer { margin-top: 3rem; padding-top: 1rem; border-top: 1px solid var(--border
   <li>Cloudflare Email Routing's catch-all rule triggers the Cutout worker</li>
   <li>The worker matches the recipient against your rules, top-to-bottom</li>
   <li>On a <strong>Forward</strong> match, the worker generates one reverse-alias <code>reply+&lt;uuid&gt;@yourdomain.com</code> and saves its mapping <code>reply+&lt;uuid&gt; → original sender</code> in KV (30-day TTL). This alias is shared across all destinations on the rule, so any reply lands back on the same sender.</li>
-  <li>The worker then fans the mail out to each destination:
+  <li>The worker then fans the mail out to each destination. For email destinations, there are two modes:
     <ul>
-      <li><strong>First email destination</strong> → <code>EmailMessage.forward(destination, {Reply-To: reply+&lt;uuid&gt;})</code>. Original bytes pass through untouched.</li>
-      <li><strong>Further email destinations</strong> → Email Service structured send (Cloudflare's <code>forward()</code> is single-destination per message). These get rewritten headers, not the native-forwarder look.</li>
+      <li><strong>Native mode (default)</strong> → uses <code>EmailMessage.forward()</code>. Original bytes (PGP, attachments, formatting) pass through untouched. The <code>Reply-To</code> is overlaid, but may be ignored by some mail clients if the original message already has one.</li>
+      <li><strong>Proxy via rewrite mode</strong> → uses Email Service structured send. Reconstructs the message to ensure <code>Reply-To</code> works when replying via the same custom domain, but strips PGP/MIME signatures and attachments.</li>
+    </ul>
+    In both modes, Cutout injects an <code>X-Original-From</code> header containing the real sender's address for your permanent archival.
+  </li>
+  <li>Other destination kinds:
+    <ul>
       <li><strong>Telegram destinations</strong> → <code>sendMessage</code> with the subject + body. Cutout saves a reply context in KV keyed by <code>tg:&lt;chat_id&gt;:&lt;message_id&gt;</code>.</li>
       <li><strong>Discord destinations</strong> → <code>createMessage</code> with a Reply button. Reply context keyed by <code>dc:&lt;channel_id&gt;:&lt;message_id&gt;</code>.</li>
     </ul>
@@ -110,8 +115,8 @@ footer { margin-top: 3rem; padding-top: 1rem; border-top: 1px solid var(--border
 
 <h2>Key components</h2>
 <ul>
-  <li><strong>Cloudflare Email Routing</strong> — inbound catch-all → worker; <code>EmailMessage.forward()</code> for the Forward action; Destination Addresses list for verification</li>
-  <li><strong>Cloudflare Email Service</strong> — used only on the reverse-alias reply path and for non-primary email destinations</li>
+  <li><strong>Cloudflare Email Routing</strong> — inbound catch-all → worker; <code>EmailMessage.forward()</code> for Native mode forwarding; Destination Addresses list for verification</li>
+  <li><strong>Cloudflare Email Service</strong> — used for the reverse-alias reply path, Proxy mode forwarding, and fan-out beyond the first destination</li>
   <li><strong>KV</strong> — rule list; reverse-alias mappings (30-day TTL); bot reply contexts (30-day TTL)</li>
   <li><strong>Cloudflare Access</strong> — protects <code>/manage</code>; <code>/health</code>, <code>/telegram/webhook</code>, <code>/discord/interactions</code> are public (the last two authenticate by secret token and Ed25519 signature respectively)</li>
   <li><a href="https://github.com/ananthb/botrelay-rs"><strong>botrelay-rs</strong></a> — reusable Rust crate: Telegram + Discord bot clients and reply-context types, shared with sibling projects</li>

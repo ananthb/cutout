@@ -73,7 +73,7 @@ nix develop</code></pre>
 </ol>
 
 <h2>5. Verify your destination addresses</h2>
-<p>The Forward action uses <code>EmailMessage.forward()</code>, which requires each destination to be in your account's Cloudflare <strong>Email Routing → Destination Addresses</strong> list.</p>
+<p>Native mode forwarding uses <code>EmailMessage.forward()</code>, which requires each destination to be in your account's Cloudflare <strong>Email Routing → Destination Addresses</strong> list.</p>
 <ol>
   <li>Dashboard &rarr; <strong>Email &rarr; Email Routing &rarr; Destination addresses</strong></li>
   <li>Click <strong>Add destination address</strong> and enter the address (e.g. your real Gmail)</li>
@@ -90,6 +90,11 @@ nix develop</code></pre>
 
 <h2>8. Write rules</h2>
 <p>Visit <code>https://&lt;your-cutout-host&gt;/manage</code> (authenticating via Access). Add Forward rules using glob patterns for the local and domain parts, e.g. <code>*@example.com</code>. First match wins; a <code>*@*</code> Drop catch-all is pinned at the bottom.</p>
+<p>For email destinations, use the <strong>Proxy via rewrite mode</strong> toggle to choose between reliability and message fidelity:</p>
+<ul>
+  <li><strong>Checked (Proxy mode)</strong>: Reconstructs the email to ensure the <code>Reply-To</code> works when replying via your custom domain. Recommended for standard correspondence. Strips PGP and attachments.</li>
+  <li><strong>Unchecked (Native mode)</strong>: Forwards raw bytes. Preserves PGP/MIME signatures and attachments. <code>Reply-To</code> routing is "best effort" and may be ignored by some mail clients.</li>
+</ul>
 <p>Each rule's <strong>destinations</strong> field is one <code>kind:value</code> per line. Available kinds:</p>
 <ul>
   <li><code>email:you@example.com</code> — must exist in the Cloudflare Destination Addresses list (step&nbsp;5)</li>
