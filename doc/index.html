@@ -4,10 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Cutout | Documentation</title>
-<meta name="description" content="Documentation for Cutout, a transparent email alias proxy built entirely on Cloudflare Workers.">
-<meta property="og:title" content="Cutout Documentation">
-<meta property="og:description" content="Documentation for Cutout, a transparent email alias proxy built entirely on Cloudflare Workers.">
-<meta property="og:type" content="website">
+<meta name="description" content="Documentation for Cutout, a transparent email alias proxy for Cloudflare Workers.">
 <style>
 :root { --bg: #fff; --fg: #1a1a1a; --muted: #555; --accent: #2563eb; --code-bg: #f5f6f8; --border: #e0e0e0; --max-w: 740px; }
 @media (prefers-color-scheme: dark) { :root { --bg: #121212; --fg: #e0e0e0; --muted: #aaa; --accent: #60a5fa; --code-bg: #2a2a2a; --border: #3a3a3a; } }
@@ -19,16 +16,14 @@ h2 { font-size: 1.25rem; margin-top: 2rem; margin-bottom: 0.5rem; border-bottom:
 p { margin: 0.5rem 0; }
 a { color: var(--accent); text-decoration: none; }
 a:hover { text-decoration: underline; }
-a:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 ul, ol { margin: 0.5rem 0 0.5rem 1.5rem; }
 li { margin: 0.3rem 0; }
 code { background: var(--code-bg); padding: 0.15rem 0.4rem; border-radius: 3px; font-size: 0.9em; font-family: ui-monospace, monospace; }
-pre { background: var(--code-bg); padding: 1rem; border-radius: 6px; overflow-x: auto; margin: 0.75rem 0; }
-pre code { background: none; padding: 0; }
 nav.site-nav { display: flex; gap: 0.75rem; margin: 1rem 0 2rem; flex-wrap: wrap; padding-bottom: 1rem; border-bottom: 1px solid var(--border); }
 nav.site-nav a { padding: 0.3rem 0.6rem; background: var(--code-bg); border-radius: 4px; font-weight: 500; font-size: 0.85rem; }
 nav.site-nav a.current { background: var(--accent); color: #fff; }
-footer { margin-top: 3rem; padding-top: 1rem; border-top: 1px solid var(--border); font-size: 0.8rem; color: var(--muted); }
+footer { margin-top: 4rem; padding-top: 1rem; border-top: 1px solid var(--border); font-size: 0.8rem; color: var(--muted); }
+.deploy-btn { display: inline-block; margin: 1rem 0; }
 </style>
 </head>
 <body>
@@ -37,20 +32,22 @@ footer { margin-top: 3rem; padding-top: 1rem; border-top: 1px solid var(--border
 <nav class="site-nav" aria-label="Documentation">
   <a href="./" class="current">Overview</a>
   <a href="how-it-works.html">How It Works</a>
-  <a href="setup.html">Setup</a>
-  <a href="api">API Reference</a>
+  <a href="https://github.com/ananthb/cutout/blob/main/doc/deploy.md">Deployment</a>
+  <a href="https://github.com/ananthb/cutout/blob/main/doc/setup.md">Setup</a>
 </nav>
 
 <h1>Cutout</h1>
-<p>A transparent email alias proxy built entirely on Cloudflare Workers.</p>
+<p>Transparent email alias proxy — like SimpleLogin or addy.io, built entirely on Cloudflare Workers. No servers, no containers, no monthly VM bills.</p>
 
-<h2>What is Cutout?</h2>
-<p>Cutout is a self-hosted email alias service — like <a href="https://simplelogin.io">SimpleLogin</a> or <a href="https://addy.io">addy.io</a> — that runs entirely on Cloudflare's edge infrastructure. No servers, no containers, no monthly VM bills.</p>
+<a class="deploy-btn" href="https://deploy.workers.cloudflare.com/?url=https://github.com/ananthb/cutout">
+  <img src="https://deploy.workers.cloudflare.com/button" alt="Deploy to Cloudflare">
+</a>
 
 <h2>How it works</h2>
 <ol>
-  <li>You own one or more domains with <strong>Cloudflare Email Routing</strong> (inbound) and <strong>Email Service</strong> (outbound) enabled</li>
-  <li>Write <strong>rules</strong> in the <code>/manage</code> UI — glob patterns on the address's local part and domain, with a <em>Forward</em> or <em>Drop</em> action; first-match-wins, with a catch-all Drop pinned to the end</li>
+  <li>You own one or more domains with <strong>Cloudflare Email Routing</strong> (inbound) and <strong>Email Service</strong> (outbound)</li>
+  <li>Someone emails <code>anything@yourdomain.com</code></li>
+  <li>Cutout worker is triggered, matches the recipient against your rules, and forwards the email to your real address</li>
   <li>A Forward rule can fan out to multiple destinations of mixed kinds: email, Telegram chat, Discord channel</li>
   <li>For email destinations:
     <ul>
@@ -65,19 +62,16 @@ footer { margin-top: 3rem; padding-top: 1rem; border-top: 1px solid var(--border
 <h2>Built on</h2>
 <ul>
   <li><strong>Cloudflare Workers</strong> — Rust compiled to WebAssembly</li>
-  <li><strong>Email Routing</strong> — inbound email, <code>EmailMessage.forward()</code> for the Forward action, and destination-address verification</li>
-  <li><strong>Email Service</strong> — outbound reverse-alias replies (where the recipient isn't in Destination Addresses)</li>
-  <li><strong>KV</strong> — ordered rule list, reverse-alias mappings, per-message bot reply contexts</li>
-  <li><strong>Cloudflare Access</strong> — protects the admin UI on <code>/manage</code></li>
-  <li><strong>HTMX</strong> — lightweight admin management page</li>
-  <li><a href="https://github.com/ananthb/botrelay-rs"><strong>botrelay-rs</strong></a> — shared crate: Telegram + Discord bot clients, Ed25519 interaction verification, reply-context types</li>
+  <li><strong>Cloudflare Email Routing</strong> — inbound MX rules</li>
+  <li><strong>Cloudflare Email Service</strong> — outbound SMTP API</li>
+  <li><strong>Cloudflare KV</strong> — rule storage and reverse-alias mappings</li>
 </ul>
 
 <h2>Documentation</h2>
 <ul>
   <li><a href="how-it-works.html">How It Works</a> — architecture and email flow</li>
-  <li><a href="setup.html">Setup Guide</a> — deploy your own instance</li>
-  <li><a href="api">API Reference</a> — generated Rust documentation</li>
+  <li><a href="https://github.com/ananthb/cutout/blob/main/doc/deploy.md">Deployment Guide</a> — deploy your own via GitHub Actions</li>
+  <li><a href="https://github.com/ananthb/cutout/blob/main/doc/setup.md">Setup Guide</a> — manual step-by-step local deployment</li>
 </ul>
 
 <footer>

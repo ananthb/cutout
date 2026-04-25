@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>How It Works | Cutout</title>
-<meta name="description" content="How Cutout handles email aliasing using Cloudflare Workers, Email Routing, and the send_email API.">
+<meta name="description" content="How Cutout handles inbound emails, reverse-alias routing, and multi-channel forwarding.">
 <style>
 :root { --bg: #fff; --fg: #1a1a1a; --muted: #555; --accent: #2563eb; --code-bg: #f5f6f8; --border: #e0e0e0; --max-w: 740px; }
 @media (prefers-color-scheme: dark) { :root { --bg: #121212; --fg: #e0e0e0; --muted: #aaa; --accent: #60a5fa; --code-bg: #2a2a2a; --border: #3a3a3a; } }
@@ -13,16 +13,12 @@ body { font-family: system-ui, -apple-system, sans-serif; background: var(--bg);
 .container { max-width: var(--max-w); margin: 0 auto; padding: 2rem 1.5rem; }
 h1 { font-size: 1.8rem; margin-bottom: 0.5rem; }
 h2 { font-size: 1.25rem; margin-top: 2rem; margin-bottom: 0.5rem; border-bottom: 1px solid var(--border); padding-bottom: 0.3rem; }
-h3 { font-size: 1.05rem; margin-top: 1.5rem; margin-bottom: 0.3rem; }
 p { margin: 0.5rem 0; }
 a { color: var(--accent); text-decoration: none; }
 a:hover { text-decoration: underline; }
-a:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 ul, ol { margin: 0.5rem 0 0.5rem 1.5rem; }
 li { margin: 0.3rem 0; }
 code { background: var(--code-bg); padding: 0.15rem 0.4rem; border-radius: 3px; font-size: 0.9em; font-family: ui-monospace, monospace; }
-pre { background: var(--code-bg); padding: 1rem; border-radius: 6px; overflow-x: auto; margin: 0.75rem 0; }
-pre code { background: none; padding: 0; }
 nav.site-nav { display: flex; gap: 0.75rem; margin: 1rem 0 2rem; flex-wrap: wrap; padding-bottom: 1rem; border-bottom: 1px solid var(--border); }
 nav.site-nav a { padding: 0.3rem 0.6rem; background: var(--code-bg); border-radius: 4px; font-weight: 500; font-size: 0.85rem; }
 nav.site-nav a.current { background: var(--accent); color: #fff; }
@@ -35,29 +31,12 @@ footer { margin-top: 3rem; padding-top: 1rem; border-top: 1px solid var(--border
 <nav class="site-nav" aria-label="Documentation">
   <a href="./">Overview</a>
   <a href="how-it-works.html" class="current">How It Works</a>
-  <a href="setup.html">Setup</a>
-  <a href="api">API Reference</a>
+  <a href="https://github.com/ananthb/cutout/blob/main/doc/deploy.md">Deployment</a>
+  <a href="https://github.com/ananthb/cutout/blob/main/doc/setup.md">Setup</a>
 </nav>
 
 <h1>How It Works</h1>
 <p>Cutout sits between the outside world and your real email address, acting as an invisible relay.</p>
-
-<h2>Routing model</h2>
-<p>You configure an ordered list of <strong>rules</strong> at <code>/manage</code>. Each rule matches inbound mail with glob patterns on the local part and the domain (e.g. <code>shop+*@example.com</code>), and has an action:</p>
-<ul>
-  <li><strong>Forward</strong> to one or more destinations (mixed kinds allowed), or</li>
-  <li><strong>Drop</strong> silently.</li>
-</ul>
-<p>Rules are evaluated top-to-bottom; the first match wins. A <code>*@*</code> catch-all is pinned to the end and defaults to Drop, so mail you haven't written a rule for is discarded rather than accidentally leaked.</p>
-
-<h2>Destination kinds</h2>
-<p>A Forward rule carries a list of destinations. Each is one of:</p>
-<ul>
-  <li><code>email:you@example.com</code> — forwarded with <code>EmailMessage.forward()</code></li>
-  <li><code>telegram:&lt;chat_id&gt;</code> — posted to a Telegram chat via bot <code>sendMessage</code></li>
-  <li><code>discord:&lt;channel_id&gt;</code> — posted to a Discord channel via bot <code>createMessage</code> with a Reply button</li>
-</ul>
-<p>Telegram and Discord destination kinds are only available when their bot secrets are configured (see the setup guide). The <code>/manage</code> UI hides the kinds that aren't currently usable.</p>
 
 <h2>Inbound flow (someone emails one of your addresses)</h2>
 <ol>
@@ -90,28 +69,20 @@ footer { margin-top: 3rem; padding-top: 1rem; border-top: 1px solid var(--border
   <li>The reply is sent via Email Service's structured <code>send_email</code> API, with the alias as the <code>From</code> and the original sender as the <code>To</code></li>
 </ol>
 
-<h3>Telegram replies</h3>
+<h3>Bot replies</h3>
 <ol>
-  <li>In Telegram you tap Reply on the forwarded message and type</li>
-  <li>Telegram POSTs an <code>Update</code> to <code>/telegram/webhook</code></li>
-  <li>The worker looks up <code>tg:&lt;chat_id&gt;:&lt;reply_to.message_id&gt;</code> in KV — this is the reply context saved at forward time</li>
-  <li>Cutout sends an email via Email Service from the alias to the original sender, with the reply text as the body</li>
+  <li>You reply to a bot message in Telegram or Discord</li>
+  <li>Telegram sends a webhook; Discord sends an interaction event. Both contain the <code>message_id</code> of the message you're replying to</li>
+  <li>The worker looks up the <code>message_id</code> in KV to find the original sender and target alias</li>
+  <li>The reply is sent via <code>send_email</code>, just like an email reply</li>
 </ol>
-
-<h3>Discord replies</h3>
-<ol>
-  <li>You click the <strong>Reply</strong> button on the bot's message in Discord</li>
-  <li>Discord POSTs a component-interaction to <code>/discord/interactions</code> (Ed25519-verified); the worker responds with a modal</li>
-  <li>You submit the modal; Discord POSTs a modal-submit interaction. The worker extracts the reply text, looks up <code>dc:&lt;channel_id&gt;:&lt;message_id&gt;</code> in KV, and sends an email via Email Service back to the original sender</li>
-  <li>The worker responds to the interaction with an ephemeral "Reply sent." confirmation</li>
-</ol>
-
-<h2>Rule validation and tester</h2>
-<p>Before saving, cutout runs a validator over the whole rule set. Errors (block save) cover empty patterns, empty destination lists, duplicate patterns, and chat destinations whose bot secrets aren't configured. Unreachable rules — ones whose pattern is completely covered by an earlier rule — are surfaced as warnings via glob subsumption (handles <code>*</code> and <code>?</code>).</p>
-<p>The <code>/manage/test</code> page runs the current rule set against an inbound recipient you type in and shows which rule fires.</p>
 
 <h2>Destination verification</h2>
-<p>Email destinations must exist in your account's Cloudflare <strong>Email Routing → Destination Addresses</strong> list. Add a destination in the Cloudflare dashboard; Cloudflare sends its own confirmation email with a one-time link. Once verified there, <code>EmailMessage.forward()</code> will deliver to it. Telegram and Discord destinations don't need this — they're validated via whether their bot secrets are set.</p>
+<p>Email destinations must exist in your account's Cloudflare <strong>Email Routing → Destination addresses</strong> list. Cloudflare enforces this at the API level for both <code>forward()</code> and <code>send_email()</code>.</p>
+<p>Telegram and Discord destinations don't need this — they're validated via whether their bot secrets are set.</p>
+
+<h2>Multi-domain support</h2>
+<p>You can point any number of Cloudflare zones (domains) at the same Cutout worker; rules use the <code>domain</code> glob to differentiate them. Reverse-aliases are derived from the domain the mail actually arrived on.</p>
 
 <h2>Key components</h2>
 <ul>
@@ -121,9 +92,6 @@ footer { margin-top: 3rem; padding-top: 1rem; border-top: 1px solid var(--border
   <li><strong>Cloudflare Access</strong> — protects <code>/manage</code>; <code>/health</code>, <code>/telegram/webhook</code>, <code>/discord/interactions</code> are public (the last two authenticate by secret token and Ed25519 signature respectively)</li>
   <li><a href="https://github.com/ananthb/botrelay-rs"><strong>botrelay-rs</strong></a> — reusable Rust crate: Telegram + Discord bot clients and reply-context types, shared with sibling projects</li>
 </ul>
-
-<h2>Multiple domains</h2>
-<p>One worker can serve any number of zones. For each email domain, enable Email Routing and point its catch-all at the same Cutout worker; rules use the <code>domain</code> glob to differentiate them. Reverse-aliases are derived from the domain the mail actually arrived on.</p>
 
 <footer>
   <a href="./">Back to overview</a>
