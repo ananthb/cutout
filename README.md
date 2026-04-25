@@ -36,7 +36,7 @@ For a detailed manual setup, see the **[Setup Guide](doc/setup.md)**.
 - **Bot-relay replies**: reply directly from Telegram or Discord chat; Cutout routes it back to the original sender via email
 - **HTMX Management UI**: clean, responsive web interface for managing rules, gated by Cloudflare Access
 - **Safety first**: automatic loop detection; kinds whose secrets aren't set are hidden from the UI and rejected by the validator
-- **Rule tester**: `/manage/test` evaluates the rule set against a supplied recipient and shows which rule fires
+- **Live tester**: each rule's inspector includes an interactive tester that evaluates a recipient address against this rule plus the full ruleset, highlighting which rule actually fires
 - **Multi-domain**: one worker serves any number of zones; rules use the domain glob to differentiate
 
 ## Architecture

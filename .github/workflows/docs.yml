@@ -51,7 +51,7 @@ jobs:
       - name: Assemble site
         run: |
           mkdir -p site
-          cp doc/*.html site/
+          cp doc/*.html doc/*.svg site/
           mv target/doc site/api
 
       - uses: actions/configure-pages@v4

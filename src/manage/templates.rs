@@ -5,7 +5,6 @@
 //! inspector for the selected rule. Edit/add forms render as overlays.
 
 use crate::bots::EnabledChannels;
-use crate::email::routing;
 use crate::helpers::html_escape;
 use crate::stats::Stats7d;
 use crate::types::{Action, Destination, Rule};
@@ -118,15 +117,6 @@ code { font-family: var(--font-mono); font-size: 0.88em; }
 .topbar .right .health { display: inline-flex; align-items: center; gap: 6px; font-family: var(--font-mono); }
 .topbar .right .health .dot { width: 6px; height: 6px; border-radius: 999px; background: var(--ok); }
 .topbar .right .user { font-family: var(--font-mono); }
-.topbar nav.tabs { display: flex; gap: 0; }
-.topbar nav.tabs a {
-  display: inline-flex; align-items: center; gap: 6px;
-  padding: 6px 10px; font-size: 12px; font-weight: 500;
-  color: var(--fg-2);
-  border-radius: var(--r-sm);
-}
-.topbar nav.tabs a.current { color: var(--fg); background: var(--bg-2); }
-.topbar nav.tabs a:hover { text-decoration: none; background: var(--bg-2); }
 .microstats { display: flex; align-items: center; gap: 14px; }
 .microstat { display: flex; flex-direction: column; line-height: 1.1; gap: 1px; }
 .microstat .v {
@@ -403,26 +393,22 @@ code { font-family: var(--font-mono); font-size: 0.88em; }
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
 
-/* match sandbox ---------------------------------------------------- */
-.sandbox { display: flex; flex-direction: column; gap: 10px; }
-.sandbox .help { font-size: 11.5px; color: var(--fg-2); }
-.sandbox .input-row { display: flex; gap: 6px; }
-.sandbox .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }
-.sandbox .item {
-  display: flex; align-items: center; justify-content: space-between;
-  padding: 6px 10px; border: 1px solid var(--line);
-  border-radius: 4px;
-  font-family: var(--font-mono); font-size: 11.5px;
-  background: var(--bg);
+/* tester ----------------------------------------------------------- */
+[x-cloak] { display: none !important; }
+.tester-results {
+  display: flex; flex-direction: column; gap: 8px;
+  margin-top: 12px;
+}
+.tester-row {
+  display: flex; align-items: center; gap: 10px;
+  flex-wrap: wrap;
+}
+.tester-row-label {
+  font-family: var(--font-mono); font-size: 10.5px;
+  text-transform: uppercase; letter-spacing: 0.06em;
   color: var(--fg-2);
+  min-width: 84px;
 }
-.sandbox .item.ok {
-  background: color-mix(in oklch, var(--ok) 9%, transparent);
-  border-color: var(--ok); color: var(--fg);
-}
-.sandbox .item.no { opacity: 0.6; }
-.sandbox .item .mark.ok { color: var(--ok); }
-.sandbox .item .mark.no { color: var(--fg-3); }
 
 /* atoms (chip / tag / btn / field / input) -------------------------- */
 .chip {
@@ -605,16 +591,6 @@ code { font-family: var(--font-mono); font-size: 0.88em; }
   display: flex; justify-content: flex-end; gap: 8px;
 }
 
-/* tester page ----------------------------------------------------- */
-.tester-shell { max-width: 720px; margin: 0 auto; padding: 24px; }
-.tester-result {
-  border: 1px solid var(--line); border-radius: var(--r-md);
-  padding: 16px; margin-top: 16px;
-  background: var(--bg-1);
-}
-.tester-result.matched { border-left: 3px solid var(--ok); }
-.tester-result.nomatch { border-left: 3px solid var(--warn); }
-
 /* misc ------------------------------------------------------------ */
 .empty {
   padding: 28px; color: var(--fg-2); font-size: 12.5px;
@@ -627,7 +603,6 @@ code { font-family: var(--font-mono); font-size: 0.88em; }
 @media (max-width: 880px) {
   .pipeline-pane { border-right: none; border-bottom: 1px solid var(--line); }
   .inspector-header { flex-direction: column; align-items: stretch; }
-  .sandbox .grid { grid-template-columns: 1fr; }
 }
 "##;
 
@@ -689,6 +664,51 @@ function ruleEditor(initial) {
 function cutoutCloseModal() {
   const slot = document.getElementById('editor-modal');
   if (slot) slot.innerHTML = '';
+}
+
+function tester(initial) {
+  return {
+    to: '',
+    rules: initial.rules,
+    selectedId: initial.selectedId,
+    glob(p, v) {
+      p = (p || '').toLowerCase();
+      v = (v || '').toLowerCase();
+      let pi = 0, vi = 0, sp = -1, sv = 0;
+      while (vi < v.length) {
+        if (pi < p.length && (p[pi] === '?' || p[pi] === v[vi])) { pi++; vi++; }
+        else if (pi < p.length && p[pi] === '*') { sp = pi; sv = vi; pi++; }
+        else if (sp >= 0) { pi = sp + 1; sv++; vi = sv; }
+        else return false;
+      }
+      while (pi < p.length && p[pi] === '*') pi++;
+      return pi === p.length;
+    },
+    parts() {
+      const i = (this.to || '').lastIndexOf('@');
+      if (i < 0) return null;
+      return [this.to.slice(0, i).trim(), this.to.slice(i + 1).trim()];
+    },
+    matches(rule) {
+      const p = this.parts();
+      if (!p || !p[1]) return false;
+      return this.glob(rule.local, p[0]) && this.glob(rule.domain, p[1]);
+    },
+    selectedRule() {
+      return this.rules.find(r => r.id === this.selectedId);
+    },
+    selectedMatches() {
+      const r = this.selectedRule();
+      return !!(r && this.matches(r));
+    },
+    firstMatch() {
+      return this.rules.find(r => this.matches(r));
+    },
+    selectedFires() {
+      const f = this.firstMatch();
+      return !!(f && f.id === this.selectedId);
+    },
+  };
 }
 
 function liveFeed() {
@@ -778,11 +798,7 @@ pub fn base_html(title: &str, content: &str) -> String {
 }
 
 /// Top bar shared across /manage pages.
-fn topbar(email: &str, current: &str, stats: Option<&Stats7d>) -> String {
-    let tab = |href: &str, label: &str, key: &str| {
-        let cls = if key == current { "current" } else { "" };
-        format!(r#"<a href="{href}" class="{cls}">{label}</a>"#)
-    };
+fn topbar(email: &str, stats: Option<&Stats7d>) -> String {
     let microstats = match stats {
         Some(s) => format!(
             r##"<span style="width:1px;height:22px;background:var(--line)"></span>
@@ -803,11 +819,6 @@ fn topbar(email: &str, current: &str, stats: Option<&Stats7d>) -> String {
       <b>Cutout</b>
       <small>routing pipeline</small>
     </div>
-    <span style="width:1px;height:22px;background:var(--line);margin:0 4px"></span>
-    <nav class="tabs">
-      {rules_tab}
-      {test_tab}
-    </nav>
     {microstats}
   </div>
   <div class="right">
@@ -816,8 +827,6 @@ fn topbar(email: &str, current: &str, stats: Option<&Stats7d>) -> String {
   </div>
 </header>"##,
         logo = LOGO_SVG,
-        rules_tab = tab("/manage", "Rules", "rules"),
-        test_tab = tab("/manage/test", "Tester", "tester"),
         email = html_escape(email),
     )
 }
@@ -839,7 +848,7 @@ pub fn rules_page(
 {workbench}
 {live_feed}
 </div>"##,
-        topbar = topbar(email, "rules", stats),
+        topbar = topbar(email, stats),
         workbench = workbench,
         live_feed = LIVE_FEED_PANE,
     );
@@ -1208,7 +1217,7 @@ fn inspector_pane(
         )
     };
 
-    let sandbox = match_sandbox(rule);
+    let sandbox = inspector_tester(rules, rule);
 
     let action_summary_card = if is_fwd {
         String::new()
@@ -1442,40 +1451,84 @@ fn channel_icon(kind: &str) -> &'static str {
     }
 }
 
-/// Per-rule "match sandbox": six static sample addresses, server-side
-/// glob-matched against the rule's pattern. Mirrors the design's V3 sandbox.
-fn match_sandbox(rule: &Rule) -> String {
-    const SAMPLES: &[&str] = &[
-        "news+hn@alias.dev",
-        "shop@alias.dev",
-        "gh+anthropic@alias.dev",
-        "jobs@alias.dev",
-        "mom@family.alias.dev",
-        "random@alias.dev",
-    ];
-    let items: String = SAMPLES
+/// Interactive tester card in the inspector. Mirrors the routing engine's
+/// glob matcher in JS so each keystroke runs the full ruleset client-side
+/// and shows: (a) does the *selected* rule's pattern match this address,
+/// (b) which rule actually fires (top-down, first match wins), (c) if a
+/// different rule fires earlier, link to it.
+fn inspector_tester(all_rules: &[Rule], _selected: &Rule) -> String {
+    // Pass enough rule metadata for client-side eval. Action label drives
+    // the result tag colour.
+    let rules_json: Vec<serde_json::Value> = all_rules
         .iter()
-        .map(|addr| {
-            let (local, domain) = addr.rsplit_once('@').unwrap();
-            let ok = routing::matches_rule(rule, local, domain);
-            let (cls, mark, sym) = if ok {
-                ("ok", "ok", "✓")
-            } else {
-                ("no", "no", "·")
+        .map(|r| {
+            let action = match &r.action {
+                Action::Drop => "drop",
+                Action::Forward {
+                    replace_reply_to: true,
+                    ..
+                } => "forward · proxy",
+                Action::Forward { .. } => "forward",
             };
-            format!(
-                r##"<div class="item {cls}"><span>{addr}</span><span class="mark {mark}">{sym}</span></div>"##,
-                addr = html_escape(addr),
-            )
+            serde_json::json!({
+                "id": r.id,
+                "local": r.local_pattern,
+                "domain": r.domain_pattern,
+                "label": r.label,
+                "action": action,
+            })
         })
         .collect();
+    let init = serde_json::json!({
+        "rules": rules_json,
+        "selectedId": _selected.id,
+    })
+    .to_string();
+    let init_attr = html_escape(&init);
+
     format!(
-        r##"<div class="card">
-  <header><h3>Match sandbox</h3></header>
+        r##"<div class="card" x-data='tester({init_attr})'>
+  <header><h3>Tester</h3><small>this rule + full ruleset</small></header>
   <div class="card-body">
-    <div class="sandbox">
-      <span class="help">Test which addresses this rule's pattern would catch (ignoring earlier rules).</span>
-      <div class="grid">{items}</div>
+    <div class="field">
+      <label>Test address</label>
+      <input class="input" type="text"
+        placeholder="shop@yourdomain.example"
+        x-model="to" autocomplete="off" spellcheck="false">
+    </div>
+    <div class="tester-results" x-show="to" x-cloak>
+      <div class="tester-row">
+        <span class="tester-row-label">This rule</span>
+        <template x-if="selectedMatches()">
+          <span class="chip ok"><span class="dot"></span>matches</span>
+        </template>
+        <template x-if="!selectedMatches()">
+          <span class="chip" style="opacity:0.7">✗ no match</span>
+        </template>
+      </div>
+      <div class="tester-row">
+        <span class="tester-row-label">Would fire</span>
+        <template x-if="selectedFires()">
+          <span class="chip ok"><span class="dot"></span>this rule · <span x-text="firstMatch().action"></span></span>
+        </template>
+        <template x-if="firstMatch() &amp;&amp; !selectedFires()">
+          <a class="chip warn" :href="'/manage?rule=' + firstMatch().id">
+            <span class="dot"></span>
+            <span x-text="firstMatch().label"></span>
+            <span style="opacity:0.6;margin-left:2px">→</span>
+          </a>
+        </template>
+        <template x-if="!firstMatch() &amp;&amp; to.includes('@')">
+          <span class="chip bad"><span class="dot"></span>no rule matches — bounced</span>
+        </template>
+        <template x-if="!firstMatch() &amp;&amp; !to.includes('@')">
+          <span class="chip" style="opacity:0.7">waiting for full address…</span>
+        </template>
+      </div>
+      <div class="tester-row" x-show="firstMatch() &amp;&amp; selectedMatches() &amp;&amp; !selectedFires()">
+        <span class="tester-row-label" style="color:var(--warn)">Note</span>
+        <span style="font-size:11.5px;color:var(--fg-2)">This rule would match, but a higher rule catches first.</span>
+      </div>
     </div>
   </div>
 </div>"##
@@ -1669,124 +1722,4 @@ fn editor_modal(
         local = html_escape(local),
         domain = html_escape(domain),
     )
-}
-
-// ---------------------------------------------------------------------------
-// Tester page — full-ruleset dry run against a single inbound address.
-// ---------------------------------------------------------------------------
-
-/// Result of running the rule tester.
-pub struct TesterResult {
-    pub to: String,
-    pub matched_index: Option<usize>,
-}
-
-pub fn tester_page(
-    rules: &[Rule],
-    email: &str,
-    result: Option<TesterResult>,
-    enabled: &EnabledChannels,
-) -> String {
-    let badges = {
-        let bs = [
-            ("email", true),
-            ("telegram", enabled.telegram),
-            ("discord", enabled.discord),
-        ];
-        bs.iter()
-            .map(|(k, on)| {
-                let cls = if *on {
-                    format!("chip {k}")
-                } else {
-                    "chip".into()
-                };
-                let style = if *on {
-                    ""
-                } else {
-                    "text-decoration:line-through;opacity:0.6"
-                };
-                format!(
-                    r#"<span class="{cls}" style="{style}"><span class="dot"></span>{k}</span>"#
-                )
-            })
-            .collect::<String>()
-    };
-
-    let result_html = match result {
-        None => String::new(),
-        Some(r) => {
-            let to_e = html_escape(&r.to);
-            match r.matched_index {
-                Some(idx) => {
-                    let rule = &rules[idx];
-                    let detail = match &rule.action {
-                        Action::Forward {
-                            destinations,
-                            replace_reply_to,
-                        } => {
-                            let mode = if *replace_reply_to {
-                                " (proxy mode)"
-                            } else {
-                                " (native mode)"
-                            };
-                            format!(
-                                "Forward to {}{}",
-                                destinations
-                                    .iter()
-                                    .map(|d| format!("{}:{}", d.kind_label(), d.value()))
-                                    .collect::<Vec<_>>()
-                                    .join(", "),
-                                mode,
-                            )
-                        }
-                        Action::Drop => "Drop".into(),
-                    };
-                    format!(
-                        r#"<div class="tester-result matched">
-<p style="margin:0 0 6px">Input: <code>{to}</code></p>
-<p style="margin:0 0 6px">Matched <strong>rule {n}</strong>: <em>{label}</em> ({pattern})</p>
-<p style="margin:0">Action: {action}</p>
-</div>"#,
-                        to = to_e,
-                        n = idx + 1,
-                        label = html_escape(&rule.label),
-                        pattern =
-                            html_escape(&format!("{}@{}", rule.local_pattern, rule.domain_pattern)),
-                        action = html_escape(&detail),
-                    )
-                }
-                None => format!(
-                    r#"<div class="tester-result nomatch"><p style="margin:0">No rule matches <code>{to_e}</code>.</p></div>"#
-                ),
-            }
-        }
-    };
-
-    let content = format!(
-        r##"<div class="workbench-shell">
-{topbar}
-<div class="tester-shell">
-  <h2 style="margin:0 0 6px;font-size:20px;font-weight:600">Rule tester</h2>
-  <p style="margin:0 0 4px;color:var(--fg-2);font-size:12.5px">
-    Enter an inbound recipient address. The tester runs the configured rule set against it and shows which rule would fire.
-  </p>
-  <p style="margin:0 0 16px;font-size:12.5px;display:flex;gap:6px;align-items:center">
-    <span style="color:var(--fg-2)">Enabled kinds:</span> {badges}
-  </p>
-  <form hx-post="/manage/test" hx-target="#tester-target" hx-swap="innerHTML" hx-ext="json-enc"
-    style="display:flex;gap:8px;align-items:flex-end">
-    <div class="field" style="flex:1">
-      <label>Inbound address</label>
-      <input class="input" name="to" type="text" placeholder="shop@yourdomain.example" required>
-    </div>
-    <button type="submit" class="btn primary" style="height:32px">Test</button>
-  </form>
-  <div id="tester-target">{result}</div>
-</div>
-</div>"##,
-        topbar = topbar(email, "tester", None),
-        result = result_html,
-    );
-
-    base_html("Rule tester", &content)
 }

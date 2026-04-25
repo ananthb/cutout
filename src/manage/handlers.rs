@@ -4,7 +4,6 @@ use worker::*;
 
 use super::templates;
 use crate::bots::EnabledChannels;
-use crate::email::routing;
 use crate::events;
 use crate::helpers::generate_id;
 use crate::kv;
@@ -283,42 +282,6 @@ pub async fn reorder_rules(mut req: Request, env: &Env) -> Result<Response> {
 
     kv::save_rules(&kv_store, &rules).await?;
     Response::from_html(render_workbench(env, &rules, &enabled, selected.as_deref()).await)
-}
-
-/// GET /manage/test — rule tester page.
-pub async fn tester_page(env: &Env, email: &str) -> Result<Response> {
-    let kv_store = env.kv("KV")?;
-    let rules = ensure_catch_all(&kv_store).await?;
-    let enabled = EnabledChannels::from_env(env);
-    Response::from_html(templates::tester_page(&rules, email, None, &enabled))
-}
-
-/// POST /manage/test — evaluate rules against the supplied `to` address.
-pub async fn tester_run(mut req: Request, env: &Env, email: &str) -> Result<Response> {
-    let form: serde_json::Value = req.json().await?;
-    let to = form
-        .get("to")
-        .and_then(|v| v.as_str())
-        .unwrap_or("")
-        .trim()
-        .to_lowercase();
-    let kv_store = env.kv("KV")?;
-    let rules = ensure_catch_all(&kv_store).await?;
-    let enabled = EnabledChannels::from_env(env);
-
-    let result = if let Some((local, domain)) = to.rsplit_once('@') {
-        let matched = routing::find_matching_rule(&rules, local, domain);
-        Some(templates::TesterResult {
-            to: to.clone(),
-            matched_index: matched.and_then(|m| rules.iter().position(|r| r.id == m.id)),
-        })
-    } else {
-        Some(templates::TesterResult {
-            to: to.clone(),
-            matched_index: None,
-        })
-    };
-    Response::from_html(templates::tester_page(&rules, email, result, &enabled))
 }
 
 /// GET /manage/events?since={unix_ms} — JSON tail of the event ring buffer.
