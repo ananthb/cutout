@@ -25,6 +25,7 @@ jobs:
         env:
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
           KV_NAMESPACE_ID: ${{ secrets.KV_NAMESPACE_ID }}
+          D1_DATABASE_ID: ${{ secrets.D1_DATABASE_ID }}
         run: |
           cat > wrangler.production.toml <<EOF
           name = "cutout"
@@ -42,6 +43,11 @@ jobs:
           [[send_email]]
           name = "EMAIL"
 
+          [[d1_databases]]
+          binding = "DB"
+          database_name = "cutout-db"
+          database_id = "${D1_DATABASE_ID}"
+
           [vars]
           ENVIRONMENT = "production"
 
@@ -51,6 +57,11 @@ jobs:
           EOF
           # Remove leading whitespace from heredoc
           sed -i 's/^          //' wrangler.production.toml
+
+      - name: Apply Migrations
+        run: nix develop --command wrangler d1 migrations apply cutout-db --remote
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
 
       - name: Build and Deploy
         run: nix develop --command wrangler deploy -c wrangler.production.toml

@@ -1,9 +1,5 @@
 //! Telegram and Discord bot integration: outbound posts with reply-context
 //! storage, plus inbound webhook handlers that route replies back via email.
-//!
-//! All bot config comes from env vars/secrets; when a token isn't set the
-//! corresponding destinations fail gracefully (logged, not raised) so one
-//! bot's misconfiguration doesn't break the whole email handler.
 
 use worker::*;
 
@@ -11,11 +7,9 @@ use botrelay::discord::{ActionRow, Component, CreateMessage, DiscordBot, Interac
 use botrelay::reply::ReplyContext;
 use botrelay::telegram::{ParseMode, SendMessage, TelegramBot};
 
+use crate::db;
 use crate::email::send;
 use crate::types::{BotChannel, BotForward, OutboundEmail};
-
-/// KV TTL for bot reply contexts: 30 days, matching reverse-alias TTL.
-const REPLY_CONTEXT_TTL: u64 = 30 * 24 * 60 * 60;
 
 /// Which chat destinations are currently available, based on whether the
 /// relevant bot secrets are present.
@@ -54,7 +48,7 @@ fn discord_bot(env: &Env) -> Option<DiscordBot> {
 /// Execute a [`BotForward`] — post the content to the right channel and save
 /// a [`ReplyContext`] for the webhook side to pick up.
 pub async fn dispatch(env: &Env, forward: &BotForward) -> Result<()> {
-    let kv_store = env.kv("KV")?;
+    let database = env.d1("DB")?;
     let ctx = ReplyContext {
         alias: forward.alias.clone(),
         original_sender: forward.original_sender.clone(),
@@ -81,7 +75,7 @@ pub async fn dispatch(env: &Env, forward: &BotForward) -> Result<()> {
                 })
                 .await?;
             let key = ReplyContext::telegram_key(chat_id, msg.message_id);
-            put_ctx(&kv_store, &key, &ctx).await?;
+            db::save_bot_ctx(&database, &key, &ctx).await?;
             Ok(())
         }
         BotChannel::Discord { channel_id } => {
@@ -92,10 +86,6 @@ pub async fn dispatch(env: &Env, forward: &BotForward) -> Result<()> {
                     return Ok(());
                 }
             };
-            // Temporary custom_id; overwritten with the real message id below.
-            // Discord doesn't let us embed the message_id in the button
-            // before knowing it — round-trip through a placeholder and fix it
-            // post-send by re-reading from the reply-context KV on interaction.
             let msg = bot
                 .create_message(
                     channel_id,
@@ -110,24 +100,10 @@ pub async fn dispatch(env: &Env, forward: &BotForward) -> Result<()> {
                 )
                 .await?;
             let key = ReplyContext::discord_key(channel_id, &msg.id);
-            put_ctx(&kv_store, &key, &ctx).await?;
+            db::save_bot_ctx(&database, &key, &ctx).await?;
             Ok(())
         }
     }
-}
-
-async fn put_ctx(kv: &kv::KvStore, key: &str, ctx: &ReplyContext) -> Result<()> {
-    let json =
-        serde_json::to_string(ctx).map_err(|e| Error::from(format!("encode ReplyContext: {e}")))?;
-    kv.put(key, json)?
-        .expiration_ttl(REPLY_CONTEXT_TTL)
-        .execute()
-        .await?;
-    Ok(())
-}
-
-async fn get_ctx(kv: &kv::KvStore, key: &str) -> Result<Option<ReplyContext>> {
-    Ok(kv.get(key).json::<ReplyContext>().await?)
 }
 
 /// Render the body we post to a chat. Keep it simple: who from, subject,
@@ -178,9 +154,9 @@ pub async fn handle_telegram_webhook(mut req: Request, env: Env) -> Result<Respo
         None => return Response::ok("ignored"),
     };
 
-    let kv_store = env.kv("KV")?;
+    let database = env.d1("DB")?;
     let key = ReplyContext::telegram_key(&msg.chat.id.to_string(), reply_to.message_id);
-    let ctx = match get_ctx(&kv_store, &key).await? {
+    let ctx = match db::get_bot_ctx(&database, &key).await? {
         Some(c) => c,
         None => {
             console_log!("telegram: no context for {key}");
@@ -274,13 +250,13 @@ pub async fn handle_discord_interaction(mut req: Request, env: Env) -> Result<Re
             return Response::from_json(&InteractionResponse::ephemeral_message("Reply was empty"));
         }
 
-        let kv_store = env.kv("KV")?;
+        let database = env.d1("DB")?;
         let key = ReplyContext::discord_key(channel_id, message_id);
-        let ctx = match get_ctx(&kv_store, &key).await? {
+        let ctx = match db::get_bot_ctx(&database, &key).await? {
             Some(c) => c,
             None => {
                 return Response::from_json(&InteractionResponse::ephemeral_message(
-                    "Reply context expired",
+                    "Reply context not found",
                 ));
             }
         };

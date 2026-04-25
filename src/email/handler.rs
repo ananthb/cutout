@@ -1,8 +1,10 @@
 //! Main email event handler — receives inbound emails, matches rules, executes actions.
 
+use worker::d1::*;
 use worker::*;
 
 use super::{forward, mime, routing};
+use crate::db;
 use crate::kv;
 use crate::types::*;
 
@@ -14,6 +16,7 @@ pub async fn handle_email(
     env: &Env,
 ) -> Result<EmailResult> {
     let kv_store = env.kv("KV")?;
+    let database = env.d1("DB")?;
 
     // Split recipient into local@domain
     let (local, domain) = match to.rsplit_once('@') {
@@ -22,7 +25,6 @@ pub async fn handle_email(
     };
 
     // Loop detection: check for our forwarding header in the raw email headers.
-    // Only search up to the first blank line (header/body boundary).
     let header_end = raw_bytes
         .windows(4)
         .position(|w| w == b"\r\n\r\n")
@@ -43,10 +45,10 @@ pub async fn handle_email(
     // Check if this is a reverse alias reply (parse email only for this path).
     if forward::is_reverse_alias(to) {
         let parsed = mime::parse_email(raw_bytes);
-        return handle_reverse_alias(to, &parsed, &kv_store).await;
+        return handle_reverse_alias(to, &parsed, &database).await;
     }
 
-    // Load and match routing rules.
+    // Load and match routing rules from KV.
     let rules = kv::get_rules(&kv_store).await?;
     let matched_rule = routing::find_matching_rule(&rules, &local, &domain);
 
@@ -58,7 +60,7 @@ pub async fn handle_email(
                 from,
                 to,
                 raw_bytes,
-                &kv_store,
+                &database,
                 &domain,
             )
             .await
@@ -78,7 +80,7 @@ async fn execute_action(
     from: &str,
     to: &str,
     raw_bytes: &[u8],
-    kv_store: &worker::kv::KvStore,
+    database: &D1Database,
     domain: &str,
 ) -> Result<EmailResult> {
     match action {
@@ -96,14 +98,14 @@ async fn execute_action(
             }
 
             // Generate one reverse alias per inbound message — shared across
-            // all destinations so any reply routes back to the same original
-            // sender. Save the mapping up front.
+            // all destinations. Save to D1 for durable mapping.
             let reverse_addr = forward::generate_reverse_address(domain);
-            let reverse_alias = ReverseAlias {
-                alias: to.to_string(),
-                original_sender: from.to_string(),
-            };
-            kv::save_reverse_alias(kv_store, &reverse_addr, &reverse_alias).await?;
+            let id = reverse_addr
+                .strip_prefix("reply+")
+                .and_then(|s| s.strip_suffix(&format!("@{domain}")))
+                .unwrap_or(&reverse_addr);
+
+            db::save_reverse_mapping(database, id, to, from).await?;
 
             // Parse the email content. We need this for all structured paths.
             let parsed = mime::parse_email(raw_bytes);
@@ -115,15 +117,12 @@ async fn execute_action(
                 match dest {
                     Destination::Email { address } => {
                         if !replace_reply_to && email_count == 0 {
-                            // High-fidelity native forward for the first destination.
-                            // Preserves PGP/attachments.
                             dispatch.forward_email = Some(ForwardInstruction {
                                 destination: address.clone(),
                                 reply_to: reverse_addr.clone(),
                                 original_from: from.to_string(),
                             });
                         } else {
-                            // Structured send_email for extra destinations or if forced.
                             dispatch.send_emails.push(structured_forward_email(
                                 parsed.as_ref(),
                                 &reverse_addr,
@@ -186,10 +185,6 @@ async fn execute_action(
     }
 }
 
-/// Build a structured outbound email for destinations beyond the first.
-/// Used when a rule has multiple email destinations — CF's `forward()` can
-/// only fire once per message, so extras take the `send_email` path (which
-/// rewrites the `From` to the reverse-alias).
 fn structured_forward_email(
     parsed: Option<&mime::ParsedEmail>,
     reverse_addr: &str,
@@ -213,9 +208,6 @@ fn structured_forward_email(
     let text = parsed.and_then(|p| p.text_body.clone());
     let html = parsed.and_then(|p| p.html_body.clone());
 
-    // Use the original sender's name and email as a display name so the inbox
-    // shows "Alice (alice@example.org) <reply+uuid@domain.com>" instead of
-    // just the alias.
     let from = match (
         parsed.and_then(|p| p.from_name.as_ref()),
         parsed.and_then(|p| p.from_address.as_ref()),
@@ -237,13 +229,19 @@ fn structured_forward_email(
     }
 }
 
-/// Handle a reply arriving at a reverse alias.
 async fn handle_reverse_alias(
     to: &str,
     parsed: &Option<mime::ParsedEmail>,
-    kv_store: &worker::kv::KvStore,
+    database: &D1Database,
 ) -> Result<EmailResult> {
-    let reverse = match kv::get_reverse_alias(kv_store, to).await? {
+    // Extract ID from reply+<id>@domain
+    let id = to
+        .split('+')
+        .nth(1)
+        .and_then(|s| s.split('@').next())
+        .unwrap_or(to);
+
+    let reverse = match db::get_reverse_mapping(database, id).await? {
         Some(r) => r,
         None => {
             console_log!("Unknown reverse alias: {to}");

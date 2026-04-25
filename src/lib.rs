@@ -32,6 +32,7 @@ use wasm_bindgen::prelude::*;
 use worker::*;
 
 mod bots;
+mod db;
 mod email;
 mod helpers;
 pub mod kv;

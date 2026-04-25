@@ -8,6 +8,11 @@ command = "worker-build --release"
 # ============================================================================
 # KV Namespace for routing config (aliases → destination mappings)
 # ============================================================================
+[[d1_databases]]
+binding = "DB"
+database_name = "cutout-db"
+database_id = "304914b0-5657-4b4f-bf43-4be3e2b8c03b"
+
 [[kv_namespaces]]
 binding = "KV"
 
