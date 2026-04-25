@@ -1,4 +1,4 @@
-//! Main email event handler — receives inbound emails, matches rules, executes actions.
+//! Main email event handler: receives inbound emails, matches rules, executes actions.
 
 use worker::d1::*;
 use worker::*;
@@ -142,7 +142,7 @@ async fn execute_action(
                 return Ok(EmailResult::Drop);
             }
 
-            // Generate one reverse alias per inbound message — shared across
+            // Generate one reverse alias per inbound message: shared across
             // all destinations. Save to D1 for durable mapping.
             let reverse_addr = forward::generate_reverse_address(domain);
             let id = reverse_addr

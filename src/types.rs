@@ -141,7 +141,7 @@ impl Destination {
 
 // `stringify_kind_err` has to allocate the message, but we want a static
 // error string for call sites. Keep a small wrapper that returns a fixed
-// fallback — callers shouldn't rely on the echoed kind in the error.
+// fallback: callers shouldn't rely on the echoed kind in the error.
 fn stringify_kind_err(_kind: &str) -> &'static str {
     "unknown destination kind (use email, telegram, or discord)"
 }
@@ -198,7 +198,7 @@ pub enum BotChannel {
     Discord { channel_id: String },
 }
 
-/// Result of email processing — drives action in the wasm_bindgen email() export.
+/// Result of email processing: drives action in the wasm_bindgen email() export.
 pub enum EmailResult {
     /// Silently drop the email.
     Drop,
@@ -214,7 +214,7 @@ pub enum EmailResult {
 /// Bot forwards fan out to Telegram/Discord.
 #[derive(Default)]
 pub struct Dispatch {
-    /// At most one — assigned to the first email destination if replace_reply_to
+    /// At most one: assigned to the first email destination if replace_reply_to
     /// is false, ensuring high fidelity (PGP/attachments preserved).
     pub forward_email: Option<ForwardInstruction>,
     /// Email destinations sent via structured `send_email`.

@@ -1,6 +1,6 @@
 //! # Cutout
 //!
-//! Transparent email alias proxy — like SimpleLogin or addy.io, built entirely
+//! Transparent email alias proxy: similar to SimpleLogin or addy.io, built entirely
 //! on Cloudflare Workers with Email Routing and the send_email API.
 //!
 //! ## How it works
@@ -12,9 +12,9 @@
 //!
 //! ## Architecture
 //!
-//! - All config lives in KV — no database needed
-//! - `email` — Inbound/outbound email handling
-//! - `manage` — HTMX-based management UI behind Cloudflare Access
+//! - All config lives in KV: no database needed
+//! - `email`: Inbound/outbound email handling
+//! - `manage`: HTMX-based management UI behind Cloudflare Access
 //!
 //! ## Destination verification
 //!
@@ -54,7 +54,7 @@ extern "C" {
     #[wasm_bindgen(method, getter)]
     fn to(this: &IncomingEmailMessage) -> String;
 
-    /// `raw` is a ReadableStream of the message's RFC 2822 bytes — NOT a Promise.
+    /// `raw` is a ReadableStream of the message's RFC 2822 bytes, not a Promise.
     /// Treating it as a Promise (awaiting it) hangs forever.
     #[wasm_bindgen(method, getter)]
     fn raw(this: &IncomingEmailMessage) -> web_sys::ReadableStream;
@@ -87,7 +87,7 @@ pub async fn email(
     let to = message.to();
 
     // `message.raw` is a ReadableStream. Wrap it in a Response to consume the
-    // bytes — `Response#arrayBuffer()` reads the stream to completion.
+    // bytes: `Response#arrayBuffer()` reads the stream to completion.
     let raw_stream = message.raw();
     let response = web_sys::Response::new_with_opt_readable_stream(Some(&raw_stream))
         .map_err(|e| JsValue::from_str(&format!("Response from raw stream: {e:?}")))?;

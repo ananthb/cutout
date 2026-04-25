@@ -79,19 +79,19 @@ footer { margin-top: 3rem; padding-top: 1rem; border-top: 1px solid var(--border
 
 <h2>Destination verification</h2>
 <p>Email destinations must exist in your account's Cloudflare <strong>Email Routing → Destination addresses</strong> list. Cloudflare enforces this at the API level for both <code>forward()</code> and <code>send_email()</code>.</p>
-<p>Telegram and Discord destinations don't need this — they're validated via whether their bot secrets are set.</p>
+<p>Telegram and Discord destinations don't need this: they're validated via whether their bot secrets are set.</p>
 
 <h2>Multi-domain support</h2>
 <p>You can point any number of Cloudflare zones (domains) at the same Cutout worker; rules use the <code>domain</code> glob to differentiate them. Reverse-aliases are derived from the domain the mail actually arrived on.</p>
 
 <h2>Key components</h2>
 <ul>
-  <li><strong>Cloudflare Email Routing</strong> — inbound catch-all → worker; <code>EmailMessage.forward()</code> for Native mode forwarding; Destination Addresses list for verification</li>
-  <li><strong>Cloudflare Email Service</strong> — used for the reverse-alias reply path, Proxy mode forwarding, and fan-out beyond the first destination</li>
-  <li><strong>Cloudflare D1</strong> — durable storage for reverse-alias mappings and bot reply contexts. Unlike KV, entries here do not expire, ensuring old email threads remain replyable forever.</li>
-  <li><strong>Cloudflare KV</strong> — stores the routing rule list managed via <code>/manage</code>.</li>
-  <li><strong>Cloudflare Access</strong> — protects <code>/manage</code>; <code>/health</code>, <code>/telegram/webhook</code>, <code>/discord/interactions</code> are public (the last two authenticate by secret token and Ed25519 signature respectively)</li>
-  <li><a href="https://github.com/ananthb/botrelay-rs"><strong>botrelay-rs</strong></a> — reusable Rust crate: Telegram + Discord bot clients and reply-context types, shared with sibling projects</li>
+  <li><strong>Cloudflare Email Routing</strong>: inbound catch-all → worker; <code>EmailMessage.forward()</code> for Native mode forwarding; Destination Addresses list for verification</li>
+  <li><strong>Cloudflare Email Service</strong>: used for the reverse-alias reply path, Proxy mode forwarding, and fan-out beyond the first destination</li>
+  <li><strong>Cloudflare D1</strong>: durable storage for reverse-alias mappings and bot reply contexts. Unlike KV, entries here do not expire, ensuring old email threads remain replyable forever.</li>
+  <li><strong>Cloudflare KV</strong>: stores the routing rule list managed via <code>/manage</code>.</li>
+  <li><strong>Cloudflare Access</strong>: protects <code>/manage</code>; <code>/health</code>, <code>/telegram/webhook</code>, <code>/discord/interactions</code> are public (the last two authenticate by secret token and Ed25519 signature respectively)</li>
+  <li><a href="https://github.com/ananthb/botrelay-rs"><strong>botrelay-rs</strong></a>: reusable Rust crate: Telegram + Discord bot clients and reply-context types, shared with sibling projects</li>
 </ul>
 
 <footer>

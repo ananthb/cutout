@@ -78,8 +78,8 @@ pub fn validate(rules: &[Rule], enabled: &EnabledChannels) -> Report {
     };
 
     for (i, rule) in rules.iter().enumerate() {
-        // Pattern can't be empty (block this — a rule with `""@example.com`
-        // wouldn't match anything deliberate).
+        // Pattern can't be empty: block this, a rule with `""@example.com`
+        // wouldn't match anything.
         if rule.local_pattern.is_empty() {
             report.issues[i].push(Issue::Error("local pattern is empty".into()));
         }
@@ -176,7 +176,7 @@ fn subsumes_bytes(a: &[u8], b: &[u8]) -> bool {
         (Some(_), None) => a.iter().all(|&c| c == b'*'),
         (Some(&ac), Some(&bc)) => {
             if ac == b'*' {
-                // Empty match of a's `*` — rest of a must subsume all of b.
+                // Empty match of a's `*`: rest of a must subsume all of b.
                 if subsumes_bytes(&a[1..], b) {
                     return true;
                 }

@@ -45,7 +45,7 @@ fn discord_bot(env: &Env) -> Option<DiscordBot> {
     Some(DiscordBot::new(token, app_id, pub_key))
 }
 
-/// Execute a [`BotForward`] — post the content to the right channel and save
+/// Execute a [`BotForward`]: post the content to the right channel and save
 /// a [`ReplyContext`] for the webhook side to pick up.
 pub async fn dispatch(env: &Env, forward: &BotForward) -> Result<()> {
     let database = env.d1("DB")?;
@@ -127,7 +127,7 @@ fn render_body(forward: &BotForward) -> String {
 
 /// Handle `POST /telegram/webhook`. Checks the secret-token header if one
 /// is configured, parses the update, and if it's a reply to a message we
-/// remember — sends the reply back via email.
+/// remember, sends the reply back via email.
 pub async fn handle_telegram_webhook(mut req: Request, env: Env) -> Result<Response> {
     if let Ok(expected) = env.secret("TELEGRAM_WEBHOOK_SECRET") {
         let got = req

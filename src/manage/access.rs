@@ -5,7 +5,7 @@ use worker::*;
 
 /// Verify the Cloudflare Access JWT and return the authenticated email.
 pub async fn verify_access(req: &Request, env: &Env) -> Option<String> {
-    // Access sets the JWT as both a header and a cookie — check both
+    // Access sets the JWT as both a header and a cookie: check both
     let token = match req.headers().get("Cf-Access-Jwt-Assertion").ok()? {
         Some(t) => t,
         None => match get_cookie(req, "CF_Authorization") {

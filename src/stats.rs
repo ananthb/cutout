@@ -1,6 +1,6 @@
 //! Aggregated stats for the dashboard, sourced from Analytics Engine.
 //!
-//! The worker can't query its own AE dataset directly — querying happens via
+//! The worker can't query its own AE dataset directly; querying happens via
 //! Cloudflare's REST SQL API. We need an account id and an API token with
 //! "Account Analytics: Read" scope. If either is missing the dashboard
 //! degrades gracefully (no stats shown, no error).
@@ -65,7 +65,7 @@ pub struct TopSender {
 }
 
 /// Fetch the 7-day rollup. Returns `None` if AE credentials aren't
-/// configured or the API call fails — callers should render the
+/// configured or the API call fails, so callers should render the
 /// dashboard without stats in that case.
 pub async fn fetch_7d(env: &Env) -> Option<Stats7d> {
     if let Some(cached) = read_cache().await {

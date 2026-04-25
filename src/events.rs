@@ -100,7 +100,7 @@ pub async fn recent(kv: &KvStore, since_ms: Option<i64>) -> worker::Result<Vec<E
 /// - `double1` = size_bytes, `double2` = destination_count
 ///
 /// If the `EVENTS` binding isn't present (e.g. local dev without
-/// `analytics_engine_datasets` configured), this silently no-ops — we
+/// `analytics_engine_datasets` configured), this silently does nothing: we
 /// never want analytics writes to take down the email path.
 pub fn record_ae(env: &Env, event: &Event) {
     let dataset = match env.analytics_engine(AE_BINDING) {

@@ -50,17 +50,17 @@ footer { margin-top: 3rem; padding-top: 1rem; border-top: 1px solid var(--border
 <pre><code>nix develop                      # or install wrangler manually
 wrangler kv namespace create KV
 wrangler d1 create cutout-db</code></pre>
-<p>Save the returned <code>id</code> (KV) and <code>database_id</code> (D1) — you'll paste them into GitHub Secrets next.</p>
+<p>Save the returned <code>id</code> (KV) and <code>database_id</code> (D1): you'll paste them into GitHub Secrets next.</p>
 
 <h2>3. Configure GitHub Secrets</h2>
 <p>In your fork: <strong>Settings → Secrets and variables → Actions</strong>. Add:</p>
 <ul>
-  <li><code>CLOUDFLARE_API_TOKEN</code> — token with <em>Workers Scripts: Edit</em>, <em>Workers KV Storage: Edit</em>, <em>D1: Edit</em>, and <em>Email Routing: Edit</em> permissions.</li>
-  <li><code>CLOUDFLARE_ACCOUNT_ID</code> — your Cloudflare Account ID (visible in the dashboard sidebar).</li>
-  <li><code>KV_NAMESPACE_ID</code> — the <code>id</code> from step 2.</li>
-  <li><code>D1_DATABASE_ID</code> — the <code>database_id</code> from step 2.</li>
-  <li><code>CF_ACCESS_TEAM</code> and <code>CF_ACCESS_AUD</code> — your Cloudflare Access team domain and the AUD tag of the Access app guarding <code>/manage</code> (set this up in step 7).</li>
-  <li><code>CF_API_TOKEN</code> <em>(optional)</em> — separate token with <em>Account Analytics: Read</em> scope. Unlocks the dashboard stats panels (forwarded/dropped totals, per-rule matches, top senders). Leave empty to ship without stats; the live event tail still works.</li>
+  <li><code>CLOUDFLARE_API_TOKEN</code>: token with <em>Workers Scripts: Edit</em>, <em>Workers KV Storage: Edit</em>, <em>D1: Edit</em>, and <em>Email Routing: Edit</em> permissions.</li>
+  <li><code>CLOUDFLARE_ACCOUNT_ID</code>: your Cloudflare Account ID (visible in the dashboard sidebar).</li>
+  <li><code>KV_NAMESPACE_ID</code>: the <code>id</code> from step 2.</li>
+  <li><code>D1_DATABASE_ID</code>: the <code>database_id</code> from step 2.</li>
+  <li><code>CF_ACCESS_TEAM</code> and <code>CF_ACCESS_AUD</code>: your Cloudflare Access team domain and the AUD tag of the Access app guarding <code>/manage</code> (set this up in step 7).</li>
+  <li><code>CF_API_TOKEN</code> <em>(optional)</em>: separate token with <em>Account Analytics: Read</em> scope. Unlocks the dashboard stats panels (forwarded/dropped totals, per-rule matches, top senders). Leave empty to ship without stats; the live event tail still works.</li>
 </ul>
 
 <h2>4. Push to <code>main</code></h2>
@@ -95,7 +95,7 @@ wrangler d1 create cutout-db</code></pre>
 <p>Visit <code>https://&lt;your-cutout-host&gt;/manage</code>. Add Forward rules using glob patterns on the local part and domain. For email destinations, use the <strong>Proxy via rewrite mode</strong> toggle to ensure <code>Reply-To</code> works when replying via your custom domain (see <a href="how-it-works.html">How It Works</a> for the tradeoffs).</p>
 
 <h2>Updating</h2>
-<p>Pull from upstream into your fork's <code>main</code> branch (or merge a PR) — the deploy workflow re-runs on every push to <code>main</code>.</p>
+<p>Pull from upstream into your fork's <code>main</code> branch (or merge a PR): the deploy workflow re-runs on every push to <code>main</code>.</p>
 
 <footer>
   <a href="./">Back to overview</a>

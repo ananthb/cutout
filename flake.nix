@@ -1,5 +1,5 @@
 {
-  description = "Transparent email alias proxy — like SimpleLogin, built entirely on Cloudflare Workers";
+  description = "Transparent email alias proxy: similar to SimpleLogin, built entirely on Cloudflare Workers";
 
   inputs = {
     nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";

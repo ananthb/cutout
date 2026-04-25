@@ -3,7 +3,7 @@
   Cutout
 </h1>
 
-Transparent email alias proxy — like [SimpleLogin](https://simplelogin.io) or [addy.io](https://addy.io), built entirely on Cloudflare Workers. No servers, no containers, no monthly VM bills.
+Transparent email alias proxy: similar to [SimpleLogin](https://simplelogin.io) or [addy.io](https://addy.io), built entirely on Cloudflare Workers. No servers, no containers, no monthly VM bills.
 
 [![Deploy to Cloudflare](https://deploy.workers.cloudflare.com/button)](https://deploy.workers.cloudflare.com/?url=https://github.com/ananthb/cutout)
 
@@ -19,7 +19,7 @@ Transparent email alias proxy — like [SimpleLogin](https://simplelogin.io) or 
     - **Proxy mode** reconstructs the email via `send_email` to ensure `Reply-To` works reliably when replying via the same domain (strips signatures/attachments).
     Both modes inject an `X-Original-From` header for permanent archival in your inbox.
 5. For Telegram/Discord destinations: the bot posts the content to the chat and stores a reply context in KV. Replies in the chat (Telegram's native reply, Discord's "Reply" button → modal) route back to the original sender via email
-6. Destination availability is driven by which secrets are set — telegram/discord only appear in the UI when their bot tokens are configured
+6. Destinations depend on your secrets: Telegram and Discord only appear in the UI when their bot tokens are configured
 
 ## Getting Started
 
@@ -39,12 +39,12 @@ See the **[Deploy guide](https://ananthb.github.io/cutout/deploy.html)** for ste
 
 ## Architecture
 
-- [Cloudflare Workers](https://workers.cloudflare.com/) — Rust compiled to WebAssembly
-- [Cloudflare Email Routing](https://developers.cloudflare.com/email-routing/) — inbound MX + catch-all → worker, plus `EmailMessage.forward()` for the Native Forward path
-- [Cloudflare Email Service](https://developers.cloudflare.com/email-service/) — used for reverse-alias replies, Proxy mode forwarding, and fanning out beyond the first destination
-- [Cloudflare KV](https://developers.cloudflare.com/kv/) — rule list, reverse-alias mappings, and per-message bot reply contexts
-- [Cloudflare Access](https://developers.cloudflare.com/cloudflare-one/applications/) — protects `/manage`
-- [botrelay-rs](https://github.com/ananthb/botrelay-rs) — shared crate providing the Telegram + Discord bot clients and reply-context primitives
+- [Cloudflare Workers](https://workers.cloudflare.com/): Rust compiled to WebAssembly
+- [Cloudflare Email Routing](https://developers.cloudflare.com/email-routing/): inbound MX + catch-all -> worker, plus `EmailMessage.forward()` for the Native Forward path
+- [Cloudflare Email Service](https://developers.cloudflare.com/email-service/): used for reverse-alias replies, Proxy mode forwarding, and fanning out beyond the first destination
+- [Cloudflare KV](https://developers.cloudflare.com/kv/): rule list, reverse-alias mappings, and per-message bot reply contexts
+- [Cloudflare Access](https://developers.cloudflare.com/cloudflare-one/applications/): protects `/manage`
+- [botrelay-rs](https://github.com/ananthb/botrelay-rs): shared crate providing the Telegram + Discord bot clients and reply-context primitives
 
 ## Development
 

@@ -1,6 +1,6 @@
 use mail_parser::MessageParser;
 
-/// Parsed representation of an inbound email — only the fields we need to
+/// Parsed representation of an inbound email: only the fields we need to
 /// reconstruct an outbound message via Cloudflare Email Service.
 pub struct ParsedEmail {
     pub from_name: Option<String>,

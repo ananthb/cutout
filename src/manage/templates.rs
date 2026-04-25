@@ -1,6 +1,6 @@
 //! HTML templates for the management UI.
 //!
-//! Layout: a "pipeline workbench" — left pane lists routing rules as a
+//! Layout: a "pipeline workbench": left pane lists routing rules as a
 //! vertical pipeline (top-to-bottom evaluation order), right pane is an
 //! inspector for the selected rule. Edit/add forms render as overlays.
 
@@ -626,7 +626,7 @@ code { font-family: var(--font-mono); font-size: 0.88em; }
 }
 "##;
 
-/// Alpine.js component factory for the rule editor modal — owns form state
+/// Alpine.js component factory for the rule editor modal: owns form state
 /// (action type, destination chips, draft input, error message) and the
 /// chip-input parsing/validation logic. Mirrors `Destination::parse_line`
 /// in src/types.rs so the client gives the same errors the server would.
@@ -763,7 +763,7 @@ function liveFeed() {
           this.events = j.events.concat(this.events).slice(0, 80);
         }
         if (typeof j.now === 'number') this.lastTs = j.now;
-      } catch (_) { /* swallow — polling will retry */ }
+      } catch (_) { /* swallow: polling will retry */ }
     },
     toggle() {
       this.collapsed = !this.collapsed;
@@ -797,7 +797,7 @@ pub fn base_html(title: &str, content: &str) -> String {
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>{title} — Cutout</title>
+<title>{title} : Cutout</title>
 <link rel="icon" type="image/svg+xml" href="/manage/assets/cutout-mark.svg">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -889,7 +889,7 @@ const LIVE_FEED_PANE: &str = r##"<div class="live-feed" :class="{ collapsed }"
     </button>
     <span class="chip" :class="collapsed ? '' : 'ok'" style="height:20px;font-size:10.5px">
       <span class="dot" x-show="!collapsed"></span>
-      <span x-text="collapsed ? 'paused — click to stream' : 'streaming'"></span>
+      <span x-text="collapsed ? 'paused: click to stream' : 'streaming'"></span>
     </span>
     <div class="filters" x-show="!collapsed">
       <template x-for="f in ['all','forward','drop','reply','reject']" :key="f">
@@ -914,7 +914,7 @@ const LIVE_FEED_PANE: &str = r##"<div class="live-feed" :class="{ collapsed }"
         <span class="size" x-text="fmt_size(e.size_bytes)"></span>
       </div>
     </template>
-    <div x-show="visible().length === 0" class="empty">No events yet — they'll appear here as mail flows.</div>
+    <div x-show="visible().length === 0" class="empty">No events yet: they'll appear here as mail flows.</div>
   </div>
 </div>"##;
 
@@ -933,7 +933,7 @@ pub fn pick_selected_idx(rules: &[Rule], requested: Option<&str>) -> usize {
         .min(rules.len().saturating_sub(1))
 }
 
-/// Standalone SVG for the favicon — same mark as `LOGO_SVG`, but with
+/// Standalone SVG for the favicon: same mark as `LOGO_SVG`, but with
 /// colors hardcoded (no CSS vars) so it renders correctly when served as
 /// a static asset. Inner cutout uses `prefers-color-scheme` so it sits
 /// flush against light or dark browser-tab backgrounds.
@@ -958,7 +958,7 @@ pub fn workbench(
 ) -> String {
     let pipeline = pipeline_pane(rules, selected_idx);
     let inspector = if rules.is_empty() {
-        r#"<section class="inspector-pane"><div class="empty">No rules yet — add one to get started.</div></section>"#.to_string()
+        r#"<section class="inspector-pane"><div class="empty">No rules yet: add one to get started.</div></section>"#.to_string()
     } else {
         inspector_pane(rules, selected_idx, report, enabled, stats)
     };
@@ -1173,7 +1173,7 @@ fn inspector_pane(
             replace_reply_to: true,
             ..
         } => r#"<span class="tag proxy tip" data-tip="Forward in proxy/rewrite mode: the message is reconstructed and Reply-To is rewritten so replies route back through the worker via the same custom domain. Strips PGP signatures and attachments.">forward · proxy</span>"#.to_string(),
-        Action::Forward { .. } => r#"<span class="tag forward tip" data-tip="Forward in native mode: uses Cloudflare EmailMessage.forward(). Original bytes (PGP, attachments) pass through untouched; Reply-To is overlaid but may be ignored by some clients.">forward</span>"#.to_string(),
+        Action::Forward { .. } => r#"<span class="tag forward tip" data-tip="Forward in native mode: uses Cloudflare EmailMessage.forward(): original bytes (PGP, attachments) pass through untouched; Reply-To is overlaid but may be ignored by some clients.">forward</span>"#.to_string(),
         Action::Drop if is_catch => {
             r#"<span class="tag catch tip" data-tip="Pinned catch-all rule: silently drops anything no earlier rule matched. Always sits at the end and can't be deleted or moved.">drop · catch-all</span>"#.to_string()
         }
@@ -1254,7 +1254,7 @@ fn inspector_pane(
   <header><h3>Action</h3></header>
   <div class="card-body">
     <p style="margin:0;color:var(--fg-2);font-size:12.5px">
-      Inbound mail matching this rule is silently dropped — no notification, no bounce.
+      Inbound mail matching this rule is silently dropped: no notification, no bounce.
       {extra}
     </p>
   </div>
@@ -1305,7 +1305,7 @@ fn render_stat_strip(rule: &Rule, dest_count: usize, stats: Option<&Stats7d>) ->
             rs.matches
         ),
         None => format!(
-            r##"<div><span class="k tip" {m_tip}>matches · 7d</span><span class="v muted">—</span><span class="sub">{}</span></div>"##,
+            r##"<div><span class="k tip" {m_tip}>matches · 7d</span><span class="v muted">-</span><span class="sub">{}</span></div>"##,
             if stats.is_none() {
                 "stats unavailable"
             } else {
@@ -1319,7 +1319,7 @@ fn render_stat_strip(rule: &Rule, dest_count: usize, stats: Option<&Stats7d>) ->
             relative_time_from_seconds(ts_s, stats.map(|s| s.generated_at).unwrap_or(0))
         ),
         None => format!(
-            r##"<div><span class="k tip" {l_tip}>last match</span><span class="v muted">—</span></div>"##
+            r##"<div><span class="k tip" {l_tip}>last match</span><span class="v muted">-</span></div>"##
         ),
     };
 
@@ -1346,12 +1346,12 @@ fn render_stat_strip(rule: &Rule, dest_count: usize, stats: Option<&Stats7d>) ->
                 parts.push(format!("{d} dc"));
             }
             if parts.is_empty() {
-                "—".to_string()
+                "-".to_string()
             } else {
                 parts.join(" · ")
             }
         }
-        Action::Drop => "—".to_string(),
+        Action::Drop => "-".to_string(),
     };
 
     format!(
@@ -1404,7 +1404,7 @@ fn render_top_senders(senders: &[crate::stats::TopSender]) -> String {
 /// timestamp, anchored to `now_ms` (unix milliseconds).
 fn relative_time_from_seconds(ts_s: i64, now_ms: i64) -> String {
     if ts_s <= 0 {
-        return "—".into();
+        return "-".into();
     }
     let now_s = if now_ms > 0 { now_ms / 1000 } else { 0 };
     if now_s == 0 {
@@ -1428,10 +1428,10 @@ fn destinations_card(destinations: &[Destination], replace_reply_to: bool) -> St
     let mode_tag = if replace_reply_to {
         r#"<span class="tag proxy tip" data-tip="Proxy/rewrite mode: messages are reconstructed via Email Service so Reply-To works when replying via the same custom domain. Strips PGP signatures and attachments.">proxy mode</span>"#
     } else {
-        r#"<span class="tag forward tip" data-tip="Native mode: uses EmailMessage.forward() — original bytes (PGP, attachments, formatting) pass through untouched. Reply-To is overlaid but may be ignored by some mail clients.">native mode</span>"#
+        r#"<span class="tag forward tip" data-tip="Native mode: uses EmailMessage.forward(): original bytes (PGP, attachments, formatting) pass through untouched. Reply-To is overlaid but may be ignored by some mail clients.">native mode</span>"#
     };
     let body = if destinations.is_empty() {
-        r#"<div class="empty">No destinations — this forward is a no-op until you add at least one.</div>"#.to_string()
+        r#"<div class="empty">No destinations: this forward does nothing until you add at least one.</div>"#.to_string()
     } else {
         let cards: String = destinations
             .iter()
@@ -1549,7 +1549,7 @@ fn inspector_tester(all_rules: &[Rule], _selected: &Rule) -> String {
           </a>
         </template>
         <template x-if="!firstMatch() &amp;&amp; to.includes('@')">
-          <span class="chip bad"><span class="dot"></span>no rule matches — bounced</span>
+          <span class="chip bad"><span class="dot"></span>no rule matches: bounced</span>
         </template>
         <template x-if="!firstMatch() &amp;&amp; !to.includes('@')">
           <span class="chip" style="opacity:0.7">waiting for full address…</span>
@@ -1566,7 +1566,7 @@ fn inspector_tester(all_rules: &[Rule], _selected: &Rule) -> String {
 }
 
 // ---------------------------------------------------------------------------
-// Editor modal — used for both add and edit.
+// Editor modal: used for both add and edit.
 // ---------------------------------------------------------------------------
 
 /// Render the destinations chip-input field. The Alpine `x-data` factory is
@@ -1622,7 +1622,7 @@ pub fn new_rule_modal(enabled: &EnabledChannels) -> String {
     editor_modal(None, enabled, "/manage/rules", "post", "Create rule")
 }
 
-/// Edit-rule modal — returned for HTMX swap into `#editor-modal`.
+/// Edit-rule modal: returned for HTMX swap into `#editor-modal`.
 pub fn edit_rule_form(rule: &Rule, enabled: &EnabledChannels) -> String {
     let action = format!("/manage/rules/{}", html_escape(&rule.id));
     editor_modal(Some(rule), enabled, &action, "put", "Save")
@@ -1651,7 +1651,7 @@ fn editor_modal(
         };
 
     let title = if rule.is_some() {
-        format!("Edit rule · {}", html_escape(id))
+        format!("Edit rule: {}", html_escape(id))
     } else {
         "New rule".to_string()
     };
@@ -1712,7 +1712,7 @@ fn editor_modal(
           <span class="at">@</span>
           <input name="domain_pattern" type="text" value="{domain}" placeholder="*" required>
         </div>
-        <span class="help"><span style="color:var(--accent)">*</span> matches anything · <span style="color:var(--accent)">?</span> matches one char</span>
+        <span class="help"><span style="color:var(--accent)">*</span> matches anything: <span style="color:var(--accent)">?</span> matches one char</span>
       </div>
       <div class="field">
         <label>Action</label>

@@ -2,8 +2,8 @@
 //
 // worker-build wires the wasm-bindgen `email` export onto the entrypoint
 // prototype directly: `Entrypoint.prototype.email = V`. But V's signature
-// is `(message, env, ctx)` and Cloudflare invokes `entrypoint.email(message)`
-// — so env and ctx come through as `undefined`, the runtime context is
+// is `(message, env, ctx)` and Cloudflare invokes `entrypoint.email(message)`,
+// so env and ctx come through as `undefined`, the runtime context is
 // missing, and any subsequent `await` in the handler hangs until the CPU
 // budget is exceeded. (See the equivalent fetch wiring in the same file,
 // which IS wrapped to pass `this.env, this.ctx`.)

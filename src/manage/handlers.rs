@@ -100,7 +100,7 @@ fn validation_error_response(report: &validation::Report) -> Result<Response> {
     Response::error(format!("rule {}: {}", i + 1, msg), 400)
 }
 
-/// GET /manage — list rules
+/// GET /manage: list rules
 pub async fn list_rules(req: Request, env: &Env, email: &str) -> Result<Response> {
     let kv_store = env.kv("KV")?;
     let rules = ensure_catch_all(&kv_store).await?;
@@ -119,13 +119,13 @@ pub async fn list_rules(req: Request, env: &Env, email: &str) -> Result<Response
     ))
 }
 
-/// GET /manage/rules/new — return the new-rule modal as an HTMX partial.
+/// GET /manage/rules/new: return the new-rule modal as an HTMX partial.
 pub async fn new_rule_form(env: &Env) -> Result<Response> {
     let enabled = EnabledChannels::from_env(env);
     Response::from_html(templates::new_rule_modal(&enabled))
 }
 
-/// POST /manage/rules — create a new rule (inserted before catch-all)
+/// POST /manage/rules: create a new rule (inserted before catch-all)
 pub async fn create_rule(mut req: Request, env: &Env) -> Result<Response> {
     let kv_store = env.kv("KV")?;
     let form: serde_json::Value = req.json().await?;
@@ -171,7 +171,7 @@ pub async fn create_rule(mut req: Request, env: &Env) -> Result<Response> {
     Response::from_html(render_workbench(env, &rules, &enabled, Some(&new_id)).await)
 }
 
-/// GET /manage/rules/{id}/edit — return edit form partial
+/// GET /manage/rules/{id}/edit: return edit form partial
 pub async fn edit_form(env: &Env, rule_id: &str) -> Result<Response> {
     let kv_store = env.kv("KV")?;
     let rules = kv::get_rules(&kv_store).await?;
@@ -183,7 +183,7 @@ pub async fn edit_form(env: &Env, rule_id: &str) -> Result<Response> {
     }
 }
 
-/// PUT /manage/rules/{id} — update a rule
+/// PUT /manage/rules/{id}: update a rule
 pub async fn update_rule(mut req: Request, env: &Env, rule_id: &str) -> Result<Response> {
     let kv_store = env.kv("KV")?;
     let form: serde_json::Value = req.json().await?;
@@ -224,7 +224,7 @@ pub async fn update_rule(mut req: Request, env: &Env, rule_id: &str) -> Result<R
     Response::from_html(render_workbench(env, &rules, &enabled, Some(rule_id)).await)
 }
 
-/// DELETE /manage/rules/{id} — delete a rule (blocked for catch-all)
+/// DELETE /manage/rules/{id}: delete a rule (blocked for catch-all)
 pub async fn delete_rule(mut req: Request, env: &Env, rule_id: &str) -> Result<Response> {
     let kv_store = env.kv("KV")?;
     let mut rules = kv::get_rules(&kv_store).await?;
@@ -248,7 +248,7 @@ pub async fn delete_rule(mut req: Request, env: &Env, rule_id: &str) -> Result<R
     Response::from_html(render_workbench(env, &rules, &enabled, selected.as_deref()).await)
 }
 
-/// POST /manage/rules/reorder — move a rule up or down
+/// POST /manage/rules/reorder: move a rule up or down
 pub async fn reorder_rules(mut req: Request, env: &Env) -> Result<Response> {
     let kv_store = env.kv("KV")?;
     let form: serde_json::Value = req.json().await?;
@@ -284,7 +284,7 @@ pub async fn reorder_rules(mut req: Request, env: &Env) -> Result<Response> {
     Response::from_html(render_workbench(env, &rules, &enabled, selected.as_deref()).await)
 }
 
-/// GET /manage/events?since={unix_ms} — JSON tail of the event ring buffer.
+/// GET /manage/events?since={unix_ms}: JSON tail of the event ring buffer.
 /// Returns `{events: [...], now: <unix_ms>}`. Polled by the dashboard.
 pub async fn list_events(req: Request, env: &Env) -> Result<Response> {
     let kv_store = env.kv("KV")?;
@@ -309,7 +309,7 @@ pub async fn list_events(req: Request, env: &Env) -> Result<Response> {
     Ok(resp)
 }
 
-/// GET /manage/assets/cutout-mark.svg — favicon / brand mark.
+/// GET /manage/assets/cutout-mark.svg: favicon / brand mark.
 pub async fn brand_mark() -> Result<Response> {
     let mut resp = Response::ok(templates::LOGO_SVG_FILE)?;
     let headers = resp.headers_mut();
