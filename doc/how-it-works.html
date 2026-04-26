@@ -3,101 +3,99 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>How It Works | Cutout</title>
-<meta name="description" content="How Cutout handles inbound emails, reverse-alias routing, and multi-channel forwarding.">
+<title>How it works | Cutout</title>
+<meta name="description" content="How Cutout handles inbound email, reverse-alias routing, and multi-channel forwarding.">
 <link rel="icon" type="image/svg+xml" href="cutout-mark.svg">
-<style>
-:root { --bg: #fff; --fg: #1a1a1a; --muted: #555; --accent: #dd793a; --code-bg: #f5f6f8; --border: #e0e0e0; --max-w: 740px; }
-@media (prefers-color-scheme: dark) { :root { --bg: #121212; --fg: #e0e0e0; --muted: #aaa; --accent: #e89060; --code-bg: #2a2a2a; --border: #3a3a3a; } }
-* { margin: 0; padding: 0; box-sizing: border-box; }
-body { font-family: system-ui, -apple-system, sans-serif; background: var(--bg); color: var(--fg); line-height: 1.6; }
-.container { max-width: var(--max-w); margin: 0 auto; padding: 2rem 1.5rem; }
-h1 { font-size: 1.8rem; margin-bottom: 0.5rem; }
-h2 { font-size: 1.25rem; margin-top: 2rem; margin-bottom: 0.5rem; border-bottom: 1px solid var(--border); padding-bottom: 0.3rem; }
-p { margin: 0.5rem 0; }
-a { color: var(--accent); text-decoration: none; }
-a:hover { text-decoration: underline; }
-ul, ol { margin: 0.5rem 0 0.5rem 1.5rem; }
-li { margin: 0.3rem 0; }
-code { background: var(--code-bg); padding: 0.15rem 0.4rem; border-radius: 3px; font-size: 0.9em; font-family: ui-monospace, monospace; }
-nav.site-nav { display: flex; gap: 0.75rem; margin: 1rem 0 2rem; flex-wrap: wrap; padding-bottom: 1rem; border-bottom: 1px solid var(--border); }
-nav.site-nav a { padding: 0.3rem 0.6rem; background: var(--code-bg); border-radius: 4px; font-weight: 500; font-size: 0.85rem; }
-nav.site-nav a.current { background: var(--accent); color: #fff; }
-footer { margin-top: 3rem; padding-top: 1rem; border-top: 1px solid var(--border); font-size: 0.8rem; color: var(--muted); }
-</style>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="style.css">
 </head>
 <body>
-<div class="container">
 
-<nav class="site-nav" aria-label="Documentation">
-  <a href="./">Overview</a>
-  <a href="how-it-works.html" class="current">How It Works</a>
-  <a href="deploy.html">Deploy</a>
-</nav>
+<header class="site">
+  <div class="l-container row">
+    <a class="brand" href="./" aria-label="Cutout home">
+      <svg width="22" height="22" viewBox="0 0 22 22" aria-hidden="true">
+        <rect x="1.5" y="1.5" width="13" height="13" rx="2" fill="none" stroke="var(--accent)" stroke-width="1.6"/>
+        <rect x="7.5" y="7.5" width="13" height="13" rx="2" fill="var(--accent)"/>
+        <rect x="7.5" y="7.5" width="7" height="7" fill="var(--bg)" stroke="var(--accent)" stroke-width="1.6"/>
+      </svg>
+      <span>Cutout</span>
+    </a>
+    <nav aria-label="Primary">
+      <a href="./">Overview</a>
+      <a href="how-it-works.html" aria-current="page">How it works</a>
+      <a href="deploy.html">Deploy</a>
+      <a href="https://github.com/ananthb/cutout">GitHub &#8599;</a>
+    </nav>
+  </div>
+</header>
 
-<h1 style="display:flex;align-items:center;gap:0.6rem"><img src="cutout-mark.svg" width="28" height="28" alt="" style="display:block">How It Works</h1>
-<p>Cutout sits between the outside world and your real email address, acting as an invisible relay.</p>
+<main class="doc">
 
-<h2>Inbound flow (someone emails one of your addresses)</h2>
+<div class="h1-row">
+  <img src="cutout-mark.svg" width="28" height="28" alt="">
+  <span class="l-eyebrow">REFERENCE</span>
+</div>
+<h1>How it works</h1>
+<p class="lede">Cutout sits between the outside world and your real inbox, acting as an invisible relay.</p>
+
+<h2>Inbound flow</h2>
 <ol>
-  <li>An email arrives at an address on any domain pointed at Cutout (e.g. <code>newsletter@yourdomain.com</code>)</li>
-  <li>Cloudflare Email Routing's catch-all rule triggers the Cutout worker</li>
-  <li>The worker matches the recipient against your rules, top-to-bottom</li>
-  <li>On a <strong>Forward</strong> match, the worker generates one reverse-alias <code>reply+&lt;uuid&gt;@yourdomain.com</code> and saves its mapping <code>reply+&lt;uuid&gt; → original sender</code> in <strong>Cloudflare D1</strong> (durable storage). This alias is shared across all destinations on the rule, so any reply lands back on the same sender.</li>
-  <li>The worker then fans the mail out to each destination. For email destinations, there are two modes:
-    <ul>
-      <li><strong>Native mode (default)</strong> → uses <code>EmailMessage.forward()</code>. Original bytes (PGP, attachments, formatting) pass through untouched. The <code>Reply-To</code> is overlaid, but may be ignored by some mail clients if the original message already has one.</li>
-      <li><strong>Proxy via rewrite mode</strong> → uses Email Service structured send. Reconstructs the message to ensure <code>Reply-To</code> works when replying via the same custom domain, but strips PGP/MIME signatures and attachments.</li>
-    </ul>
-    In both modes, Cutout injects an <code>X-Original-From</code> header containing the real sender's address for your permanent archival.
-  </li>
-  <li>Other destination kinds:
-    <ul>
-      <li><strong>Telegram destinations</strong> → <code>sendMessage</code> with the subject + body. Cutout saves a reply context in <strong>D1</strong> keyed by <code>tg:&lt;chat_id&gt;:&lt;message_id&gt;</code>.</li>
-      <li><strong>Discord destinations</strong> → <code>createMessage</code> with a Reply button. Reply context keyed by <code>dc:&lt;channel_id&gt;:&lt;message_id&gt;</code>.</li>
-    </ul>
-  </li>
+  <li>An email arrives at any address on a domain pointed at Cutout (e.g. <code>newsletter@yourdomain.com</code>).</li>
+  <li>Cloudflare Email Routing's catch-all rule triggers the worker.</li>
+  <li>The worker matches the recipient against your rules, top to bottom; the first match wins.</li>
+  <li>On a Forward match, Cutout mints one <code>reply+&lt;uuid&gt;@yourdomain.com</code> reverse alias and saves the mapping in <strong>D1</strong>. The same alias is shared across every destination on the rule, so any reply lands back on the original sender.</li>
+  <li>The worker fans the message out to each destination.</li>
 </ol>
 
-<h2>Reply flows</h2>
+<h2>Forwarding modes</h2>
+<p>Each rule with email destinations picks one of two modes. Both inject an <code>X-Original-From</code> header carrying the real sender's address, for archival.</p>
+<div class="card-grid">
+  <div class="card">
+    <h4>Native (default)</h4>
+    <p>Uses <code>EmailMessage.forward()</code>. Original bytes pass through untouched (PGP, attachments, formatting). <code>Reply-To</code> is overlaid but may be ignored by clients if the message already has one.</p>
+  </div>
+  <div class="card">
+    <h4>Proxy via rewrite</h4>
+    <p>Uses Email Service structured send. Reconstructs the message so <code>Reply-To</code> always works, but strips PGP / signed MIME and attachments.</p>
+  </div>
+</div>
+<p>Telegram destinations use <code>sendMessage</code>; Discord destinations use <code>createMessage</code> with a Reply button. Bot reply context is keyed by <code>tg:&lt;chat_id&gt;:&lt;message_id&gt;</code> or <code>dc:&lt;channel_id&gt;:&lt;message_id&gt;</code> in D1.</p>
 
-<h3>Email replies</h3>
-<ol>
-  <li>You reply from your real mailbox; the reply is addressed to the <code>reply+&lt;uuid&gt;@yourdomain.com</code> that Cutout set as <code>Reply-To</code> on the forwarded message</li>
-  <li>Email Routing triggers the worker again</li>
-  <li>The worker looks up <code>reply+&lt;uuid&gt;</code> in <strong>D1</strong> to find the original sender</li>
-  <li>The reply is sent via Email Service's structured <code>send_email</code> API, with the alias as the <code>From</code> and the original sender as the <code>To</code></li>
-</ol>
-
-<h3>Bot replies</h3>
-<ol>
-  <li>You reply to a bot message in Telegram or Discord</li>
-  <li>Telegram sends a webhook; Discord sends an interaction event. Both contain the <code>message_id</code> of the message you're replying to</li>
-  <li>The worker looks up the <code>message_id</code> in <strong>D1</strong> to find the original sender and target alias</li>
-  <li>The reply is sent via <code>send_email</code>, just like an email reply</li>
-</ol>
-
-<h2>Destination verification</h2>
-<p>Email destinations must exist in your account's Cloudflare <strong>Email Routing → Destination addresses</strong> list. Cloudflare enforces this at the API level for both <code>forward()</code> and <code>send_email()</code>.</p>
-<p>Telegram and Discord destinations don't need this: they're validated via whether their bot secrets are set.</p>
-
-<h2>Multi-domain support</h2>
-<p>You can point any number of Cloudflare zones (domains) at the same Cutout worker; rules use the <code>domain</code> glob to differentiate them. Reverse-aliases are derived from the domain the mail actually arrived on.</p>
-
-<h2>Key components</h2>
+<h2>Replies</h2>
+<p>You reply from your real mailbox, or by replying to a bot message. Either way, the worker resolves the original sender from D1 and re-sends via Email Service's <code>send_email</code>, with the alias as <code>From</code> and the original sender as <code>To</code>.</p>
 <ul>
-  <li><strong>Cloudflare Email Routing</strong>: inbound catch-all → worker; <code>EmailMessage.forward()</code> for Native mode forwarding; Destination Addresses list for verification</li>
-  <li><strong>Cloudflare Email Service</strong>: used for the reverse-alias reply path, Proxy mode forwarding, and fan-out beyond the first destination</li>
-  <li><strong>Cloudflare D1</strong>: durable storage for reverse-alias mappings and bot reply contexts. Unlike KV, entries here do not expire, ensuring old email threads remain replyable forever.</li>
-  <li><strong>Cloudflare KV</strong>: stores the routing rule list managed via <code>/manage</code>.</li>
-  <li><strong>Cloudflare Access</strong>: protects <code>/manage</code>; <code>/health</code>, <code>/telegram/webhook</code>, <code>/discord/interactions</code> are public (the last two authenticate by secret token and Ed25519 signature respectively)</li>
-  <li><a href="https://github.com/ananthb/botrelay-rs"><strong>botrelay-rs</strong></a>: reusable Rust crate: Telegram + Discord bot clients and reply-context types, shared with sibling projects</li>
+  <li><strong>Email replies</strong> are addressed to <code>reply+&lt;uuid&gt;@yourdomain.com</code>; Email Routing fires the worker again.</li>
+  <li><strong>Bot replies</strong> arrive as a Telegram webhook or Discord interaction event, both carrying the message ID used to look up the alias.</li>
 </ul>
 
-<footer>
-  <a href="./">Back to overview</a>
+<h2>Components</h2>
+<ul>
+  <li><strong>Cloudflare Email Routing</strong>: inbound catch-all to worker, Native-mode <code>forward()</code>, and destination-address verification.</li>
+  <li><strong>Cloudflare Email Service</strong>: outbound replies, Proxy-mode forwarding, and fan-out beyond the first destination.</li>
+  <li><strong>Cloudflare D1</strong>: durable storage for reverse-alias mappings and bot reply contexts. Entries don't expire, so old threads stay replyable.</li>
+  <li><strong>Cloudflare KV</strong>: routing rule list, managed via <code>/manage</code>.</li>
+  <li><strong>Cloudflare Access</strong>: guards <code>/manage</code>. <code>/health</code>, <code>/telegram/webhook</code>, and <code>/discord/interactions</code> are public; the bot endpoints authenticate via secret token and Ed25519 signature.</li>
+  <li><a href="https://github.com/ananthb/botrelay-rs"><strong>botrelay-rs</strong></a>: shared Rust crate for the Telegram and Discord bot clients, used across sibling projects.</li>
+</ul>
+
+<p>Any number of Cloudflare zones can point at the same worker; <code>domain</code> globs in your rules separate them, and reverse-aliases are derived from the domain the mail arrived on.</p>
+
+</main>
+
+<footer class="site">
+  <div class="l-container row">
+    <span>Cutout &middot; open source &middot; AGPL-3.0</span>
+    <span class="links">
+      <a href="./">Overview</a>
+      <a href="deploy.html">Deploy</a>
+      <a href="https://github.com/ananthb/cutout">GitHub</a>
+      <a href="https://www.gnu.org/licenses/agpl-3.0.html">License</a>
+    </span>
+  </div>
 </footer>
 
-</div>
 </body>
 </html>

@@ -3,66 +3,320 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Cutout | Documentation</title>
-<meta name="description" content="Documentation for Cutout, a transparent email alias proxy for Cloudflare Workers.">
+<title>Cutout | Email alias proxy</title>
+<meta name="description" content="One alias for every site. Your real address, never seen. Self-hosted email alias proxy on Cloudflare Workers.">
 <link rel="icon" type="image/svg+xml" href="cutout-mark.svg">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="style.css">
 <style>
-:root { --bg: #fff; --fg: #1a1a1a; --muted: #555; --accent: #dd793a; --code-bg: #f5f6f8; --border: #e0e0e0; --max-w: 740px; }
-@media (prefers-color-scheme: dark) { :root { --bg: #121212; --fg: #e0e0e0; --muted: #aaa; --accent: #e89060; --code-bg: #2a2a2a; --border: #3a3a3a; } }
-* { margin: 0; padding: 0; box-sizing: border-box; }
-body { font-family: system-ui, -apple-system, sans-serif; background: var(--bg); color: var(--fg); line-height: 1.6; }
-.container { max-width: var(--max-w); margin: 0 auto; padding: 2rem 1.5rem; }
-h1 { font-size: 1.8rem; margin-bottom: 0.5rem; }
-h2 { font-size: 1.25rem; margin-top: 2rem; margin-bottom: 0.5rem; border-bottom: 1px solid var(--border); padding-bottom: 0.3rem; }
-p { margin: 0.5rem 0; }
-a { color: var(--accent); text-decoration: none; }
-a:hover { text-decoration: underline; }
-ul, ol { margin: 0.5rem 0 0.5rem 1.5rem; }
-li { margin: 0.3rem 0; }
-code { background: var(--code-bg); padding: 0.15rem 0.4rem; border-radius: 3px; font-size: 0.9em; font-family: ui-monospace, monospace; }
-nav.site-nav { display: flex; gap: 0.75rem; margin: 1rem 0 2rem; flex-wrap: wrap; padding-bottom: 1rem; border-bottom: 1px solid var(--border); }
-nav.site-nav a { padding: 0.3rem 0.6rem; background: var(--code-bg); border-radius: 4px; font-weight: 500; font-size: 0.85rem; }
-nav.site-nav a.current { background: var(--accent); color: #fff; }
-footer { margin-top: 4rem; padding-top: 1rem; border-top: 1px solid var(--border); font-size: 0.8rem; color: var(--muted); }
-.deploy-btn { display: inline-block; margin: 1rem 0; }
+.hero { padding: 60px 32px 32px; text-align: center; }
+.hero h1 {
+  margin: 16px 0 0;
+  font-size: clamp(36px, 5vw, 60px);
+  font-weight: 600;
+  letter-spacing: -0.02em;
+  line-height: 1.05;
+}
+.hero h1 .accent { color: var(--accent); }
+.hero p { font-size: 16.5px; color: var(--fg-1); margin: 16px auto 0; max-width: 620px; }
+.hero .ctas { display: flex; gap: 10px; justify-content: center; margin-top: 22px; }
+
+.flow-section {
+  background: var(--bg-1);
+  border-top: 1px solid var(--line);
+  border-bottom: 1px solid var(--line);
+}
+.flow-section .inner { padding: 40px 32px; }
+.flow-svg { display: block; width: 100%; height: 280px; }
+.flow-packet { transition: transform 0.7s cubic-bezier(.4, 0, .2, 1); }
+.steps { display: grid; grid-template-columns: repeat(4, 1fr); gap: 14px; margin-top: 30px; }
+.step .n {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--accent);
+  font-weight: 600;
+  letter-spacing: 0.06em;
+}
+.step h4 { margin: 4px 0 0; font-size: 15px; font-weight: 600; }
+.step p { margin: 4px 0 0; font-size: 12.5px; color: var(--fg-1); line-height: 1.55; }
+
+.channels-section { padding: 50px 0; border-bottom: 1px solid var(--line); text-align: center; }
+.channels-section h2 { margin: 8px 0 24px; font-size: 28px; font-weight: 600; }
+.channels-grid {
+  display: grid; grid-template-columns: repeat(3, 1fr);
+  gap: 12px; max-width: 720px; margin: 0 auto;
+}
+.channel-card {
+  background: var(--bg-1);
+  border: 1px solid var(--line-2);
+  border-radius: 10px;
+  padding: 20px;
+  display: flex; flex-direction: column; align-items: center; gap: 10px;
+}
+.channel-card .icon-wrap {
+  width: 44px; height: 44px; border-radius: 10px;
+  display: flex; align-items: center; justify-content: center;
+}
+.channel-card .icon-wrap.email    { background: color-mix(in oklch, var(--ch-email) 18%, transparent);    color: var(--ch-email); }
+.channel-card .icon-wrap.discord  { background: color-mix(in oklch, var(--ch-discord) 18%, transparent);  color: var(--ch-discord); }
+.channel-card .icon-wrap.telegram { background: color-mix(in oklch, var(--ch-telegram) 18%, transparent); color: var(--ch-telegram); }
+.channel-card .name { font-size: 15px; font-weight: 600; }
+.channel-card .desc { font-size: 12px; color: var(--fg-2); text-align: center; }
+
+.features-section { padding: 60px 0; }
+.features-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 28px; }
+.feature-card {
+  padding: 24px;
+  background: var(--bg-1);
+  border: 1px solid var(--line-2);
+  border-radius: 10px;
+}
+.feature-card h3 { margin: 8px 0 12px; font-size: 22px; font-weight: 600; }
+.feature-card ul {
+  margin: 0; padding: 0; list-style: none;
+  display: flex; flex-direction: column; gap: 10px;
+}
+.feature-card li { display: flex; gap: 10px; font-size: 14px; color: var(--fg-1); }
+.feature-card li .marker {
+  color: var(--accent); flex-shrink: 0; margin-top: 2px;
+  display: inline-flex; align-items: center;
+}
+.feature-card li .marker.chev { font-family: var(--font-mono); }
+
+.deploy-section {
+  padding: 70px 0;
+  background: var(--bg-1);
+  border-top: 1px solid var(--line);
+  text-align: center;
+}
+.deploy-section h2 { margin: 0; font-size: 36px; font-weight: 600; letter-spacing: -0.01em; }
+.deploy-section p { font-size: 14.5px; color: var(--fg-1); max-width: 540px; margin: 8px auto 22px; }
+.deploy-section .l-cta { height: 44px; padding: 0 20px; }
+.deploy-section .full-guide { display: block; margin-top: 14px; font-size: 12.5px; color: var(--fg-2); }
+
+@media (max-width: 720px) {
+  .steps { grid-template-columns: repeat(2, 1fr); }
+  .channels-grid { grid-template-columns: 1fr; max-width: 360px; }
+  .features-grid { grid-template-columns: 1fr; }
+}
 </style>
 </head>
 <body>
-<div class="container">
 
-<nav class="site-nav" aria-label="Documentation">
-  <a href="./" class="current">Overview</a>
-  <a href="how-it-works.html">How It Works</a>
-  <a href="deploy.html">Deploy</a>
-</nav>
+<header class="site">
+  <div class="l-container row">
+    <a class="brand" href="./" aria-label="Cutout home">
+      <svg width="22" height="22" viewBox="0 0 22 22" aria-hidden="true">
+        <rect x="1.5" y="1.5" width="13" height="13" rx="2" fill="none" stroke="var(--accent)" stroke-width="1.6"/>
+        <rect x="7.5" y="7.5" width="13" height="13" rx="2" fill="var(--accent)"/>
+        <rect x="7.5" y="7.5" width="7" height="7" fill="var(--bg)" stroke="var(--accent)" stroke-width="1.6"/>
+      </svg>
+      <span>Cutout</span>
+    </a>
+    <nav aria-label="Primary">
+      <a href="./" aria-current="page">Overview</a>
+      <a href="how-it-works.html">How it works</a>
+      <a href="deploy.html">Deploy</a>
+      <a href="https://github.com/ananthb/cutout">GitHub &#8599;</a>
+    </nav>
+  </div>
+</header>
 
-<h1 style="display:flex;align-items:center;gap:0.6rem"><img src="cutout-mark.svg" width="28" height="28" alt="" style="display:block">Cutout</h1>
-<p>Open-source email proxy alias service built on Cloudflare Workers.</p>
+<section class="hero l-container">
+  <span class="l-eyebrow">EMAIL ALIAS PROXY &middot; SELF-HOSTED &middot; OPEN SOURCE</span>
+  <h1>
+    One alias for every site.<br>
+    <span class="accent">Your real address, never seen.</span>
+  </h1>
+  <p>Cutout watches every email going to your domain, rewrites the headers, and quietly forwards it to where you actually live: email, Discord, or Telegram. Reply, and it gets routed back through the alias.</p>
+  <div class="ctas">
+    <a class="l-cta" href="deploy.html">Get started &#8599;</a>
+    <a class="l-cta ghost" href="#flow">See the flow</a>
+  </div>
+</section>
 
-<a class="deploy-btn" href="https://deploy.workers.cloudflare.com/?url=https://github.com/ananthb/cutout">
-  <img src="https://deploy.workers.cloudflare.com/button" alt="Deploy to Cloudflare">
-</a>
+<section id="flow" class="flow-section">
+  <div class="l-container inner">
+    <svg class="flow-svg" viewBox="0 0 1000 280" aria-label="Email flow: sender to alias to Cutout, fanning out to email, Discord, Telegram">
+      <line x1="60" y1="140" x2="560" y2="140" stroke="var(--line-2)" stroke-width="1.5" stroke-dasharray="4 6"/>
 
-<h2>Built on</h2>
-<ul>
-  <li><strong>Cloudflare Workers</strong>: Rust compiled to WebAssembly</li>
-  <li><strong>Cloudflare Email Routing</strong>: inbound MX rules</li>
-  <li><strong>Cloudflare Email Service</strong>: outbound SMTP API</li>
-  <li><strong>Cloudflare KV</strong>: rule storage and reverse-alias mappings</li>
-</ul>
+      <path d="M 560 140 Q 700 140 820 80"  fill="none" stroke="var(--line-2)" stroke-width="1" stroke-dasharray="3 5"/>
+      <path d="M 560 140 Q 700 140 820 140" fill="none" stroke="var(--line-2)" stroke-width="1" stroke-dasharray="3 5"/>
+      <path d="M 560 140 Q 700 140 820 200" fill="none" stroke="var(--line-2)" stroke-width="1" stroke-dasharray="3 5"/>
 
-<h2>Documentation</h2>
-<ul>
-  <li><a href="how-it-works.html">How It Works</a>: architecture and email flow</li>
-  <li><a href="deploy.html">Deploy your own</a>: fork and deploy to Cloudflare via GitHub Actions</li>
-</ul>
+      <g transform="translate(60 140)">
+        <circle r="22" fill="var(--bg-1)" stroke="var(--fg-2)" stroke-width="1.6"/>
+        <text text-anchor="middle" y="5" font-size="12" font-family="var(--font-mono)" fill="var(--fg-2)">&#9679;</text>
+        <text text-anchor="middle" y="46" font-size="13" font-weight="600" fill="var(--fg)">sender</text>
+        <text text-anchor="middle" y="62" font-size="11" font-family="var(--font-mono)" fill="var(--fg-3)">github@&hellip;</text>
+      </g>
+      <g transform="translate(300 140)">
+        <circle r="30" fill="var(--bg-1)" stroke="var(--accent)" stroke-width="1.6"/>
+        <text text-anchor="middle" y="6" font-size="14" font-family="var(--font-mono)" fill="var(--accent)">&#9679;</text>
+        <text text-anchor="middle" y="56" font-size="13" font-weight="600" fill="var(--fg)">alias</text>
+        <text text-anchor="middle" y="72" font-size="11" font-family="var(--font-mono)" fill="var(--fg-3)">gh+rust@alias.dev</text>
+      </g>
+      <g transform="translate(560 140)">
+        <circle r="30" fill="var(--bg-1)" stroke="var(--accent)" stroke-width="1.6"/>
+        <text text-anchor="middle" y="6" font-size="14" font-family="var(--font-mono)" fill="var(--accent)">&#9679;</text>
+        <text text-anchor="middle" y="56" font-size="13" font-weight="600" fill="var(--fg)">Cutout</text>
+        <text text-anchor="middle" y="72" font-size="11" font-family="var(--font-mono)" fill="var(--fg-3)">rule r_a4lq</text>
+      </g>
 
-<footer>
-  <a href="https://github.com/ananthb/cutout">Open source</a> &middot;
-  Licensed under <a href="https://www.gnu.org/licenses/agpl-3.0.html">AGPL-3.0</a> &middot;
-  Built with Rust + Cloudflare Workers
+      <g transform="translate(820 80)">
+        <rect x="-50" y="-15" width="120" height="30" rx="6" fill="var(--bg-1)" stroke="var(--ch-email)" stroke-width="1.2"/>
+        <circle cx="-40" cy="0" r="3" fill="var(--ch-email)"/>
+        <text x="-30" y="5" font-size="11" font-family="var(--font-mono)" fill="var(--ch-email)" font-weight="600">email</text>
+      </g>
+      <g transform="translate(820 140)">
+        <rect x="-50" y="-15" width="120" height="30" rx="6" fill="var(--bg-1)" stroke="var(--ch-discord)" stroke-width="1.2"/>
+        <circle cx="-40" cy="0" r="3" fill="var(--ch-discord)"/>
+        <text x="-30" y="5" font-size="11" font-family="var(--font-mono)" fill="var(--ch-discord)" font-weight="600">discord</text>
+      </g>
+      <g transform="translate(820 200)">
+        <rect x="-50" y="-15" width="120" height="30" rx="6" fill="var(--bg-1)" stroke="var(--ch-telegram)" stroke-width="1.2"/>
+        <circle cx="-40" cy="0" r="3" fill="var(--ch-telegram)"/>
+        <text x="-30" y="5" font-size="11" font-family="var(--font-mono)" fill="var(--ch-telegram)" font-weight="600">telegram</text>
+      </g>
+
+      <path d="M 300 110 Q 180 60 60 118" fill="none" stroke="var(--info)" stroke-width="1.2" stroke-dasharray="2 4"/>
+      <text x="180" y="44" text-anchor="middle" font-size="11" font-family="var(--font-mono)" fill="var(--info)">reply &middot; routed back through alias</text>
+
+      <g id="packet" class="flow-packet" style="transform: translate(60px, 140px);">
+        <rect x="-12" y="-8" width="24" height="16" rx="2" fill="var(--accent)"/>
+        <path d="M -12 -8 L 0 2 L 12 -8" fill="none" stroke="var(--accent-fg)" stroke-width="1.2"/>
+      </g>
+
+      <text x="180" y="266" text-anchor="middle" font-size="10.5" font-family="var(--font-mono)" fill="var(--fg-3)">1. inbound mail</text>
+      <text x="430" y="266" text-anchor="middle" font-size="10.5" font-family="var(--font-mono)" fill="var(--fg-3)">2. match rule</text>
+      <text x="700" y="266" text-anchor="middle" font-size="10.5" font-family="var(--font-mono)" fill="var(--fg-3)">3. fan out to channels</text>
+    </svg>
+
+    <div class="steps">
+      <div class="step">
+        <span class="n">STEP 01</span>
+        <h4>Point your domain</h4>
+        <p>at Cutout. Inbound mail starts arriving.</p>
+      </div>
+      <div class="step">
+        <span class="n">STEP 02</span>
+        <h4>Configure rules</h4>
+        <p>via the management UI: glob patterns plus actions.</p>
+      </div>
+      <div class="step">
+        <span class="n">STEP 03</span>
+        <h4>Mail gets rewritten</h4>
+        <p>headers updated, forwarded to your real address.</p>
+      </div>
+      <div class="step">
+        <span class="n">STEP 04</span>
+        <h4>Replies route back</h4>
+        <p>through the alias. Your real address never leaks.</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section class="channels-section">
+  <div class="l-container">
+    <span class="l-eyebrow">CHANNELS</span>
+    <h2>Forward anywhere you already chat.</h2>
+    <div class="channels-grid">
+      <div class="channel-card">
+        <span class="icon-wrap email">
+          <svg width="20" height="20" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6"><rect x="2.5" y="4" width="15" height="12" rx="2"/><path d="M 3 5.5 L 10 11 L 17 5.5"/></svg>
+        </span>
+        <span class="name">Inbox</span>
+        <span class="desc">your real one, headers rewritten</span>
+      </div>
+      <div class="channel-card">
+        <span class="icon-wrap discord">
+          <svg width="20" height="20" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M 5 5 Q 10 3.5 15 5 L 16.5 13.5 Q 13.5 15.5 10 15.5 Q 6.5 15.5 3.5 13.5 Z"/><circle cx="7.5" cy="10" r="1" fill="currentColor"/><circle cx="12.5" cy="10" r="1" fill="currentColor"/></svg>
+        </span>
+        <span class="name">Discord</span>
+        <span class="desc">post to a channel via webhook</span>
+      </div>
+      <div class="channel-card">
+        <span class="icon-wrap telegram">
+          <svg width="20" height="20" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M 2.5 9.5 L 17 3.5 L 14.5 16.5 L 9.5 12.5 L 13.5 6.5 L 7.5 11 L 2.5 9.5 Z"/></svg>
+        </span>
+        <span class="name">Telegram</span>
+        <span class="desc">DM, group, or bot chat</span>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section id="features" class="features-section">
+  <div class="l-container features-grid">
+    <div class="feature-card">
+      <span class="l-eyebrow">FOR YOU</span>
+      <h3>Stop giving away your real address.</h3>
+      <ul>
+        <li><span class="marker"><svg width="13" height="13" viewBox="0 0 13 13" fill="none" stroke="currentColor" stroke-width="2"><path d="M 2 7 L 5 10 L 11 3"/></svg></span>Make a fresh alias for any site or service</li>
+        <li><span class="marker"><svg width="13" height="13" viewBox="0 0 13 13" fill="none" stroke="currentColor" stroke-width="2"><path d="M 2 7 L 5 10 L 11 3"/></svg></span>Get the mail in your inbox, Discord, or Telegram</li>
+        <li><span class="marker"><svg width="13" height="13" viewBox="0 0 13 13" fill="none" stroke="currentColor" stroke-width="2"><path d="M 2 7 L 5 10 L 11 3"/></svg></span>Reply directly. They never see your real address</li>
+        <li><span class="marker"><svg width="13" height="13" viewBox="0 0 13 13" fill="none" stroke="currentColor" stroke-width="2"><path d="M 2 7 L 5 10 L 11 3"/></svg></span>Burn the alias when it leaks</li>
+      </ul>
+    </div>
+    <div class="feature-card">
+      <span class="l-eyebrow">FOR HOSTERS</span>
+      <h3>One small binary. Yours.</h3>
+      <ul>
+        <li><span class="marker chev">&rsaquo;</span>Rust compiled to WASM, runs on Cloudflare Workers</li>
+        <li><span class="marker chev">&rsaquo;</span>Glob-based routing rules, ordered, first-match</li>
+        <li><span class="marker chev">&rsaquo;</span>Reverse aliases stored in D1 for permanent replyability</li>
+        <li><span class="marker chev">&rsaquo;</span>Admin UI gated by Cloudflare Access</li>
+      </ul>
+    </div>
+  </div>
+</section>
+
+<section id="deploy" class="deploy-section">
+  <div class="l-container">
+    <h2>Run your own. In a minute.</h2>
+    <p>Free to deploy. Free to fork. AGPL-licensed. Yours.</p>
+    <a class="l-cta" href="deploy.html">Get started &#8599;</a>
+    <a class="full-guide" href="deploy.html">Read the full deploy guide</a>
+  </div>
+</section>
+
+<footer class="site">
+  <div class="l-container row">
+    <span>Cutout &middot; open source &middot; AGPL-3.0</span>
+    <span class="links">
+      <a href="how-it-works.html">How it works</a>
+      <a href="https://github.com/ananthb/cutout">GitHub</a>
+      <a href="https://www.gnu.org/licenses/agpl-3.0.html">License</a>
+    </span>
+  </div>
 </footer>
 
-</div>
+<script>
+(function () {
+  var packet = document.getElementById('packet');
+  if (!packet) return;
+  var positions = [
+    [60, 140],
+    [300, 140],
+    [560, 140],
+    [820, 80],
+    [820, 140],
+    [820, 200],
+  ];
+  var i = 0;
+  function tick() {
+    var p = positions[i];
+    packet.style.transform = 'translate(' + p[0] + 'px, ' + p[1] + 'px)';
+    i = (i + 1) % positions.length;
+  }
+  if (window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches) return;
+  tick();
+  setInterval(tick, 1300);
+})();
+</script>
+
 </body>
 </html>
