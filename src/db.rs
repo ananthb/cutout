@@ -216,8 +216,8 @@ pub async fn count_pending(db: &D1Database) -> Result<(u64, u64)> {
     let row = db
         .prepare(
             "SELECT \
-                SUM(CASE WHEN dead_lettered = 0 THEN 1 ELSE 0 END) AS pending, \
-                SUM(CASE WHEN dead_lettered = 1 THEN 1 ELSE 0 END) AS dead \
+                COALESCE(SUM(CASE WHEN dead_lettered = 0 THEN 1 ELSE 0 END), 0) AS pending, \
+                COALESCE(SUM(CASE WHEN dead_lettered = 1 THEN 1 ELSE 0 END), 0) AS dead \
              FROM pending_dispatches",
         )
         .first::<CountRow>(None)
