@@ -242,7 +242,15 @@ code { font-family: var(--font-mono); font-size: 0.88em; }
 .rule-card.selected .move-tools, .rule-card:hover .move-tools { opacity: 1; pointer-events: auto; }
 
 /* inspector pane ---------------------------------------------------- */
-.inspector-pane { overflow-y: auto; min-height: 0; display: flex; flex-direction: column; }
+.inspector-pane { overflow: hidden; min-height: 0; display: flex; flex-direction: column; }
+.inspector-rule-section {
+  flex-shrink: 0;
+  background: var(--bg-1);
+  border-bottom: 1px solid var(--line);
+}
+.inspector-global-section {
+  flex: 1; min-height: 0; overflow-y: auto;
+}
 .inspector-header {
   padding: 16px 24px; border-bottom: 1px solid var(--line);
   display: flex; align-items: flex-start; justify-content: space-between; gap: 16px;
@@ -261,12 +269,6 @@ code { font-family: var(--font-mono); font-size: 0.88em; }
   font-family: var(--font-mono); font-size: 13px; font-weight: 500;
 }
 .inspector-body { padding: 24px; display: flex; flex-direction: column; gap: 18px; }
-.inspector-body .rule-scope {
-  display: flex; flex-direction: column; gap: 14px;
-  border-left: 2px solid color-mix(in oklch, var(--accent) 55%, var(--line));
-  padding-left: 14px;
-  margin-left: -2px;
-}
 
 .stat-strip {
   display: grid; grid-template-columns: repeat(4, 1fr);
@@ -1389,24 +1391,28 @@ fn inspector_pane(
 
     format!(
         r##"<section class="inspector-pane">
-  <div class="inspector-header">
-    <div class="meta">
-      <div class="id-row"><span class="tip" data-tip="Stable random identifier (UUID v4) for this rule. Used in the URL when editing or deleting and in stats keyed by rule.">rule · {id}</span>{action_tag}</div>
-      <h2>{label}</h2>
-      <span class="pat-display">{pattern}</span>
+  <div class="inspector-rule-section">
+    <div class="inspector-header">
+      <div class="meta">
+        <div class="id-row"><span class="tip" data-tip="Stable random identifier (UUID v4) for this rule. Used in the URL when editing or deleting and in stats keyed by rule.">rule · {id}</span>{action_tag}</div>
+        <h2>{label}</h2>
+        <span class="pat-display">{pattern}</span>
+      </div>
+      <div style="display:flex;gap:6px;flex-shrink:0">{edit_btn}{delete_btn}</div>
     </div>
-    <div style="display:flex;gap:6px;flex-shrink:0">{edit_btn}{delete_btn}</div>
-  </div>
-  <div class="inspector-body">
-    <div class="rule-scope">
+    <div class="inspector-body">
       {stat_strip}
       {issues_card}
       {destinations_card}
       {action_summary_card}
     </div>
-    {top_senders_card}
-    {sandbox}
-    {selected_form}
+  </div>
+  <div class="inspector-global-section">
+    <div class="inspector-body">
+      {top_senders_card}
+      {sandbox}
+      {selected_form}
+    </div>
   </div>
 </section>"##,
         id = html_escape(&rule.id),
@@ -1495,17 +1501,21 @@ fn inspector_overview(rules: &[Rule], stats: Option<&Stats7d>) -> String {
 
     format!(
         r##"<section class="inspector-pane">
-  <div class="inspector-header">
-    <div class="meta">
-      <div class="id-row"><span>overview</span></div>
-      <h2>All rules</h2>
-      <span class="pat-display" style="background:transparent;padding:0;color:var(--fg-2);font-size:12.5px">Aggregate stats across the whole routing pipeline. Click a rule on the left to drill in.</span>
+  <div class="inspector-rule-section">
+    <div class="inspector-header">
+      <div class="meta">
+        <div class="id-row"><span>overview</span></div>
+        <h2>All rules</h2>
+        <span class="pat-display" style="background:transparent;padding:0;color:var(--fg-2);font-size:12.5px">Aggregate stats across the whole routing pipeline. Click a rule on the left to drill in.</span>
+      </div>
     </div>
   </div>
-  <div class="inspector-body">
-    {stat_strip}
-    {pipeline_card}
-    {top_senders_card}
+  <div class="inspector-global-section">
+    <div class="inspector-body">
+      {stat_strip}
+      {pipeline_card}
+      {top_senders_card}
+    </div>
   </div>
 </section>"##,
     )
