@@ -513,6 +513,7 @@ code { font-family: var(--font-mono); font-size: 0.88em; }
   box-shadow: 0 4px 14px rgba(0,0,0,0.18);
   z-index: 30;
 }
+.tip.below::after { bottom: auto; top: calc(100% + 6px); }
 .tip:hover::after, .tip:focus-visible::after { opacity: 1; visibility: visible; }
 
 .btn {
@@ -1313,13 +1314,13 @@ fn inspector_pane(
         Action::Forward {
             replace_reply_to: true,
             ..
-        } => r#"<span class="tag proxy tip" data-tip="Forward in proxy/rewrite mode: the message is reconstructed and Reply-To is rewritten so replies route back through the worker via the same custom domain. Strips PGP signatures and attachments.">forward · proxy</span>"#.to_string(),
-        Action::Forward { .. } => r#"<span class="tag forward tip" data-tip="Forward in native mode: uses Cloudflare EmailMessage.forward(): original bytes (PGP, attachments) pass through untouched; Reply-To is overlaid but may be ignored by some clients.">forward</span>"#.to_string(),
+        } => r#"<span class="tag proxy tip below" data-tip="Forward in proxy/rewrite mode: the message is reconstructed and Reply-To is rewritten so replies route back through the worker via the same custom domain. Strips PGP signatures and attachments.">forward · proxy</span>"#.to_string(),
+        Action::Forward { .. } => r#"<span class="tag forward tip below" data-tip="Forward in native mode: uses Cloudflare EmailMessage.forward(): original bytes (PGP, attachments) pass through untouched; Reply-To is overlaid but may be ignored by some clients.">forward</span>"#.to_string(),
         Action::Drop if is_catch => {
-            r#"<span class="tag catch tip" data-tip="Pinned catch-all rule: silently drops anything no earlier rule matched. Always sits at the end and can't be deleted or moved.">drop · catch-all</span>"#.to_string()
+            r#"<span class="tag catch tip below" data-tip="Pinned catch-all rule: silently drops anything no earlier rule matched. Always sits at the end and can't be deleted or moved.">drop · catch-all</span>"#.to_string()
         }
-        Action::Drop => r#"<span class="tag drop tip" data-tip="Silently discard inbound mail matching this rule. No notification, no bounce.">drop</span>"#.to_string(),
-        Action::Store { .. } => r#"<span class="tag store tip" data-tip="Accept the email and record it. Optionally persist the message body to the database.">store</span>"#.to_string(),
+        Action::Drop => r#"<span class="tag drop tip below" data-tip="Silently discard inbound mail matching this rule. No notification, no bounce.">drop</span>"#.to_string(),
+        Action::Store { .. } => r#"<span class="tag store tip below" data-tip="Accept the email and record it. Optionally persist the message body to the database.">store</span>"#.to_string(),
     };
 
     let edit_btn = format!(
@@ -1419,7 +1420,7 @@ fn inspector_pane(
   <div class="inspector-rule-section">
     <div class="inspector-header">
       <div class="meta">
-        <div class="id-row"><span class="tip" data-tip="Stable random identifier (UUID v4) for this rule. Used in the URL when editing or deleting and in stats keyed by rule.">rule · {id}</span>{action_tag}</div>
+        <div class="id-row"><span class="tip below" data-tip="Stable random identifier (UUID v4) for this rule. Used in the URL when editing or deleting and in stats keyed by rule.">rule · {id}</span>{action_tag}</div>
         <h2>{label}</h2>
         <span class="pat-display">{pattern}</span>
       </div>
