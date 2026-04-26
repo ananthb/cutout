@@ -251,6 +251,14 @@ code { font-family: var(--font-mono); font-size: 0.88em; }
 .inspector-global-section {
   flex: 1; min-height: 0; overflow-y: auto;
 }
+.inspector-empty {
+  display: flex; align-items: center; justify-content: center;
+  padding: 32px;
+  color: var(--fg-3);
+  font-family: var(--font-mono); font-size: 11px;
+  letter-spacing: 0.06em; text-transform: uppercase;
+  text-align: center;
+}
 .inspector-header {
   padding: 16px 24px; border-bottom: 1px solid var(--line);
   display: flex; align-items: flex-start; justify-content: space-between; gap: 16px;
@@ -1064,7 +1072,7 @@ pub fn workbench(
     let pipeline = pipeline_pane(rules, selected_idx);
     let inspector = match selected_idx {
         Some(i) if i < rules.len() => inspector_pane(rules, i, report, enabled, stats),
-        _ => inspector_overview(rules, stats),
+        _ => INSPECTOR_EMPTY.to_string(),
     };
     format!(
         r##"<div id="workbench" class="workbench">
@@ -1073,6 +1081,10 @@ pub fn workbench(
 </div>"##
     )
 }
+
+const INSPECTOR_EMPTY: &str = r##"<aside class="inspector-empty">
+  <span>Select a rule on the left for details.</span>
+</aside>"##;
 
 /// HTMX-targeted response: same as `workbench`, plus an out-of-band
 /// `#editor-modal` clear so any open modal closes after a successful CRUD.
@@ -1100,10 +1112,10 @@ fn pipeline_pane(rules: &[Rule], selected_idx: Option<usize>) -> String {
             )
         })
         .collect();
-    let overview_cls = if selected_idx.is_none() {
-        "pipeline-node enter selectable selected"
+    let clear_btn = if selected_idx.is_some() {
+        r##"<a class="btn ghost sm" href="/manage" title="Clear selection">Clear</a>"##
     } else {
-        "pipeline-node enter selectable"
+        ""
     };
     format!(
         r##"<aside class="pipeline-pane">
@@ -1112,15 +1124,18 @@ fn pipeline_pane(rules: &[Rule], selected_idx: Option<usize>) -> String {
       <h3>Routing pipeline</h3>
       <small>{n} {rule_word} · evaluated top → bottom</small>
     </div>
-    <button class="btn primary sm"
-      hx-get="/manage/rules/new"
-      hx-target="#editor-modal"
-      hx-swap="innerHTML">
-      + Rule
-    </button>
+    <div style="display:flex;gap:6px;align-items:center">
+      {clear_btn}
+      <button class="btn primary sm"
+        hx-get="/manage/rules/new"
+        hx-target="#editor-modal"
+        hx-swap="innerHTML">
+        + Rule
+      </button>
+    </div>
   </header>
   <div class="pipeline-list">
-    <a class="{overview_cls}" href="/manage" title="Show overall stats across all rules"><span class="dot"></span>INBOUND · email_routing</a>
+    <div class="pipeline-node enter"><span class="dot"></span>INBOUND · email_routing</div>
     {cards}
     <div class="pipeline-connector"></div>
     <div class="pipeline-node"><span class="dot"></span>END · all rules evaluated</div>
@@ -1182,8 +1197,18 @@ fn pipeline_card(rule: &Rule, index: usize, selected: bool) -> String {
         )
     };
 
+    let href = if selected {
+        "/manage".to_string()
+    } else {
+        format!("/manage?rule={}", html_escape(&rule.id))
+    };
+    let title = if selected {
+        " title=\"Click to clear selection\""
+    } else {
+        ""
+    };
     format!(
-        r##"<a href="/manage?rule={id}" class="{card_cls}" data-rule-id="{id}">
+        r##"<a href="{href}" class="{card_cls}" data-rule-id="{id}"{title}>
   <div class="grid">
     <div class="{order_cls}"><span>{order:02}</span></div>
     <div class="body">
@@ -1418,106 +1443,6 @@ fn inspector_pane(
         id = html_escape(&rule.id),
         label = html_escape(&rule.display_label()),
         pattern = pattern_html(&rule.local_pattern, &rule.domain_pattern),
-    )
-}
-
-/// Right pane when no rule is selected: overall stats across the whole
-/// pipeline, rendered in the same shape as the per-rule inspector.
-fn inspector_overview(rules: &[Rule], stats: Option<&Stats7d>) -> String {
-    let rule_count = rules.iter().filter(|r| !r.is_catch_all()).count();
-    let total_dests: usize = rules
-        .iter()
-        .map(|r| match &r.action {
-            Action::Forward { destinations, .. } => destinations.len(),
-            _ => 0,
-        })
-        .sum();
-    let (e, t, d) = rules
-        .iter()
-        .flat_map(|r| match &r.action {
-            Action::Forward { destinations, .. } => destinations.as_slice(),
-            _ => &[],
-        })
-        .fold((0usize, 0usize, 0usize), |(e, t, d), dest| match dest {
-            Destination::Email { .. } => (e + 1, t, d),
-            Destination::Telegram { .. } => (e, t + 1, d),
-            Destination::Discord { .. } => (e, t, d + 1),
-        });
-    let mut chparts: Vec<String> = Vec::new();
-    if e > 0 {
-        chparts.push(format!("{e} email"));
-    }
-    if t > 0 {
-        chparts.push(format!("{t} tg"));
-    }
-    if d > 0 {
-        chparts.push(format!("{d} dc"));
-    }
-    let channels = if chparts.is_empty() {
-        "-".to_string()
-    } else {
-        chparts.join(" · ")
-    };
-
-    let stat_strip = match stats {
-        Some(s) => format!(
-            r##"<div class="stat-strip">
-  <div><span class="k tip" data-tip="Inbound emails forwarded to one or more destinations in the last 7 days.">forwarded · 7d</span><span class="v fwd">{fwd}</span></div>
-  <div><span class="k tip" data-tip="Inbound emails recorded with the Store action in the last 7 days.">stored · 7d</span><span class="v str">{str}</span></div>
-  <div><span class="k tip" data-tip="Inbound emails dropped (matched a Drop rule, or no rule matched) in the last 7 days.">dropped · 7d</span><span class="v drp">{drp}</span></div>
-  <div><span class="k tip" data-tip="Number of user-defined rules. The pinned catch-all is excluded.">rules</span><span class="v">{n}</span><span class="sub">+ 1 catch-all</span></div>
-</div>"##,
-            fwd = s.forwarded_total,
-            str = s.stored_total,
-            drp = s.dropped_total,
-            n = rule_count,
-        ),
-        None => format!(
-            r##"<div class="stat-strip">
-  <div><span class="k">forwarded · 7d</span><span class="v muted">-</span><span class="sub">stats unavailable</span></div>
-  <div><span class="k">stored · 7d</span><span class="v muted">-</span></div>
-  <div><span class="k">dropped · 7d</span><span class="v muted">-</span></div>
-  <div><span class="k">rules</span><span class="v">{n}</span><span class="sub">+ 1 catch-all</span></div>
-</div>"##,
-            n = rule_count,
-        ),
-    };
-
-    let pipeline_card = format!(
-        r##"<div class="card">
-  <header><h3>Pipeline</h3><small>aggregate</small></header>
-  <div class="card-body">
-    <div class="stat-strip" style="grid-template-columns:repeat(2,1fr)">
-      <div><span class="k">destinations</span><span class="v">{total_dests}</span></div>
-      <div><span class="k">channels</span><span class="v" style="font-size:14px">{channels}</span></div>
-    </div>
-  </div>
-</div>"##,
-    );
-
-    let top_senders_card = stats
-        .map(|s| render_top_senders(&s.top_senders))
-        .unwrap_or_default();
-
-    format!(
-        r##"<section class="inspector-pane">
-  <div class="inspector-rule-section">
-    <div class="inspector-header">
-      <div class="meta">
-        <div class="id-row"><span>overview</span></div>
-        <h2>All rules</h2>
-        <span class="pat-display" style="background:transparent;padding:0;color:var(--fg-2);font-size:12.5px">Aggregate stats across the whole routing pipeline. Click a rule on the left to drill in.</span>
-      </div>
-    </div>
-  </div>
-  <div class="inspector-global-section">
-    <div class="inspector-body">
-      {stat_strip}
-      {pipeline_card}
-      {top_senders_card}
-    </div>
-  </div>
-</section>"##,
     )
 }
 
