@@ -282,14 +282,18 @@ fn structured_forward_email(
     let text = parsed.and_then(|p| p.text_body.clone());
     let html = parsed.and_then(|p| p.html_body.clone());
 
-    let from = match (
-        parsed.and_then(|p| p.from_name.as_ref()),
-        parsed.and_then(|p| p.from_address.as_ref()),
-    ) {
-        (Some(name), Some(addr)) => format!("{} ({}) <{}>", name, addr, reverse_addr),
-        (Some(name), None) => format!("{} <{}>", name, reverse_addr),
-        (None, Some(addr)) => format!("{} <{}>", addr, reverse_addr),
-        (None, None) => reverse_addr.to_string(),
+    // Build a conservative RFC 5322 `From`: a quoted display name plus an
+    // angle-addr. Earlier code used `Name (addr) <reply+...>`, which is a
+    // valid display-name + comment form per the spec, but Cloudflare's
+    // `send_email` parser rejects it with an opaque 500. The original
+    // sender address is preserved in the `X-Original-From` header, so we
+    // don't need to encode it in the display.
+    let display = parsed
+        .and_then(|p| p.from_name.clone().or_else(|| p.from_address.clone()))
+        .filter(|s| !s.is_empty());
+    let from = match display {
+        Some(name) => format!("\"{}\" <{}>", quote_display(&name), reverse_addr),
+        None => reverse_addr.to_string(),
     };
 
     OutboundEmail {
@@ -354,6 +358,21 @@ async fn handle_reverse_alias(
         headers,
     });
     Ok(EmailResult::Dispatch(dispatch))
+}
+
+/// Escape `"` and `\` inside an RFC 5322 quoted-string display name. This
+/// is a deliberately conservative subset: no folding-whitespace handling,
+/// no unicode encoding (RFC 2047 is the next step if we hit headers with
+/// non-ASCII names — `send_email` accepts UTF-8 directly today).
+fn quote_display(name: &str) -> String {
+    let mut out = String::with_capacity(name.len());
+    for ch in name.chars() {
+        if ch == '\\' || ch == '"' {
+            out.push('\\');
+        }
+        out.push(ch);
+    }
+    out
 }
 
 /// Convert a still-failing [`ForwardInstruction`] into the equivalent
@@ -426,11 +445,9 @@ mod tests {
         let outbound =
             structured_forward_email(Some(&parsed), reverse_addr, destination, original_from);
 
-        // Should use display name from header + original email + the reverse alias address
-        assert_eq!(
-            outbound.from,
-            "Alice (alice@example.org) <reply+abc@proxy.com>"
-        );
+        // Display name only; the original address is preserved in
+        // X-Original-From (CF's send_email rejects parens-as-comment From).
+        assert_eq!(outbound.from, "\"Alice\" <reply+abc@proxy.com>");
         assert_eq!(outbound.reply_to, Some(reverse_addr.to_string()));
 
         // Should include the original sender in headers
@@ -458,8 +475,8 @@ mod tests {
             "alice@example.org",
         );
 
-        // Should fall back to original address as display name
-        assert_eq!(outbound.from, "alice@example.org <reply@proxy.com>");
+        // Should fall back to original address as quoted display name
+        assert_eq!(outbound.from, "\"alice@example.org\" <reply@proxy.com>");
     }
 
     #[test]
