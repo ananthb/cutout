@@ -5,28 +5,37 @@
 //!
 //! ## How it works
 //!
-//! 1. You own a domain (e.g. `example.com`) with Cloudflare Email Routing
-//! 2. Configure routing rules via the HTMX management UI at `/manage`
-//! 3. Inbound mail matching a rule is forwarded to your real address with headers rewritten
-//! 4. Replies are sent back through the alias so your real address is never exposed
+//! 1. You own a domain (e.g. `example.com`) with Cloudflare Email Routing.
+//! 2. Configure routing rules via the HTMX management UI at `/manage`.
+//! 3. Inbound mail matching a rule is forwarded to your destinations
+//!    (email, Discord, or Telegram) with headers rewritten.
+//! 4. Replies route back through the worker and are re-sent as email from
+//!    the alias, so your real address is never exposed.
 //!
 //! ## Architecture
 //!
-//! - All config lives in KV: no database needed
-//! - `email`: Inbound/outbound email handling
-//! - `manage`: HTMX-based management UI behind Cloudflare Access
+//! - `kv`: routing rule storage in Cloudflare KV.
+//! - `db`: reverse-alias mappings and bot reply contexts in Cloudflare D1
+//!   (durable, no expiry).
+//! - `email`: inbound `EmailMessage.forward()` and outbound `send_email()`.
+//! - `bots`: Telegram and Discord destinations plus reply webhooks.
+//! - `manage`: HTMX-based management UI behind Cloudflare Access.
+//! - `events`, `stats`: per-event log and Analytics Engine aggregations.
 //!
 //! ## Destination verification
 //!
-//! Destination addresses must be verified via Cloudflare Email Routing's
-//! "Destination Addresses" list (dashboard → Email → Email Routing →
+//! Email destinations must be verified via Cloudflare Email Routing's
+//! "Destination Addresses" list (dashboard > Email > Email Routing >
 //! Destination Addresses). `message.forward()` enforces this at runtime.
 //! Cutout itself doesn't run a verification flow.
 //!
 //! ## Routes
 //!
-//! `/manage/*` is protected by the Cloudflare Access application; `/` and
-//! `/health` are public.
+//! - `/` redirects to `/manage`.
+//! - `/manage/*` is protected by the Cloudflare Access application.
+//! - `/health` returns 200 OK.
+//! - `/telegram/webhook` and `/discord/interactions` are public; they
+//!   authenticate via secret token and Ed25519 signature respectively.
 
 use wasm_bindgen::prelude::*;
 use worker::*;
