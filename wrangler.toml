@@ -11,7 +11,7 @@ command = "worker-build --release"
 [[d1_databases]]
 binding = "DB"
 database_name = "cutout-db"
-database_id = "2d32c0f5-f9c1-4b47-a275-c5a896d272b5"
+database_id = ""
 
 [[kv_namespaces]]
 binding = "KV"
