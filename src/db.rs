@@ -61,6 +61,29 @@ pub async fn get_bot_ctx(db: &D1Database, key: &str) -> Result<Option<ReplyConte
     }))
 }
 
+pub async fn save_message(
+    db: &D1Database,
+    sender: &str,
+    recipient: &str,
+    subject: &str,
+    text_body: Option<&str>,
+    html_body: Option<&str>,
+) -> Result<()> {
+    db.prepare(
+        "INSERT INTO messages (sender, recipient, subject, text_body, html_body) VALUES (?, ?, ?, ?, ?)",
+    )
+    .bind(&[
+        sender.into(),
+        recipient.into(),
+        subject.into(),
+        text_body.into(),
+        html_body.into(),
+    ])?
+    .run()
+    .await?;
+    Ok(())
+}
+
 #[derive(Deserialize)]
 struct ReplyContextRow {
     alias_address: String,

@@ -97,7 +97,13 @@ pub async fn handle_email(
             .await?;
             let event_kind = match &result {
                 EmailResult::Dispatch(_) => EventKind::Forward,
-                EmailResult::Drop => EventKind::Drop,
+                EmailResult::Drop => {
+                    if matches!(rule.action, Action::Store { .. }) {
+                        EventKind::Store
+                    } else {
+                        EventKind::Drop
+                    }
+                }
                 EmailResult::Reject(_) => EventKind::Reject,
             };
             Ok(EmailOutcome {
@@ -226,6 +232,32 @@ async fn execute_action(
             } else {
                 Ok(EmailResult::Dispatch(dispatch))
             }
+        }
+
+        Action::Store { persist } => {
+            console_log!(
+                "Storing email from {from} to {to} (rule: {rule_label}, persist: {persist})"
+            );
+            if *persist {
+                let parsed = mime::parse_email(raw_bytes);
+                let subject = parsed
+                    .as_ref()
+                    .map(|p| p.subject.clone())
+                    .unwrap_or_default();
+                let text = parsed.as_ref().and_then(|p| p.text_body.clone());
+                let html = parsed.as_ref().and_then(|p| p.html_body.clone());
+
+                db::save_message(
+                    database,
+                    from,
+                    to,
+                    &subject,
+                    text.as_deref(),
+                    html.as_deref(),
+                )
+                .await?;
+            }
+            Ok(EmailResult::Drop)
         }
     }
 }

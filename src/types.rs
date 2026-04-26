@@ -32,6 +32,11 @@ pub enum Action {
     },
     /// Silently drop.
     Drop,
+    /// Store message for later retrieval.
+    Store {
+        #[serde(default)]
+        persist: bool,
+    },
 }
 
 /// A single forward target. Multiple destinations of different kinds may be

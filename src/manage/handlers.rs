@@ -59,6 +59,19 @@ fn parse_action(form: &serde_json::Value) -> std::result::Result<Action, String>
                 replace_reply_to,
             })
         }
+        "store" => {
+            let persist = form
+                .get("persist")
+                .and_then(|v| {
+                    if v.is_boolean() {
+                        v.as_bool()
+                    } else {
+                        v.as_str().map(|s| s == "true" || s == "on")
+                    }
+                })
+                .unwrap_or(false);
+            Ok(Action::Store { persist })
+        }
         _ => Ok(Action::Drop),
     }
 }

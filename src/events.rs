@@ -34,6 +34,8 @@ pub enum EventKind {
     Reply,
     /// Inbound mail rejected at SMTP (loop detected, unknown reverse alias, …).
     Reject,
+    /// Inbound mail stored in database.
+    Store,
 }
 
 impl EventKind {
@@ -43,6 +45,7 @@ impl EventKind {
             EventKind::Drop => "drop",
             EventKind::Reply => "reply",
             EventKind::Reject => "reject",
+            EventKind::Store => "store",
         }
     }
 }

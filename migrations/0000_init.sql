@@ -1,3 +1,5 @@
+-- Initial schema for Cutout
+
 -- Durable reverse alias mappings
 CREATE TABLE IF NOT EXISTS reverse_mappings (
     id TEXT PRIMARY KEY, -- The generated UUID in `reply+<id>@domain`
@@ -15,3 +17,16 @@ CREATE TABLE IF NOT EXISTS bot_reply_contexts (
     subject TEXT,
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP
 );
+
+-- Messages table for stored emails
+CREATE TABLE IF NOT EXISTS messages (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    sender TEXT NOT NULL,
+    recipient TEXT NOT NULL,
+    subject TEXT NOT NULL,
+    text_body TEXT,
+    html_body TEXT,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+);
+CREATE INDEX IF NOT EXISTS idx_messages_recipient ON messages(recipient);
+CREATE INDEX IF NOT EXISTS idx_messages_created_at ON messages(created_at);

@@ -44,6 +44,7 @@ FORMAT JSON"#;
 pub struct Stats7d {
     pub forwarded_total: u64,
     pub dropped_total: u64,
+    pub stored_total: u64,
     pub by_rule: HashMap<String, RuleStats>,
     pub top_senders: Vec<TopSender>,
     /// Unix-millisecond timestamp for when these numbers were computed.
@@ -179,10 +180,11 @@ fn parse_aggregates(json: &Value, stats: &mut Stats7d) {
         match row.event_type.as_str() {
             "forward" => stats.forwarded_total += n,
             "drop" => stats.dropped_total += n,
+            "store" => stats.stored_total += n,
             _ => {}
         }
-        // Per-rule rollup excludes rejects/replies; matches = forward + drop.
-        if matches!(row.event_type.as_str(), "forward" | "drop") && row.rule_id != "-" {
+        // Per-rule rollup excludes rejects/replies; matches = forward + drop + store.
+        if matches!(row.event_type.as_str(), "forward" | "drop" | "store") && row.rule_id != "-" {
             let entry = stats.by_rule.entry(row.rule_id).or_default();
             entry.matches += n;
             entry.last_match_s = Some(match entry.last_match_s {

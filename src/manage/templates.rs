@@ -124,6 +124,7 @@ code { font-family: var(--font-mono); font-size: 0.88em; }
   font-family: var(--font-mono);
 }
 .microstat .v.fwd  { color: var(--accent); }
+.microstat .v.str  { color: var(--info); }
 .microstat .v.drp  { color: var(--bad); }
 .microstat .v.muted { color: var(--fg-3); }
 .microstat .k {
@@ -197,6 +198,7 @@ code { font-family: var(--font-mono); font-size: 0.88em; }
   font-family: var(--font-mono); font-size: 14px; font-weight: 700;
 }
 .rule-card .order.fwd  { background: color-mix(in oklch, var(--accent) 12%, var(--bg-1)); color: var(--accent); }
+.rule-card .order.store { background: color-mix(in oklch, var(--info) 12%, var(--bg-1)); color: var(--info); }
 .rule-card .order.drop { background: color-mix(in oklch, var(--bad) 12%, var(--bg-1)); color: var(--bad); }
 .rule-card .order.catch { background: var(--bg-inset); color: var(--fg-2); }
 .rule-card .body { padding: 10px 12px; display: flex; flex-direction: column; gap: 6px; min-width: 0; }
@@ -257,6 +259,7 @@ code { font-family: var(--font-mono); font-size: 0.88em; }
   font-size: 22px; font-weight: 600;
 }
 .stat-strip .v.fwd { color: var(--accent); }
+.stat-strip .v.str { color: var(--info); }
 .stat-strip .v.drp { color: var(--bad); }
 .stat-strip .v.muted { color: var(--fg-2); }
 .stat-strip .sub {
@@ -333,6 +336,7 @@ code { font-family: var(--font-mono); font-size: 0.88em; }
 .live-row .ts { color: var(--fg-3); }
 .live-row .evt { font-weight: 600; }
 .live-row.k-forward .evt { color: var(--accent); }
+.live-row.k-store .evt { color: var(--info); }
 .live-row.k-drop .evt { color: var(--bad); }
 .live-row.k-reply .evt { color: var(--info); }
 .live-row.k-reject .evt { color: var(--warn); }
@@ -436,6 +440,7 @@ code { font-family: var(--font-mono); font-size: 0.88em; }
   background: var(--bg-inset); color: var(--fg-1);
 }
 .tag.forward { background: var(--info-soft); color: var(--info); }
+.tag.store   { background: var(--info-soft); color: var(--info); }
 .tag.proxy   { background: var(--accent-soft); color: var(--accent); }
 .tag.drop    { background: var(--bad-soft); color: var(--bad); }
 .tag.catch   { background: var(--warn-soft); color: var(--warn); }
@@ -827,9 +832,11 @@ fn topbar(email: &str, stats: Option<&Stats7d>) -> String {
             r##"<span style="width:1px;height:22px;background:var(--line)"></span>
 <div class="microstats">
   <div class="microstat"><span class="v fwd">{fwd}</span><span class="k">forwarded · 7d</span></div>
+  <div class="microstat"><span class="v str">{str}</span><span class="k">stored · 7d</span></div>
   <div class="microstat"><span class="v drp">{drp}</span><span class="k">dropped · 7d</span></div>
 </div>"##,
             fwd = s.forwarded_total,
+            str = s.stored_total,
             drp = s.dropped_total,
         ),
         None => String::new(),
@@ -1023,10 +1030,13 @@ fn pipeline_pane(rules: &[Rule], selected_idx: usize) -> String {
 fn pipeline_card(rule: &Rule, index: usize, selected: bool) -> String {
     let is_catch = rule.is_catch_all();
     let is_fwd = matches!(rule.action, Action::Forward { .. });
+    let is_store = matches!(rule.action, Action::Store { .. });
     let order_cls = if is_catch {
         "order catch"
     } else if is_fwd {
         "order fwd"
+    } else if is_store {
+        "order store"
     } else {
         "order drop"
     };
@@ -1041,6 +1051,7 @@ fn pipeline_card(rule: &Rule, index: usize, selected: bool) -> String {
             r#"<span class="tag catch">drop · catch-all</span>"#.to_string()
         }
         Action::Drop => r#"<span class="tag drop">drop</span>"#.to_string(),
+        Action::Store { .. } => r#"<span class="tag store">store</span>"#.to_string(),
         Action::Forward { destinations, .. } => channel_dots(destinations),
     };
 
@@ -1161,7 +1172,7 @@ fn inspector_pane(
     let is_fwd = matches!(rule.action, Action::Forward { .. });
     let dest_count = match &rule.action {
         Action::Forward { destinations, .. } => destinations.len(),
-        Action::Drop => 0,
+        Action::Drop | Action::Store { .. } => 0,
     };
     let stat_strip = render_stat_strip(rule, dest_count, stats);
     let top_senders_card = stats
@@ -1178,6 +1189,7 @@ fn inspector_pane(
             r#"<span class="tag catch tip" data-tip="Pinned catch-all rule: silently drops anything no earlier rule matched. Always sits at the end and can't be deleted or moved.">drop · catch-all</span>"#.to_string()
         }
         Action::Drop => r#"<span class="tag drop tip" data-tip="Silently discard inbound mail matching this rule. No notification, no bounce.">drop</span>"#.to_string(),
+        Action::Store { .. } => r#"<span class="tag store tip" data-tip="Accept the email and record it. Optionally persist the message body to the database.">store</span>"#.to_string(),
     };
 
     let edit_btn = format!(
@@ -1216,7 +1228,7 @@ fn inspector_pane(
             destinations,
             replace_reply_to,
         } => destinations_card(destinations, *replace_reply_to),
-        Action::Drop => String::new(),
+        Action::Drop | Action::Store { .. } => String::new(),
     };
 
     let issues_card = if issues.is_empty() {
@@ -1249,21 +1261,26 @@ fn inspector_pane(
     let action_summary_card = if is_fwd {
         String::new()
     } else {
+        let (title, description) = match &rule.action {
+            Action::Store { persist } => {
+                let p = if *persist {
+                    "Message body is persisted to the database."
+                } else {
+                    "Message body is NOT persisted."
+                };
+                ("Store", format!("Inbound mail matching this rule is recorded as a 'store' event. {p}"))
+            }
+            _ => ("Action", format!("Inbound mail matching this rule is silently dropped: no notification, no bounce. {}", if is_catch { "This is the pinned catch-all; it always sits at the end and can't be deleted or moved." } else { "" }))
+        };
         format!(
             r##"<div class="card">
-  <header><h3>Action</h3></header>
+  <header><h3>{title}</h3></header>
   <div class="card-body">
     <p style="margin:0;color:var(--fg-2);font-size:12.5px">
-      Inbound mail matching this rule is silently dropped: no notification, no bounce.
-      {extra}
+      {description}
     </p>
   </div>
 </div>"##,
-            extra = if is_catch {
-                "This is the pinned catch-all; it always sits at the end and can't be deleted or moved."
-            } else {
-                ""
-            },
         )
     };
 
@@ -1351,7 +1368,7 @@ fn render_stat_strip(rule: &Rule, dest_count: usize, stats: Option<&Stats7d>) ->
                 parts.join(" · ")
             }
         }
-        Action::Drop => "-".to_string(),
+        Action::Store { .. } | Action::Drop => "-".to_string(),
     };
 
     format!(
@@ -1494,6 +1511,7 @@ fn inspector_tester(all_rules: &[Rule], _selected: &Rule) -> String {
         .map(|r| {
             let action = match &r.action {
                 Action::Drop => "drop",
+                Action::Store { .. } => "store",
                 Action::Forward {
                     replace_reply_to: true,
                     ..
@@ -1640,14 +1658,15 @@ fn editor_modal(
     let local = rule.map(|r| r.local_pattern.as_str()).unwrap_or("*");
     let domain = rule.map(|r| r.domain_pattern.as_str()).unwrap_or("*");
 
-    let (action_type, destinations, replace_reply_to): (&str, &[Destination], bool) =
+    let (action_type, destinations, replace_reply_to, persist): (&str, &[Destination], bool, bool) =
         match rule.map(|r| &r.action) {
             Some(Action::Forward {
                 destinations,
                 replace_reply_to,
-            }) => ("forward", destinations.as_slice(), *replace_reply_to),
-            Some(Action::Drop) => ("drop", &[], false),
-            None => ("forward", &[], false),
+            }) => ("forward", destinations.as_slice(), *replace_reply_to, false),
+            Some(Action::Drop) => ("drop", &[], false, false),
+            Some(Action::Store { persist }) => ("store", &[], false, *persist),
+            None => ("forward", &[], false, false),
         };
 
     let title = if rule.is_some() {
@@ -1658,6 +1677,7 @@ fn editor_modal(
 
     let dest_field = destinations_field(enabled);
     let replace_checked = if replace_reply_to { " checked" } else { "" };
+    let persist_checked = if persist { " checked" } else { "" };
     let hx_attr = match method {
         "put" => format!(r#"hx-put="{form_action}""#),
         _ => format!(r#"hx-post="{form_action}""#),
@@ -1721,12 +1741,24 @@ fn editor_modal(
             <strong>Forward</strong>
             <small>Send to one or more destinations</small>
           </button>
+          <button type="button" :class="{{ active: action === 'store' }}" @click="action = 'store'">
+            <strong>Store</strong>
+            <small>Accept and record inbound mail</small>
+          </button>
           <button type="button" :class="{{ active: action === 'drop' }}" @click="action = 'drop'">
             <strong>Drop</strong>
             <small>Silently discard inbound mail</small>
           </button>
         </div>
         <input type="hidden" name="action_type" :value="action">
+      </div>
+      <div class="field" x-show="action === 'store'">
+        <label>Store options</label>
+        <label style="display:flex;align-items:center;gap:6px;font-family:var(--font-sans);font-size:11.5px;text-transform:none;letter-spacing:0;color:var(--fg-1);cursor:pointer">
+          <input type="checkbox" name="persist"{persist_checked}>
+          Persist message body to database
+        </label>
+        <span class="help">If enabled, the parsed email content (subject, text, html) is saved to the <code>messages</code> table.</span>
       </div>
       <div class="field" x-show="action === 'forward'">
         <label style="display:flex;justify-content:space-between;align-items:center">
