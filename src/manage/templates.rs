@@ -251,14 +251,6 @@ code { font-family: var(--font-mono); font-size: 0.88em; }
 .inspector-global-section {
   flex: 1; min-height: 0; overflow-y: auto;
 }
-.inspector-empty {
-  display: flex; align-items: center; justify-content: center;
-  padding: 32px;
-  color: var(--fg-3);
-  font-family: var(--font-mono); font-size: 11px;
-  letter-spacing: 0.06em; text-transform: uppercase;
-  text-align: center;
-}
 .inspector-header {
   padding: 16px 24px; border-bottom: 1px solid var(--line);
   display: flex; align-items: flex-start; justify-content: space-between; gap: 16px;
@@ -1073,7 +1065,7 @@ pub fn workbench(
     let pipeline = pipeline_pane(rules, selected_idx);
     let inspector = match selected_idx {
         Some(i) if i < rules.len() => inspector_pane(rules, i, report, enabled, stats),
-        _ => INSPECTOR_EMPTY.to_string(),
+        _ => inspector_globals(rules, stats),
     };
     format!(
         r##"<div id="workbench" class="workbench">
@@ -1083,9 +1075,24 @@ pub fn workbench(
     )
 }
 
-const INSPECTOR_EMPTY: &str = r##"<aside class="inspector-empty">
-  <span>Select a rule on the left for details.</span>
-</aside>"##;
+/// Inspector when no rule is selected: just the always-on globals
+/// (Top senders + Tester) in the scrollable section. No L-shape.
+fn inspector_globals(rules: &[Rule], stats: Option<&Stats7d>) -> String {
+    let top_senders_card = stats
+        .map(|s| render_top_senders(&s.top_senders))
+        .unwrap_or_default();
+    let sandbox = inspector_tester(rules, None);
+    format!(
+        r##"<section class="inspector-pane">
+  <div class="inspector-global-section">
+    <div class="inspector-body">
+      {top_senders_card}
+      {sandbox}
+    </div>
+  </div>
+</section>"##,
+    )
+}
 
 /// HTMX-targeted response: same as `workbench`, plus an out-of-band
 /// `#editor-modal` clear so any open modal closes after a successful CRUD.
@@ -1387,7 +1394,7 @@ fn inspector_pane(
         )
     };
 
-    let sandbox = inspector_tester(rules, rule);
+    let sandbox = inspector_tester(rules, Some(rule));
 
     let action_summary_card = if is_fwd {
         String::new()
@@ -1640,7 +1647,7 @@ fn channel_icon(kind: &str) -> &'static str {
 /// and shows: (a) does the *selected* rule's pattern match this address,
 /// (b) which rule actually fires (top-down, first match wins), (c) if a
 /// different rule fires earlier, link to it.
-fn inspector_tester(all_rules: &[Rule], _selected: &Rule) -> String {
+fn inspector_tester(all_rules: &[Rule], selected: Option<&Rule>) -> String {
     // Pass enough rule metadata for client-side eval. Action label drives
     // the result tag colour.
     let rules_json: Vec<serde_json::Value> = all_rules
@@ -1664,16 +1671,22 @@ fn inspector_tester(all_rules: &[Rule], _selected: &Rule) -> String {
             })
         })
         .collect();
+    let selected_id = selected.map(|r| r.id.as_str()).unwrap_or("");
     let init = serde_json::json!({
         "rules": rules_json,
-        "selectedId": _selected.id,
+        "selectedId": selected_id,
     })
     .to_string();
     let init_attr = html_escape(&init);
+    let header_small = if selected.is_some() {
+        "this rule + full ruleset"
+    } else {
+        "full ruleset"
+    };
 
     format!(
         r##"<div class="card" x-data='tester({init_attr})'>
-  <header><h3>Tester</h3><small>this rule + full ruleset</small></header>
+  <header><h3>Tester</h3><small>{header_small}</small></header>
   <div class="card-body">
     <div class="field">
       <label>Test address</label>
@@ -1682,7 +1695,7 @@ fn inspector_tester(all_rules: &[Rule], _selected: &Rule) -> String {
         x-model="to" autocomplete="off" spellcheck="false">
     </div>
     <div class="tester-results" x-show="to" x-cloak>
-      <div class="tester-row">
+      <div class="tester-row" x-show="selectedId">
         <span class="tester-row-label">This rule</span>
         <template x-if="selectedMatches()">
           <span class="chip ok"><span class="dot"></span>matches</span>
