@@ -65,7 +65,7 @@ jobs:
           # Remove leading whitespace from heredoc
           sed -i 's/^          //' wrangler.production.toml
 
-      - name: Ensure D1 schema (idempotent guard)
+      - name: Ensure D1 schema
         # Belt-and-suspenders for `migrations apply`: if the d1_migrations
         # metadata table ever drifts from the actual schema (e.g. a partial
         # earlier deploy), this guarantees the tables exist before the worker
