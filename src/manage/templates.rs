@@ -327,8 +327,21 @@ code { font-family: var(--font-mono); font-size: 0.88em; }
   height: 220px;
   display: flex; flex-direction: column;
   transition: height 0.18s ease;
+  position: relative;
 }
 .live-feed.collapsed { height: 36px; }
+.live-feed.resizing { transition: none; user-select: none; }
+.live-feed-handle {
+  position: absolute; top: -3px; left: 0; right: 0;
+  height: 6px;
+  cursor: ns-resize;
+  z-index: 5;
+}
+.live-feed-handle:hover,
+.live-feed.resizing .live-feed-handle {
+  background: color-mix(in oklch, var(--accent) 35%, transparent);
+}
+.live-feed.collapsed .live-feed-handle { display: none; }
 .live-feed-bar {
   height: 36px; flex-shrink: 0;
   display: flex; align-items: center; gap: 12px;
@@ -801,10 +814,14 @@ function tester(initial) {
 }
 
 function liveFeed() {
-  // Persist the collapsed/filter state across navigation. localStorage is
-  // per-origin, scoped to the manage host, so it follows the operator's
-  // session naturally without server round-trips.
+  // Persist the collapsed/filter/height state across navigation.
+  // localStorage is per-origin, scoped to the manage host, so it follows
+  // the operator's session naturally without server round-trips.
   const STORE_KEY = 'cutout.liveFeed.v1';
+  const DEFAULT_H = 220;
+  const MIN_H = 120;
+  const maxH = () => Math.max(MIN_H, Math.floor(window.innerHeight * 0.8));
+  const clampH = (h) => Math.max(MIN_H, Math.min(maxH(), h));
   let saved = {};
   try { saved = JSON.parse(localStorage.getItem(STORE_KEY) || '{}'); } catch (_) {}
   return {
@@ -812,15 +829,36 @@ function liveFeed() {
     lastTs: 0,
     filter: typeof saved.filter === 'string' ? saved.filter : 'all',
     collapsed: saved.collapsed !== false,
+    height: clampH(typeof saved.height === 'number' ? saved.height : DEFAULT_H),
+    resizing: false,
     intervalId: null,
     pendingId: null,
     pending: { queued: 0, dead: 0 },
     save() {
       try {
         localStorage.setItem(STORE_KEY, JSON.stringify({
-          collapsed: this.collapsed, filter: this.filter,
+          collapsed: this.collapsed, filter: this.filter, height: this.height,
         }));
       } catch (_) {}
+    },
+    startResize(e) {
+      if (this.collapsed) return;
+      e.preventDefault();
+      const startY = e.clientY;
+      const startHeight = this.height;
+      this.resizing = true;
+      const onMove = (ev) => {
+        // Drag up = bigger feed; drag down = smaller.
+        this.height = clampH(startHeight + (startY - ev.clientY));
+      };
+      const onUp = () => {
+        this.resizing = false;
+        this.save();
+        document.removeEventListener('mousemove', onMove);
+        document.removeEventListener('mouseup', onUp);
+      };
+      document.addEventListener('mousemove', onMove);
+      document.addEventListener('mouseup', onUp);
     },
     init() {
       this.pollPending();
@@ -989,8 +1027,11 @@ pub fn rules_page(
 
 /// The bottom live feed pane. Sits outside `#workbench` so its Alpine
 /// component (and the polling interval it owns) survives HTMX swaps.
-const LIVE_FEED_PANE: &str = r##"<div class="live-feed" :class="{ collapsed }"
+const LIVE_FEED_PANE: &str = r##"<div class="live-feed"
+  :class="{ collapsed, resizing }"
+  :style="!collapsed ? ('height:' + height + 'px') : ''"
   x-data="liveFeed()" x-init="init()">
+  <div class="live-feed-handle" @mousedown="startResize($event)" title="Drag to resize"></div>
   <div class="live-feed-bar">
     <button class="btn ghost sm" @click="toggle()" type="button" style="padding:0 6px">
       <span x-text="collapsed ? '▸' : '▾'"></span>
