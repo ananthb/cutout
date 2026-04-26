@@ -11,7 +11,6 @@
 
 use std::collections::HashMap;
 
-use serde::Deserialize;
 use serde_json::Value;
 use worker::{Cache, Env, Headers, Method, Request, RequestInit, Response};
 
@@ -157,12 +156,27 @@ async fn run_sql(account_id: &str, api_token: &str, sql: &str) -> worker::Result
     Ok(json)
 }
 
-#[derive(Deserialize)]
-struct AggregateRow {
-    rule_id: String,
-    event_type: String,
-    n: serde_json::Number,
-    last_ts: serde_json::Number,
+/// AE / ClickHouse `FORMAT JSON` quotes UInt64 values as strings so JS
+/// callers don't lose precision. We may also see plain numbers (UInt32)
+/// or floats (sampled aggregates), so accept any of the three.
+fn value_to_u64(v: &Value) -> Option<u64> {
+    if let Some(n) = v.as_u64() {
+        return Some(n);
+    }
+    if let Some(f) = v.as_f64() {
+        return Some(f.max(0.0) as u64);
+    }
+    v.as_str().and_then(|s| s.parse().ok())
+}
+
+fn value_to_i64(v: &Value) -> Option<i64> {
+    if let Some(n) = v.as_i64() {
+        return Some(n);
+    }
+    if let Some(f) = v.as_f64() {
+        return Some(f as i64);
+    }
+    v.as_str().and_then(|s| s.parse().ok())
 }
 
 fn parse_aggregates(json: &Value, stats: &mut Stats7d) {
@@ -171,21 +185,26 @@ fn parse_aggregates(json: &Value, stats: &mut Stats7d) {
         None => return,
     };
     for row in rows {
-        let row: AggregateRow = match serde_json::from_value(row.clone()) {
-            Ok(r) => r,
-            Err(_) => continue,
+        let rule_id = row
+            .get("rule_id")
+            .and_then(|v| v.as_str())
+            .unwrap_or("-")
+            .to_string();
+        let event_type = match row.get("event_type").and_then(|v| v.as_str()) {
+            Some(s) => s,
+            None => continue,
         };
-        let n = row.n.as_u64().unwrap_or(0);
-        let last_ts = row.last_ts.as_i64().unwrap_or(0);
-        match row.event_type.as_str() {
+        let n = row.get("n").and_then(value_to_u64).unwrap_or(0);
+        let last_ts = row.get("last_ts").and_then(value_to_i64).unwrap_or(0);
+        match event_type {
             "forward" => stats.forwarded_total += n,
             "drop" => stats.dropped_total += n,
             "store" => stats.stored_total += n,
             _ => {}
         }
         // Per-rule rollup excludes rejects/replies; matches = forward + drop + store.
-        if matches!(row.event_type.as_str(), "forward" | "drop" | "store") && row.rule_id != "-" {
-            let entry = stats.by_rule.entry(row.rule_id).or_default();
+        if matches!(event_type, "forward" | "drop" | "store") && rule_id != "-" {
+            let entry = stats.by_rule.entry(rule_id).or_default();
             entry.matches += n;
             entry.last_match_s = Some(match entry.last_match_s {
                 Some(prev) => prev.max(last_ts),
@@ -195,23 +214,19 @@ fn parse_aggregates(json: &Value, stats: &mut Stats7d) {
     }
 }
 
-#[derive(Deserialize)]
-struct SenderRow {
-    sender: String,
-    n: serde_json::Number,
-}
-
 fn parse_top_senders(json: &Value) -> Vec<TopSender> {
     let rows = match json.get("data").and_then(|d| d.as_array()) {
         Some(r) => r,
         None => return Vec::new(),
     };
     rows.iter()
-        .filter_map(|row| serde_json::from_value::<SenderRow>(row.clone()).ok())
-        .filter(|r| !r.sender.is_empty())
-        .map(|r| TopSender {
-            address: r.sender,
-            n: r.n.as_u64().unwrap_or(0),
+        .filter_map(|row| {
+            let sender = row.get("sender").and_then(|v| v.as_str())?.to_string();
+            if sender.is_empty() {
+                return None;
+            }
+            let n = row.get("n").and_then(value_to_u64).unwrap_or(0);
+            Some(TopSender { address: sender, n })
         })
         .collect()
 }
@@ -260,6 +275,36 @@ mod tests {
         assert_eq!(v.len(), 2);
         assert_eq!(v[0].address, "alice@a.com");
         assert_eq!(v[1].address, "bob@b.com");
+    }
+
+    #[test]
+    fn aggregates_handles_uint64_strings() {
+        // CF AE / ClickHouse FORMAT JSON serializes UInt64 as strings to
+        // preserve precision. Make sure we still parse those.
+        let json: Value = serde_json::from_str(
+            r#"{
+                "data": [
+                    {"rule_id":"r1","event_type":"forward","n":"42","last_ts":"1700"},
+                    {"rule_id":"r1","event_type":"drop","n":"3","last_ts":"1800"}
+                ]
+            }"#,
+        )
+        .unwrap();
+        let mut s = Stats7d::default();
+        parse_aggregates(&json, &mut s);
+        assert_eq!(s.forwarded_total, 42);
+        assert_eq!(s.dropped_total, 3);
+        assert_eq!(s.by_rule.get("r1").unwrap().matches, 45);
+        assert_eq!(s.by_rule.get("r1").unwrap().last_match_s, Some(1800));
+    }
+
+    #[test]
+    fn top_senders_handles_uint64_strings() {
+        let json: Value =
+            serde_json::from_str(r#"{"data":[{"sender":"alice@a.com","n":"123456"}]}"#).unwrap();
+        let v = parse_top_senders(&json);
+        assert_eq!(v.len(), 1);
+        assert_eq!(v[0].n, 123456);
     }
 
     #[test]

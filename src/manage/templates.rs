@@ -172,6 +172,24 @@ code { font-family: var(--font-mono); font-size: 0.88em; }
 }
 .pipeline-node .dot { width: 8px; height: 8px; border-radius: 999px; background: var(--fg-3); }
 .pipeline-node.enter .dot { background: var(--ok); }
+.pipeline-node.selectable {
+  text-decoration: none;
+  cursor: pointer;
+  transition: border-color 0.15s, box-shadow 0.15s, background 0.15s;
+}
+.pipeline-node.selectable:hover {
+  border-color: var(--line);
+  background: var(--bg-1);
+  text-decoration: none;
+}
+.pipeline-node.selectable.selected {
+  border-style: solid;
+  border-color: var(--accent);
+  background: color-mix(in oklch, var(--accent) 8%, var(--bg-1));
+  color: var(--accent);
+  box-shadow: 0 0 0 3px color-mix(in oklch, var(--accent) 18%, transparent);
+}
+.pipeline-node.selectable.selected .dot { background: var(--accent); }
 .pipeline-connector { margin-left: 14px; height: 16px; border-left: 2px dotted var(--line-2); }
 
 .rule-card {
@@ -982,19 +1000,12 @@ const LIVE_FEED_PANE: &str = r##"<div class="live-feed" :class="{ collapsed }"
   </div>
 </div>"##;
 
-/// Pick the index of the rule to show in the inspector. Falls back to the
-/// first non-catch-all rule, or the catch-all if it's the only one.
-pub fn pick_selected_idx(rules: &[Rule], requested: Option<&str>) -> usize {
-    if let Some(id) = requested {
-        if let Some(i) = rules.iter().position(|r| r.id == id) {
-            return i;
-        }
-    }
-    rules
-        .iter()
-        .position(|r| !r.is_catch_all())
-        .unwrap_or(0)
-        .min(rules.len().saturating_sub(1))
+/// Pick the index of the rule to show in the inspector. Returns `None` for
+/// the overview view (default when no `?rule=` is supplied or the requested
+/// id doesn't match any current rule).
+pub fn pick_selected_idx(rules: &[Rule], requested: Option<&str>) -> Option<usize> {
+    let id = requested?;
+    rules.iter().position(|r| r.id == id)
 }
 
 /// Standalone SVG for the favicon: same mark as `LOGO_SVG`, but with
@@ -1017,14 +1028,13 @@ pub fn workbench(
     rules: &[Rule],
     report: &Report,
     enabled: &EnabledChannels,
-    selected_idx: usize,
+    selected_idx: Option<usize>,
     stats: Option<&Stats7d>,
 ) -> String {
     let pipeline = pipeline_pane(rules, selected_idx);
-    let inspector = if rules.is_empty() {
-        r#"<section class="inspector-pane"><div class="empty">No rules yet: add one to get started.</div></section>"#.to_string()
-    } else {
-        inspector_pane(rules, selected_idx, report, enabled, stats)
+    let inspector = match selected_idx {
+        Some(i) if i < rules.len() => inspector_pane(rules, i, report, enabled, stats),
+        _ => inspector_overview(rules, stats),
     };
     format!(
         r##"<div id="workbench" class="workbench">
@@ -1040,7 +1050,7 @@ pub fn workbench_response(
     rules: &[Rule],
     report: &Report,
     enabled: &EnabledChannels,
-    selected_idx: usize,
+    selected_idx: Option<usize>,
     stats: Option<&Stats7d>,
 ) -> String {
     let body = workbench(rules, report, enabled, selected_idx, stats);
@@ -1048,15 +1058,23 @@ pub fn workbench_response(
 }
 
 /// Left pane: pipeline of rule cards, top-to-bottom.
-fn pipeline_pane(rules: &[Rule], selected_idx: usize) -> String {
+fn pipeline_pane(rules: &[Rule], selected_idx: Option<usize>) -> String {
     let cards: String = rules
         .iter()
         .enumerate()
         .map(|(i, r)| {
             let connector = r#"<div class="pipeline-connector"></div>"#;
-            format!("{connector}{}", pipeline_card(r, i, i == selected_idx))
+            format!(
+                "{connector}{}",
+                pipeline_card(r, i, selected_idx == Some(i))
+            )
         })
         .collect();
+    let overview_cls = if selected_idx.is_none() {
+        "pipeline-node enter selectable selected"
+    } else {
+        "pipeline-node enter selectable"
+    };
     format!(
         r##"<aside class="pipeline-pane">
   <header>
@@ -1072,7 +1090,7 @@ fn pipeline_pane(rules: &[Rule], selected_idx: usize) -> String {
     </button>
   </header>
   <div class="pipeline-list">
-    <div class="pipeline-node enter"><span class="dot"></span>INBOUND · email_routing</div>
+    <a class="{overview_cls}" href="/manage" title="Show overall stats across all rules"><span class="dot"></span>INBOUND · email_routing</a>
     {cards}
     <div class="pipeline-connector"></div>
     <div class="pipeline-node"><span class="dot"></span>END · all rules evaluated</div>
@@ -1364,6 +1382,102 @@ fn inspector_pane(
         id = html_escape(&rule.id),
         label = html_escape(&rule.label),
         pattern = pattern_html(&rule.local_pattern, &rule.domain_pattern),
+    )
+}
+
+/// Right pane when no rule is selected: overall stats across the whole
+/// pipeline, rendered in the same shape as the per-rule inspector.
+fn inspector_overview(rules: &[Rule], stats: Option<&Stats7d>) -> String {
+    let rule_count = rules.iter().filter(|r| !r.is_catch_all()).count();
+    let total_dests: usize = rules
+        .iter()
+        .map(|r| match &r.action {
+            Action::Forward { destinations, .. } => destinations.len(),
+            _ => 0,
+        })
+        .sum();
+    let (e, t, d) = rules
+        .iter()
+        .flat_map(|r| match &r.action {
+            Action::Forward { destinations, .. } => destinations.as_slice(),
+            _ => &[],
+        })
+        .fold((0usize, 0usize, 0usize), |(e, t, d), dest| match dest {
+            Destination::Email { .. } => (e + 1, t, d),
+            Destination::Telegram { .. } => (e, t + 1, d),
+            Destination::Discord { .. } => (e, t, d + 1),
+        });
+    let mut chparts: Vec<String> = Vec::new();
+    if e > 0 {
+        chparts.push(format!("{e} email"));
+    }
+    if t > 0 {
+        chparts.push(format!("{t} tg"));
+    }
+    if d > 0 {
+        chparts.push(format!("{d} dc"));
+    }
+    let channels = if chparts.is_empty() {
+        "-".to_string()
+    } else {
+        chparts.join(" · ")
+    };
+
+    let stat_strip = match stats {
+        Some(s) => format!(
+            r##"<div class="stat-strip">
+  <div><span class="k tip" data-tip="Inbound emails forwarded to one or more destinations in the last 7 days.">forwarded · 7d</span><span class="v fwd">{fwd}</span></div>
+  <div><span class="k tip" data-tip="Inbound emails recorded with the Store action in the last 7 days.">stored · 7d</span><span class="v str">{str}</span></div>
+  <div><span class="k tip" data-tip="Inbound emails dropped (matched a Drop rule, or no rule matched) in the last 7 days.">dropped · 7d</span><span class="v drp">{drp}</span></div>
+  <div><span class="k tip" data-tip="Number of user-defined rules. The pinned catch-all is excluded.">rules</span><span class="v">{n}</span><span class="sub">+ 1 catch-all</span></div>
+</div>"##,
+            fwd = s.forwarded_total,
+            str = s.stored_total,
+            drp = s.dropped_total,
+            n = rule_count,
+        ),
+        None => format!(
+            r##"<div class="stat-strip">
+  <div><span class="k">forwarded · 7d</span><span class="v muted">-</span><span class="sub">stats unavailable</span></div>
+  <div><span class="k">stored · 7d</span><span class="v muted">-</span></div>
+  <div><span class="k">dropped · 7d</span><span class="v muted">-</span></div>
+  <div><span class="k">rules</span><span class="v">{n}</span><span class="sub">+ 1 catch-all</span></div>
+</div>"##,
+            n = rule_count,
+        ),
+    };
+
+    let pipeline_card = format!(
+        r##"<div class="card">
+  <header><h3>Pipeline</h3><small>aggregate</small></header>
+  <div class="card-body">
+    <div class="stat-strip" style="grid-template-columns:repeat(2,1fr)">
+      <div><span class="k">destinations</span><span class="v">{total_dests}</span></div>
+      <div><span class="k">channels</span><span class="v" style="font-size:14px">{channels}</span></div>
+    </div>
+  </div>
+</div>"##,
+    );
+
+    let top_senders_card = stats
+        .map(|s| render_top_senders(&s.top_senders))
+        .unwrap_or_default();
+
+    format!(
+        r##"<section class="inspector-pane">
+  <div class="inspector-header">
+    <div class="meta">
+      <div class="id-row"><span>overview</span></div>
+      <h2>All rules</h2>
+      <span class="pat-display" style="background:transparent;padding:0;color:var(--fg-2);font-size:12.5px">Aggregate stats across the whole routing pipeline. Click a rule on the left to drill in.</span>
+    </div>
+  </div>
+  <div class="inspector-body">
+    {stat_strip}
+    {pipeline_card}
+    {top_senders_card}
+  </div>
+</section>"##,
     )
 }
 
