@@ -5,7 +5,7 @@ use worker::*;
 
 use botrelay::discord::{ActionRow, Component, CreateMessage, DiscordBot, InteractionResponse};
 use botrelay::reply::ReplyContext;
-use botrelay::telegram::{ParseMode, SendMessage, TelegramBot};
+use botrelay::telegram::{SendMessage, TelegramBot};
 
 use crate::db;
 use crate::email::send;
@@ -69,7 +69,6 @@ pub async fn dispatch(env: &Env, forward: &BotForward) -> Result<()> {
                 .send_message(SendMessage {
                     chat_id: chat_id.clone(),
                     text: body,
-                    parse_mode: Some(ParseMode::Html),
                     disable_preview: Some(true),
                     ..Default::default()
                 })
