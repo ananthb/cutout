@@ -752,15 +752,34 @@ function tester(initial) {
 }
 
 function liveFeed() {
+  // Persist the collapsed/filter state across navigation. localStorage is
+  // per-origin, scoped to the manage host, so it follows the operator's
+  // session naturally without server round-trips.
+  const STORE_KEY = 'cutout.liveFeed.v1';
+  let saved = {};
+  try { saved = JSON.parse(localStorage.getItem(STORE_KEY) || '{}'); } catch (_) {}
   return {
     events: [],
     lastTs: 0,
-    filter: 'all',
-    collapsed: true,
+    filter: typeof saved.filter === 'string' ? saved.filter : 'all',
+    collapsed: saved.collapsed !== false,
     intervalId: null,
     pendingId: null,
     pending: { queued: 0, dead: 0 },
-    init() { this.pollPending(); },
+    save() {
+      try {
+        localStorage.setItem(STORE_KEY, JSON.stringify({
+          collapsed: this.collapsed, filter: this.filter,
+        }));
+      } catch (_) {}
+    },
+    init() {
+      this.pollPending();
+      // Honour the persisted expanded state on page load.
+      if (!this.collapsed) this.start();
+      // Persist filter changes too.
+      this.$watch('filter', () => this.save());
+    },
     start() {
       if (this.intervalId) return;
       this.poll(true);
@@ -805,6 +824,7 @@ function liveFeed() {
     },
     toggle() {
       this.collapsed = !this.collapsed;
+      this.save();
       if (this.collapsed) this.stop();
       else this.start();
     },
