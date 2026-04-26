@@ -381,7 +381,8 @@ pub async fn retry_pending(env: &Env, id: &str) -> Result<Response> {
 
 /// POST /manage/pending/{id}/discard: delete the row + its R2 object. Used
 /// to cut a dead-lettered email loose; the operator has decided not to
-/// re-attempt it.
+/// re-attempt it. Redirects back to /manage/pending so the operator sees
+/// the row gone instead of a bare "discarded" string.
 pub async fn discard_pending(env: &Env, id: &str) -> Result<Response> {
     let database = env.d1("DB")?;
     let pending = match db::load_pending(&database, id).await? {
@@ -390,5 +391,7 @@ pub async fn discard_pending(env: &Env, id: &str) -> Result<Response> {
     };
     db::delete_pending(&database, id).await?;
     r2::delete(env, &pending.r2_key).await.ok();
-    Response::ok("discarded")
+    let headers = Headers::new();
+    headers.set("Location", "/manage/pending")?;
+    Ok(Response::empty()?.with_status(303).with_headers(headers))
 }
