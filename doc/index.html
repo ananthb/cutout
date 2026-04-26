@@ -31,6 +31,7 @@
 .flow-section .inner { padding: 40px 32px; }
 .flow-svg { display: block; width: 100%; height: 280px; }
 .flow-packet { transition: transform 0.7s cubic-bezier(.4, 0, .2, 1); }
+#packet-rect { transition: fill 0.4s ease; }
 .steps { display: grid; grid-template-columns: repeat(4, 1fr); gap: 14px; margin-top: 30px; }
 .step .n {
   font-family: var(--font-mono);
@@ -128,9 +129,9 @@
   <span class="l-eyebrow">EMAIL ALIAS PROXY &middot; SELF-HOSTED &middot; OPEN SOURCE</span>
   <h1>
     One alias for every site.<br>
-    <span class="accent">Your real address, never seen.</span>
+    <span class="accent">Email forwarding proxy for the people.</span>
   </h1>
-  <p>Cutout watches every email going to your domain, rewrites the headers, and quietly forwards it to where you actually live: email, Discord, or Telegram. Reply, and it gets routed back through the alias.</p>
+  <p>Cutout watches every email going to your domain, rewrites the headers, and forwards it to where you actually live: email, Discord, or Telegram. Reply, and it gets sent back as an email to the original sender.</p>
   <div class="ctas">
     <a class="l-cta" href="deploy.html">Get started &#8599;</a>
     <a class="l-cta ghost" href="#flow">See the flow</a>
@@ -181,17 +182,17 @@
         <text x="-30" y="5" font-size="11" font-family="var(--font-mono)" fill="var(--ch-telegram)" font-weight="600">telegram</text>
       </g>
 
-      <path d="M 300 110 Q 180 60 60 118" fill="none" stroke="var(--info)" stroke-width="1.2" stroke-dasharray="2 4"/>
-      <text x="180" y="44" text-anchor="middle" font-size="11" font-family="var(--font-mono)" fill="var(--info)">reply &middot; routed back through alias</text>
+      <path d="M 820 200 Q 700 0 560 105 Q 310 30 60 110" fill="none" stroke="var(--info)" stroke-width="1.2" stroke-dasharray="2 4"/>
+      <text x="430" y="22" text-anchor="middle" font-size="11" font-family="var(--font-mono)" fill="var(--info)">reply &middot; sent back as email through cutout</text>
 
       <g id="packet" class="flow-packet" style="transform: translate(60px, 140px);">
-        <rect x="-12" y="-8" width="24" height="16" rx="2" fill="var(--accent)"/>
+        <rect id="packet-rect" x="-12" y="-8" width="24" height="16" rx="2" fill="var(--accent)"/>
         <path d="M -12 -8 L 0 2 L 12 -8" fill="none" stroke="var(--accent-fg)" stroke-width="1.2"/>
       </g>
 
       <text x="180" y="266" text-anchor="middle" font-size="10.5" font-family="var(--font-mono)" fill="var(--fg-3)">1. inbound mail</text>
       <text x="430" y="266" text-anchor="middle" font-size="10.5" font-family="var(--font-mono)" fill="var(--fg-3)">2. match rule</text>
-      <text x="700" y="266" text-anchor="middle" font-size="10.5" font-family="var(--font-mono)" fill="var(--fg-3)">3. fan out to channels</text>
+      <text x="700" y="266" text-anchor="middle" font-size="10.5" font-family="var(--font-mono)" fill="var(--fg-3)">3. fan out, then reply via cutout</text>
     </svg>
 
     <div class="steps">
@@ -297,19 +298,28 @@
 <script>
 (function () {
   var packet = document.getElementById('packet');
-  if (!packet) return;
+  var rect = document.getElementById('packet-rect');
+  if (!packet || !rect) return;
+  // Forward path (orange): sender -> alias -> cutout -> fan out to email/discord/telegram.
+  // Reply path (blue): from the last channel, arc up through cutout, land back at sender.
   var positions = [
-    [60, 140],
-    [300, 140],
-    [560, 140],
-    [820, 80],
-    [820, 140],
-    [820, 200],
+    [60, 140],   // 0  sender
+    [300, 140],  // 1  alias
+    [560, 140],  // 2  cutout
+    [820, 80],   // 3  email
+    [820, 140],  // 4  discord
+    [820, 200],  // 5  telegram
+    [695, 76],   // 6  reply ascends
+    [560, 105],  // 7  reply through cutout
+    [310, 69],   // 8  reply arc peak
+    [60, 110],   // 9  reply lands at sender
   ];
+  var REPLY_FROM = 6;
   var i = 0;
   function tick() {
     var p = positions[i];
     packet.style.transform = 'translate(' + p[0] + 'px, ' + p[1] + 'px)';
+    rect.setAttribute('fill', i >= REPLY_FROM ? 'var(--info)' : 'var(--accent)');
     i = (i + 1) % positions.length;
   }
   if (window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches) return;
