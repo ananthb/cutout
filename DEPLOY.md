@@ -21,6 +21,14 @@ The following secrets must be configured in the GitHub repository for the offici
 | `D1_DATABASE_ID` | ID of the official `cutout-db` (`304914b0-5657-4b4f-bf43-4be3e2b8c03b`). |
 | `KV_NAMESPACE_ID` | ID of the official `KV` namespace (`66c8000103c6420f91cd3943216d5828`). |
 | `CF_ACCESS_TEAM` / `_AUD` | Cloudflare Access credentials for the `/manage` super-admin panel. |
+| `CF_API_TOKEN` (optional) | API token used at runtime by the Worker. Add `Account Analytics: Read` to enable the dashboard stats panels; add `Browser Rendering: Edit` to enable the in-chat email screenshot for Telegram/Discord destinations. The same token covers both. |
+| `VIEWER_HMAC_KEY` (optional) | 32+ random bytes used to sign public viewer URLs. Required only when a rule uses a chat destination with `:token` link auth (e.g. `telegram:-100:token`). |
+
+## Required GitHub Variables
+
+| Variable | Description |
+|----------|-------------|
+| `PUBLIC_BASE_URL` (optional) | Public origin for the deployed Worker (e.g. `https://cutout.example.com`). When set, Telegram/Discord posts include a `View full email →` link to `/manage/m/{id}` (or `/m/{id}?t=…` for `:token` destinations). Empty suppresses the link. |
 
 ## Manual Deployment
 If manual deployment is necessary:

@@ -166,6 +166,36 @@ async fn execute_action(
             // Parse the email content. We need this for all structured paths.
             let parsed = mime::parse_email(raw_bytes);
 
+            // Persist raw bytes + metadata when at least one destination is a
+            // chat channel: the bot post embeds a "View full email" link to
+            // /m/{id}, so the body has to live somewhere durable.
+            let has_chat_destination = destinations.iter().any(|d| {
+                matches!(
+                    d,
+                    Destination::Telegram { .. } | Destination::Discord { .. }
+                )
+            });
+            let stored_message_id = if has_chat_destination {
+                let id = uuid::Uuid::new_v4().to_string();
+                let key = r2::message_key(&id);
+                r2::put(env, &key, raw_bytes).await?;
+                let subject = parsed
+                    .as_ref()
+                    .map(|p| p.subject.clone())
+                    .unwrap_or_default();
+                db::save_message(database, &id, from, to, &subject, &key).await?;
+                Some(id)
+            } else {
+                None
+            };
+            // Inline cid: image references once; both bot dispatch (for the
+            // screenshot) and the viewer get the same payload.
+            let inlined_html = if has_chat_destination {
+                mime::inlined_html(raw_bytes)
+            } else {
+                None
+            };
+
             let mut dispatch = Dispatch::default();
             let mut email_count = 0usize;
 
@@ -188,7 +218,7 @@ async fn execute_action(
                         }
                         email_count += 1;
                     }
-                    Destination::Telegram { chat_id } => {
+                    Destination::Telegram { chat_id, link_auth } => {
                         dispatch.bot_forwards.push(BotForward {
                             channel: BotChannel::Telegram {
                                 chat_id: chat_id.clone(),
@@ -203,9 +233,15 @@ async fn execute_action(
                                 .as_ref()
                                 .and_then(|p| p.text_body.clone())
                                 .unwrap_or_default(),
+                            message_id: stored_message_id.clone().unwrap_or_default(),
+                            html: inlined_html.clone(),
+                            link_auth: *link_auth,
                         });
                     }
-                    Destination::Discord { channel_id } => {
+                    Destination::Discord {
+                        channel_id,
+                        link_auth,
+                    } => {
                         dispatch.bot_forwards.push(BotForward {
                             channel: BotChannel::Discord {
                                 channel_id: channel_id.clone(),
@@ -220,6 +256,9 @@ async fn execute_action(
                                 .as_ref()
                                 .and_then(|p| p.text_body.clone())
                                 .unwrap_or_default(),
+                            message_id: stored_message_id.clone().unwrap_or_default(),
+                            html: inlined_html.clone(),
+                            link_auth: *link_auth,
                         });
                     }
                 }

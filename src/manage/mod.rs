@@ -3,6 +3,7 @@
 pub mod access;
 pub mod handlers;
 pub mod templates;
+pub mod viewer;
 
 use worker::*;
 
@@ -63,6 +64,9 @@ pub async fn handle_manage(req: Request, env: Env, path: &str, method: Method) -
 
         // POST /manage/pending/{id}/discard: delete the row + R2 object
         (Method::Post, ["pending", id, "discard"]) => handlers::discard_pending(&env, id).await,
+
+        // GET /manage/m/{id}: render a stored email (HTML viewer).
+        (Method::Get, ["m", id]) => viewer::render(&env, id).await,
 
         _ => Response::error("Not Found", 404),
     }

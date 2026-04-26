@@ -721,31 +721,47 @@ function ruleEditor(initial) {
       }
       return prefix + ' \u2192 ' + suffix;
     },
-    serialize() { return this.chips.map(c => c.kind + ':' + c.value).join('\n'); },
+    serialize() {
+      return this.chips.map(c => {
+        const base = c.kind + ':' + c.value;
+        return (c.auth && c.auth !== 'access') ? base + ':' + c.auth : base;
+      }).join('\n');
+    },
     parse(raw) {
       const text = raw.trim();
       if (!text) return { empty: true };
       const idx = text.indexOf(':');
       if (idx < 0) return { err: "use 'kind:value' (e.g. email:you@example.com)" };
       const kindIn = text.slice(0, idx).trim().toLowerCase();
-      const value  = text.slice(idx + 1).trim();
-      if (!value) return { err: "value missing after ':'" };
+      const rest   = text.slice(idx + 1).trim();
+      if (!rest) return { err: "value missing after ':'" };
       const alias = { email: 'email', telegram: 'telegram', tg: 'telegram', discord: 'discord', dc: 'discord' };
       const kind = alias[kindIn];
       if (!kind) return { err: "unknown kind (use email, telegram, or discord)" };
       if (this.enabled.indexOf(kind) < 0) return { err: kind + " is not enabled on this deployment" };
       if (kind === 'email') {
-        if (!value.includes('@') || value.startsWith('@') || value.endsWith('@'))
+        if (!rest.includes('@') || rest.startsWith('@') || rest.endsWith('@'))
           return { err: "email address must contain '@'" };
-        return { kind, value: value.toLowerCase() };
+        return { kind, value: rest.toLowerCase() };
+      }
+      // For chat kinds, allow an optional ':access' or ':token' suffix
+      // selecting which viewer URL is embedded in the bot post.
+      let value = rest, auth = 'access';
+      const subIdx = rest.indexOf(':');
+      if (subIdx >= 0) {
+        value = rest.slice(0, subIdx).trim();
+        const suffix = rest.slice(subIdx + 1).trim().toLowerCase();
+        if (suffix === '' || suffix === 'access') auth = 'access';
+        else if (suffix === 'token' || suffix === 'public') auth = 'token';
+        else return { err: "link auth must be 'access' or 'token'" };
       }
       if (kind === 'telegram') {
         if (!/^-?\d+$/.test(value)) return { err: "telegram chat_id must be an integer" };
-        return { kind, value };
+        return { kind, value, auth };
       }
       if (kind === 'discord') {
         if (!/^\d+$/.test(value)) return { err: "discord channel_id must be a positive integer" };
-        return { kind, value };
+        return { kind, value, auth };
       }
       return { err: "unknown kind" };
     },
@@ -753,7 +769,9 @@ function ruleEditor(initial) {
       const r = this.parse(this.draft);
       if (r.empty) { this.err = ''; return true; }
       if (r.err)   { this.err = r.err; return false; }
-      this.chips.push({ kind: r.kind, value: r.value });
+      const chip = { kind: r.kind, value: r.value };
+      if (r.auth) chip.auth = r.auth;
+      this.chips.push(chip);
       this.draft = ''; this.err = '';
       return true;
     },
@@ -1803,9 +1821,9 @@ fn destinations_field(enabled: &EnabledChannels) -> String {
     format!(
         r##"<div class="dest-wrapper">
   <div class="dest-field" @click.self="$refs.chipInput.focus()">
-    <template x-for="(c, i) in chips" :key="i + ':' + c.kind + ':' + c.value">
+    <template x-for="(c, i) in chips" :key="i + ':' + c.kind + ':' + c.value + ':' + (c.auth || '')">
       <span class="dest-chip" :class="'dest-' + c.kind">
-        <span x-text="c.kind + ':' + c.value"></span>
+        <span x-text="c.kind + ':' + c.value + ((c.auth && c.auth !== 'access') ? ':' + c.auth : '')"></span>
         <button type="button" aria-label="remove" @click="chips.splice(i, 1)">×</button>
       </span>
     </template>
@@ -1822,7 +1840,7 @@ fn destinations_field(enabled: &EnabledChannels) -> String {
   </div>
   <div class="chip-error" :class="{{ visible: !!err }}" x-text="err"></div>
 </div>
-<div class="help" style="margin-top:6px">Press Enter or comma to add. Each entry must be <code>kind:value</code>. Available: {kinds_help}.{missing}</div>"##,
+<div class="help" style="margin-top:6px">Press Enter or comma to add. Each entry is <code>kind:value</code>. Available: {kinds_help}.{missing} For chat destinations, append <code>:token</code> (e.g. <code>telegram:-100:token</code>) to use a public signed-link viewer instead of the default Cloudflare Access viewer.</div>"##,
     )
 }
 
@@ -1886,7 +1904,13 @@ fn editor_modal(
     }
     let chips_json: Vec<serde_json::Value> = destinations
         .iter()
-        .map(|d| serde_json::json!({ "kind": d.kind_label(), "value": d.value() }))
+        .map(|d| {
+            let mut obj = serde_json::json!({ "kind": d.kind_label(), "value": d.value() });
+            if let Some(auth) = d.link_auth() {
+                obj["auth"] = serde_json::Value::String(auth.as_token().to_string());
+            }
+            obj
+        })
         .collect();
     let init_json = serde_json::json!({
         "action": action_type,

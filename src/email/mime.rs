@@ -1,4 +1,5 @@
-use mail_parser::MessageParser;
+use base64::Engine;
+use mail_parser::{MessageParser, MimeHeaders};
 
 /// Parsed representation of an inbound email: only the fields we need to
 /// reconstruct an outbound message via Cloudflare Email Service.
@@ -35,6 +36,54 @@ pub fn parse_email(raw: &[u8]) -> Option<ParsedEmail> {
         text_body: message.body_text(0).map(|s| s.to_string()),
         html_body: message.body_html(0).map(|s| s.to_string()),
     })
+}
+
+/// Parse raw MIME bytes and return the HTML body with `cid:` image
+/// references rewritten to inline `data:` URIs. Returns `None` when the
+/// message has no `text/html` part (text-only emails are handled by the
+/// caller using `text_body`).
+pub fn inlined_html(raw: &[u8]) -> Option<String> {
+    let message = MessageParser::default().parse(raw)?;
+    let html_part = message.html_part(0)?;
+    if !html_part.is_text_html() {
+        return None;
+    }
+    let mut html = match std::str::from_utf8(html_part.contents()) {
+        Ok(s) => s.to_string(),
+        Err(_) => return None,
+    };
+
+    for part in &message.parts {
+        let cid = match part.content_id() {
+            Some(c) => c.trim_matches(['<', '>', ' ']).to_string(),
+            None => continue,
+        };
+        if cid.is_empty() {
+            continue;
+        }
+        let bytes = part.contents();
+        if bytes.is_empty() {
+            continue;
+        }
+        let mime_type = part
+            .content_type()
+            .map(|ct| match ct.subtype() {
+                Some(sub) => format!("{}/{}", ct.ctype(), sub),
+                None => ct.ctype().to_string(),
+            })
+            .unwrap_or_else(|| "application/octet-stream".to_string());
+        let b64 = base64::engine::general_purpose::STANDARD.encode(bytes);
+        let data_uri = format!("data:{mime_type};base64,{b64}");
+
+        for prefix in ["cid:", "CID:", "Cid:"] {
+            let needle = format!("{prefix}{cid}");
+            if html.contains(&needle) {
+                html = html.replace(&needle, &data_uri);
+            }
+        }
+    }
+
+    Some(html)
 }
 
 #[cfg(test)]
@@ -89,6 +138,46 @@ mod tests {
             parsed.references.as_deref(),
             Some("prev789@proxy.example.com")
         );
+    }
+
+    const HTML_WITH_CID: &[u8] = b"From: Bob <bob@shop.com>\r\n\
+        To: orders@proxy.example.com\r\n\
+        Subject: Receipt\r\n\
+        MIME-Version: 1.0\r\n\
+        Content-Type: multipart/related; boundary=\"REL\"\r\n\
+        \r\n\
+        --REL\r\n\
+        Content-Type: text/html; charset=utf-8\r\n\
+        \r\n\
+        <p>See <img src=\"cid:logo123\"></p>\r\n\
+        --REL\r\n\
+        Content-Type: image/png\r\n\
+        Content-ID: <logo123>\r\n\
+        Content-Transfer-Encoding: base64\r\n\
+        \r\n\
+        iVBORw0KGgoAAAANSUhEUgAAAAEAAAABAQMAAAAl21bKAAAAA1BMVEX///+nxBvIAAAAC0lEQVQI12NgAAIAAAUAAeImBZsAAAAASUVORK5CYII=\r\n\
+        --REL--\r\n";
+
+    #[test]
+    fn inlines_cid_image_to_data_uri() {
+        let html = inlined_html(HTML_WITH_CID).expect("html present");
+        assert!(
+            html.contains("data:image/png;base64,"),
+            "expected data URI, got: {html}"
+        );
+        assert!(!html.contains("cid:logo123"), "cid: still present: {html}");
+    }
+
+    #[test]
+    fn inlined_html_returns_none_for_text_only() {
+        // SIMPLE_EMAIL has no HTML body.
+        assert!(inlined_html(SIMPLE_EMAIL).is_none());
+    }
+
+    #[test]
+    fn inlined_html_passthrough_when_no_cid() {
+        let html = inlined_html(MULTIPART_EMAIL).expect("html present");
+        assert!(html.contains("<h1>"), "html body lost: {html}");
     }
 
     #[test]

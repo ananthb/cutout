@@ -50,6 +50,8 @@ pub mod kv;
 mod manage;
 mod r2;
 mod retries;
+mod sanitize;
+mod screenshot;
 mod stats;
 mod types;
 mod validation;
@@ -306,8 +308,45 @@ async fn fetch(req: Request, env: Env, _ctx: Context) -> Result<Response> {
             bots::handle_discord_interaction(req, env).await
         }
         p if p.starts_with("/manage") => manage::handle_manage(req, env, p, method).await,
+        p if p.starts_with("/m/") && method == Method::Get => {
+            handle_public_viewer(req, env, p).await
+        }
         _ => Response::error("Not Found", 404),
     }
+}
+
+/// Public viewer route `/m/{id}?t={hmac}`. Validates the token is the
+/// HMAC of `id` under `VIEWER_HMAC_KEY` and renders the same viewer used by
+/// the Access-protected `/manage/m/{id}` route.
+async fn handle_public_viewer(req: Request, env: Env, path: &str) -> Result<Response> {
+    let id = match path.strip_prefix("/m/") {
+        Some(rest) if !rest.is_empty() && !rest.contains('/') => rest,
+        _ => return Response::error("Not Found", 404),
+    };
+
+    let url = req.url()?;
+    let token = url
+        .query_pairs()
+        .find(|(k, _)| k == "t")
+        .map(|(_, v)| v.into_owned())
+        .unwrap_or_default();
+    if token.is_empty() {
+        return Response::error("Forbidden", 403);
+    }
+
+    let key = match env.secret("VIEWER_HMAC_KEY") {
+        Ok(s) => s.to_string(),
+        Err(_) => {
+            console_log!("/m/: VIEWER_HMAC_KEY not configured; refusing token-mode viewer");
+            return Response::error("Viewer not configured", 503);
+        }
+    };
+
+    if !manage::viewer::verify_signed_id(&key, id, &token) {
+        return Response::error("Forbidden", 403);
+    }
+
+    manage::viewer::render(&env, id).await
 }
 
 /// Queue consumer dispatcher. Two queues land on the same worker:

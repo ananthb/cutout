@@ -103,6 +103,36 @@ pub enum Action {
     },
 }
 
+/// Which URL is embedded in a chat-channel forward as the "View full email"
+/// link. `Access` means the protected `/manage/m/{id}` route (Cloudflare
+/// Access challenges the viewer); `Token` means the public `/m/{id}?t={hmac}`
+/// route (anyone with the URL can view, no login).
+#[derive(Serialize, Deserialize, Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum ViewerAuth {
+    #[default]
+    Access,
+    Token,
+}
+
+impl ViewerAuth {
+    /// Wire token used in `kind:value:auth` destination strings.
+    pub fn as_token(&self) -> &'static str {
+        match self {
+            ViewerAuth::Access => "access",
+            ViewerAuth::Token => "token",
+        }
+    }
+
+    fn parse(token: &str) -> Result<ViewerAuth, &'static str> {
+        match token.trim().to_lowercase().as_str() {
+            "" | "access" => Ok(ViewerAuth::Access),
+            "token" | "public" => Ok(ViewerAuth::Token),
+            _ => Err("link auth must be 'access' or 'token'"),
+        }
+    }
+}
+
 /// A single forward target. Multiple destinations of different kinds may be
 /// attached to one rule.
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
@@ -112,9 +142,17 @@ pub enum Destination {
     /// Recipient must be in the zone's Email Routing Destination Addresses.
     Email { address: String },
     /// Forward to a Telegram chat via bot `sendMessage`.
-    Telegram { chat_id: String },
+    Telegram {
+        chat_id: String,
+        #[serde(default)]
+        link_auth: ViewerAuth,
+    },
     /// Forward to a Discord channel via bot `createMessage`.
-    Discord { channel_id: String },
+    Discord {
+        channel_id: String,
+        #[serde(default)]
+        link_auth: ViewerAuth,
+    },
 }
 
 impl Destination {
@@ -131,28 +169,42 @@ impl Destination {
     pub fn value(&self) -> &str {
         match self {
             Destination::Email { address } => address,
-            Destination::Telegram { chat_id } => chat_id,
-            Destination::Discord { channel_id } => channel_id,
+            Destination::Telegram { chat_id, .. } => chat_id,
+            Destination::Discord { channel_id, .. } => channel_id,
+        }
+    }
+
+    /// Per-destination viewer-link auth choice. `None` for email destinations
+    /// (no viewer link is sent).
+    pub fn link_auth(&self) -> Option<ViewerAuth> {
+        match self {
+            Destination::Email { .. } => None,
+            Destination::Telegram { link_auth, .. } | Destination::Discord { link_auth, .. } => {
+                Some(*link_auth)
+            }
         }
     }
 
     /// Parse a single line of the form `kind:value` (e.g. `email:a@b.com`,
-    /// `telegram:-100123`, `discord:987654321`). Returns `None` for blank
-    /// lines. Returns an error for any non-blank malformed line.
+    /// `telegram:-100123`, `discord:987654321`). For chat destinations a
+    /// third field selects the viewer-link auth: `telegram:-100:token` or
+    /// `discord:42:access`. Missing third field → `access`. Returns `None`
+    /// for blank lines.
     pub fn parse_line(line: &str) -> Result<Option<Destination>, &'static str> {
         let trimmed = line.trim();
         if trimmed.is_empty() {
             return Ok(None);
         }
-        let (kind, value) = trimmed
+        let (kind, rest) = trimmed
             .split_once(':')
             .ok_or("expected 'kind:value' (e.g. email:you@example.com)")?;
-        let value = value.trim().to_string();
-        if value.is_empty() {
+        let rest = rest.trim();
+        if rest.is_empty() {
             return Err("value missing after ':'");
         }
         match kind.trim().to_lowercase().as_str() {
             "email" => {
+                let value = rest.to_string();
                 if !value.contains('@') || value.starts_with('@') || value.ends_with('@') {
                     return Err("email address must contain '@'");
                 }
@@ -161,7 +213,13 @@ impl Destination {
                 }))
             }
             "telegram" | "tg" => {
-                // Telegram chat_ids are integers (optionally negative for groups/channels).
+                let (value, auth_raw) = match rest.split_once(':') {
+                    Some((v, a)) => (v.trim().to_string(), a),
+                    None => (rest.to_string(), ""),
+                };
+                if value.is_empty() {
+                    return Err("telegram chat_id is empty");
+                }
                 if !value
                     .trim_start_matches('-')
                     .chars()
@@ -169,14 +227,28 @@ impl Destination {
                 {
                     return Err("telegram chat_id must be an integer");
                 }
-                Ok(Some(Destination::Telegram { chat_id: value }))
+                let link_auth = ViewerAuth::parse(auth_raw)?;
+                Ok(Some(Destination::Telegram {
+                    chat_id: value,
+                    link_auth,
+                }))
             }
             "discord" | "dc" => {
-                // Discord channel IDs are snowflakes (positive integers).
+                let (value, auth_raw) = match rest.split_once(':') {
+                    Some((v, a)) => (v.trim().to_string(), a),
+                    None => (rest.to_string(), ""),
+                };
+                if value.is_empty() {
+                    return Err("discord channel_id is empty");
+                }
                 if !value.chars().all(|c| c.is_ascii_digit()) {
                     return Err("discord channel_id must be a positive integer");
                 }
-                Ok(Some(Destination::Discord { channel_id: value }))
+                let link_auth = ViewerAuth::parse(auth_raw)?;
+                Ok(Some(Destination::Discord {
+                    channel_id: value,
+                    link_auth,
+                }))
             }
             other => Err(stringify_kind_err(other)),
         }
@@ -198,11 +270,17 @@ impl Destination {
     }
 
     /// Format a list of destinations as newline-separated `kind:value` lines,
-    /// suitable for round-tripping through [`Destination::parse_list`].
+    /// suitable for round-tripping through [`Destination::parse_list`]. Chat
+    /// destinations append `:token` only when the link auth is non-default.
     pub fn format_list(destinations: &[Destination]) -> String {
         destinations
             .iter()
-            .map(|d| format!("{}:{}", d.kind_label(), d.value()))
+            .map(|d| match d.link_auth() {
+                Some(ViewerAuth::Token) => {
+                    format!("{}:{}:token", d.kind_label(), d.value())
+                }
+                _ => format!("{}:{}", d.kind_label(), d.value()),
+            })
             .collect::<Vec<_>>()
             .join("\n")
     }
@@ -254,6 +332,10 @@ pub struct ForwardInstruction {
 /// Bot-channel forward: send the parsed email content to a chat via the
 /// relevant bot API. The caller saves a [`botrelay::ReplyContext`] keyed by
 /// the returned message id so replies route back.
+///
+/// `message_id` and `link_auth` drive the "View full email" link composed
+/// into the chat post. `html` is the inline-image-rewritten HTML body, used
+/// to render the in-chat screenshot via Cloudflare Browser Rendering.
 #[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct BotForward {
     pub channel: BotChannel,
@@ -261,6 +343,17 @@ pub struct BotForward {
     pub alias: String,
     pub subject: String,
     pub text: String,
+    /// UUID of the stored email; matches the `messages.id` row and
+    /// `messages/{id}` R2 key. Used to build the viewer URL.
+    #[serde(default)]
+    pub message_id: String,
+    /// Sanitized HTML body with `cid:` images inlined as `data:` URIs.
+    /// `None` when the source email has no HTML part.
+    #[serde(default)]
+    pub html: Option<String>,
+    /// Which viewer URL style to embed in the chat post.
+    #[serde(default)]
+    pub link_auth: ViewerAuth,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
@@ -358,14 +451,16 @@ mod tests {
         assert_eq!(
             d,
             Destination::Telegram {
-                chat_id: "-100123".into()
+                chat_id: "-100123".into(),
+                link_auth: ViewerAuth::Access,
             }
         );
         let d = Destination::parse_line("tg:42").unwrap().unwrap();
         assert_eq!(
             d,
             Destination::Telegram {
-                chat_id: "42".into()
+                chat_id: "42".into(),
+                link_auth: ViewerAuth::Access,
             }
         );
     }
@@ -378,9 +473,63 @@ mod tests {
         assert_eq!(
             d,
             Destination::Discord {
-                channel_id: "987654321".into()
+                channel_id: "987654321".into(),
+                link_auth: ViewerAuth::Access,
             }
         );
+    }
+
+    #[test]
+    fn parse_telegram_with_token_auth() {
+        let d = Destination::parse_line("telegram:-100123:token")
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            d,
+            Destination::Telegram {
+                chat_id: "-100123".into(),
+                link_auth: ViewerAuth::Token,
+            }
+        );
+    }
+
+    #[test]
+    fn parse_discord_with_explicit_access() {
+        let d = Destination::parse_line("discord:42:access")
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            d,
+            Destination::Discord {
+                channel_id: "42".into(),
+                link_auth: ViewerAuth::Access,
+            }
+        );
+    }
+
+    #[test]
+    fn parse_unknown_auth_token_errors() {
+        let err = Destination::parse_line("telegram:42:bogus").unwrap_err();
+        assert!(err.contains("link auth"), "got: {err}");
+    }
+
+    #[test]
+    fn format_omits_default_auth_emits_token() {
+        let dests = vec![
+            Destination::Telegram {
+                chat_id: "-100".into(),
+                link_auth: ViewerAuth::Access,
+            },
+            Destination::Discord {
+                channel_id: "555".into(),
+                link_auth: ViewerAuth::Token,
+            },
+        ];
+        let formatted = Destination::format_list(&dests);
+        assert_eq!(formatted, "telegram:-100\ndiscord:555:token");
+        // Round-trip preserves the choice.
+        let parsed = Destination::parse_list(&formatted).unwrap();
+        assert_eq!(parsed, dests);
     }
 
     #[test]

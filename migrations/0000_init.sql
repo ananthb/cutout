@@ -20,9 +20,10 @@ CREATE TABLE IF NOT EXISTS bot_reply_contexts (
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP
 );
 
--- Stored emails (Action::Store with persist=true). Body lives in R2 at the
+-- Stored emails: persisted by `Action::Store { persist: true }` and also by
+-- every match that has a Telegram or Discord destination (so the bot post's
+-- "View full email" link has something to render). Body lives in R2 at
 -- `r2_key` (typically `messages/<id>`); D1 keeps only metadata.
-DROP TABLE IF EXISTS messages;
 CREATE TABLE IF NOT EXISTS messages (
     id TEXT PRIMARY KEY,
     sender TEXT NOT NULL,

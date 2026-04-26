@@ -397,6 +397,7 @@ mod tests {
             Action::Forward {
                 destinations: vec![Destination::Telegram {
                     chat_id: "-100123".into(),
+                    link_auth: Default::default(),
                 }],
                 replace_reply_to: false,
             },
@@ -423,6 +424,7 @@ mod tests {
             Action::Forward {
                 destinations: vec![Destination::Discord {
                     channel_id: "42".into(),
+                    link_auth: Default::default(),
                 }],
                 replace_reply_to: false,
             },
@@ -450,9 +452,11 @@ mod tests {
                 destinations: vec![
                     Destination::Telegram {
                         chat_id: "-100".into(),
+                        link_auth: Default::default(),
                     },
                     Destination::Discord {
                         channel_id: "555".into(),
+                        link_auth: Default::default(),
                     },
                 ],
                 replace_reply_to: false,

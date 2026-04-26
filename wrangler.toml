@@ -72,6 +72,20 @@ CF_ACCESS_AUD = ""              # Application Audience (AUD) tag from Access
 # CF_API_TOKEN needs "Account Analytics: Read" scope. Without these, the
 # dashboard renders without aggregated stats.
 CF_ACCOUNT_ID = ""
+# Public origin used to compose viewer links in Telegram/Discord posts
+# (e.g. "https://cutout.example.com"). Leave empty to suppress the
+# "View full email →" link.
+PUBLIC_BASE_URL = ""
+
+# Additional secrets (set via `wrangler secret put`):
+# - CF_API_TOKEN: Cloudflare API token. Add "Browser Rendering: Edit" to
+#   enable the in-chat screenshot for Telegram/Discord destinations; add
+#   "Account Analytics: Read" to enable the dashboard stats panels. The
+#   same token covers both. Without the Browser Rendering scope, bot
+#   posts skip the screenshot and fall back to text + link.
+# - VIEWER_HMAC_KEY: random 32+ bytes; signs the public viewer URLs used
+#   by destinations configured with `:token` link auth. Required only
+#   when at least one chat destination uses `link_auth = token`.
 
 [observability.logs]
 enabled = true

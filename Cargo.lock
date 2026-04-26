@@ -49,7 +49,7 @@ dependencies = [
 [[package]]
 name = "botrelay"
 version = "0.1.0"
-source = "git+https://github.com/ananthb/botrelay-rs?branch=main#b5bb619f0c8a9223ffc9f8e1ec4957ad00d1be7a"
+source = "git+https://github.com/ananthb/botrelay-rs?branch=main#b203cde6f504d70272032d83126e8a1b46a4c4bb"
 dependencies = [
  "js-sys",
  "serde",

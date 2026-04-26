@@ -3,13 +3,17 @@
 
 use worker::*;
 
-use botrelay::discord::{ActionRow, Component, CreateMessage, DiscordBot, InteractionResponse};
+use botrelay::discord::{
+    ActionRow, Attachment, Component, CreateMessage, DiscordBot, InteractionResponse,
+};
 use botrelay::reply::ReplyContext;
-use botrelay::telegram::{SendMessage, TelegramBot};
+use botrelay::telegram::{SendMessage, SendPhoto, TelegramBot};
 
 use crate::db;
 use crate::email::send;
-use crate::types::{BotChannel, BotForward, OutboundEmail};
+use crate::manage::viewer;
+use crate::screenshot;
+use crate::types::{BotChannel, BotForward, OutboundEmail, ViewerAuth};
 
 /// Which chat destinations are currently available, based on whether the
 /// relevant bot secrets are present.
@@ -47,6 +51,11 @@ fn discord_bot(env: &Env) -> Option<DiscordBot> {
 
 /// Execute a [`BotForward`]: post the content to the right channel and save
 /// a [`ReplyContext`] for the webhook side to pick up.
+///
+/// When the forward carries an HTML body and Browser Rendering is
+/// configured, the post includes a screenshot of the email; otherwise it
+/// falls back to text only. Either way the body ends with a link to the
+/// stored email's viewer URL (when one is available).
 pub async fn dispatch(env: &Env, forward: &BotForward) -> Result<()> {
     let database = env.d1("DB")?;
     let ctx = ReplyContext {
@@ -54,7 +63,8 @@ pub async fn dispatch(env: &Env, forward: &BotForward) -> Result<()> {
         original_sender: forward.original_sender.clone(),
         subject: forward.subject.clone(),
     };
-    let body = render_body(forward);
+    let viewer_url = build_viewer_url(env, forward);
+    let screenshot = render_screenshot_or_log(env, forward).await;
 
     match &forward.channel {
         BotChannel::Telegram { chat_id } => {
@@ -65,14 +75,30 @@ pub async fn dispatch(env: &Env, forward: &BotForward) -> Result<()> {
                     return Ok(());
                 }
             };
-            let msg = bot
-                .send_message(SendMessage {
-                    chat_id: chat_id.clone(),
-                    text: body,
-                    disable_preview: Some(true),
-                    ..Default::default()
-                })
-                .await?;
+            let msg = match screenshot {
+                Some(png) => {
+                    let caption = render_body(forward, viewer_url.as_deref(), TG_CAPTION_MAX);
+                    bot.send_photo(SendPhoto {
+                        chat_id: chat_id.clone(),
+                        photo: png,
+                        photo_filename: "email.png".into(),
+                        photo_content_type: "image/png".into(),
+                        caption: Some(caption),
+                        ..Default::default()
+                    })
+                    .await?
+                }
+                None => {
+                    let text = render_body(forward, viewer_url.as_deref(), TG_TEXT_MAX);
+                    bot.send_message(SendMessage {
+                        chat_id: chat_id.clone(),
+                        text,
+                        disable_preview: Some(true),
+                        ..Default::default()
+                    })
+                    .await?
+                }
+            };
             let key = ReplyContext::telegram_key(chat_id, msg.message_id);
             db::save_bot_ctx(&database, &key, &ctx).await?;
             Ok(())
@@ -85,19 +111,27 @@ pub async fn dispatch(env: &Env, forward: &BotForward) -> Result<()> {
                     return Ok(());
                 }
             };
-            let msg = bot
-                .create_message(
-                    channel_id,
-                    CreateMessage {
-                        content: body,
-                        components: vec![ActionRow::new(vec![Component::primary_button(
-                            format!("reply:dc:{channel_id}"),
-                            "Reply",
-                        )])],
-                        ..Default::default()
-                    },
-                )
-                .await?;
+            let body = render_body(forward, viewer_url.as_deref(), DC_TEXT_MAX);
+            let params = CreateMessage {
+                content: body,
+                components: vec![ActionRow::new(vec![Component::primary_button(
+                    format!("reply:dc:{channel_id}"),
+                    "Reply",
+                )])],
+                ..Default::default()
+            };
+            let msg = match screenshot {
+                Some(png) => {
+                    let attachments = vec![Attachment {
+                        filename: "email.png".into(),
+                        content_type: "image/png".into(),
+                        bytes: png,
+                    }];
+                    bot.create_message_with_attachments(channel_id, params, &attachments)
+                        .await?
+                }
+                None => bot.create_message(channel_id, params).await?,
+            };
             let key = ReplyContext::discord_key(channel_id, &msg.id);
             db::save_bot_ctx(&database, &key, &ctx).await?;
             Ok(())
@@ -105,19 +139,85 @@ pub async fn dispatch(env: &Env, forward: &BotForward) -> Result<()> {
     }
 }
 
-/// Render the body we post to a chat. Keep it simple: who from, subject,
-/// then the text body (truncated if huge).
-fn render_body(forward: &BotForward) -> String {
-    const MAX: usize = 3500; // Telegram limits messages to 4096 chars; keep headroom.
-    let mut text = forward.text.clone();
-    if text.chars().count() > MAX {
-        text.truncate(MAX);
-        text.push_str("\n… (truncated)");
+const TG_TEXT_MAX: usize = 3500; // Telegram message hard limit is 4096; leave headroom.
+const TG_CAPTION_MAX: usize = 1024; // Telegram photo caption hard limit.
+const DC_TEXT_MAX: usize = 1900; // Discord message hard limit is 2000.
+
+/// Construct the chat-post body: header lines + truncated text snippet +
+/// optional viewer link line. `max` caps the total character count so the
+/// caller can pick a value appropriate to the destination's hard limit.
+fn render_body(forward: &BotForward, viewer_url: Option<&str>, max: usize) -> String {
+    let header = format!(
+        "From: {}\nTo: {}\nSubject: {}",
+        forward.original_sender, forward.alias, forward.subject
+    );
+    let link_line = viewer_url
+        .map(|url| format!("\n\nView full email → {url}"))
+        .unwrap_or_default();
+
+    // Reserve space for the header and link; the snippet uses what's left.
+    let header_len = header.chars().count();
+    let link_len = link_line.chars().count();
+    // 2 chars for the blank line between header and body.
+    let snippet_budget = max
+        .saturating_sub(header_len)
+        .saturating_sub(link_len)
+        .saturating_sub(2);
+
+    let mut snippet: String = forward.text.chars().take(snippet_budget).collect();
+    if forward.text.chars().count() > snippet_budget {
+        // Trim back to leave room for the truncation marker.
+        let marker = "… (truncated)";
+        let marker_len = marker.chars().count();
+        if snippet.chars().count() > marker_len {
+            let keep = snippet.chars().count() - marker_len;
+            snippet = snippet.chars().take(keep).collect::<String>() + marker;
+        }
     }
-    format!(
-        "From: {}\nTo: {}\nSubject: {}\n\n{}",
-        forward.original_sender, forward.alias, forward.subject, text
-    )
+
+    format!("{header}\n\n{snippet}{link_line}")
+}
+
+/// Resolve the viewer URL for a forward, or `None` when one can't be built
+/// (no stored message id, or token mode requested but no signing key).
+fn build_viewer_url(env: &Env, forward: &BotForward) -> Option<String> {
+    if forward.message_id.is_empty() {
+        return None;
+    }
+    let base = env
+        .var("PUBLIC_BASE_URL")
+        .ok()
+        .map(|s| s.to_string())
+        .unwrap_or_default();
+    let base = base.trim_end_matches('/');
+    if base.is_empty() {
+        return None;
+    }
+    match forward.link_auth {
+        ViewerAuth::Access => Some(format!("{base}/manage/m/{}", forward.message_id)),
+        ViewerAuth::Token => {
+            let key = env.secret("VIEWER_HMAC_KEY").ok()?.to_string();
+            let token = viewer::sign_id(&key, &forward.message_id);
+            Some(format!("{base}/m/{}?t={token}", forward.message_id))
+        }
+    }
+}
+
+/// Best-effort screenshot. Returns `None` (and logs) on any failure so the
+/// dispatcher falls back to a text-only post rather than dropping the email.
+async fn render_screenshot_or_log(env: &Env, forward: &BotForward) -> Option<Vec<u8>> {
+    let html = forward.html.as_deref()?;
+    if html.is_empty() {
+        return None;
+    }
+    let sanitized = crate::sanitize::sanitize_email_html(html);
+    match screenshot::render_email_png(env, &sanitized).await {
+        Ok(bytes) => Some(bytes),
+        Err(e) => {
+            console_log!("screenshot render failed (falling back to text): {e}");
+            None
+        }
+    }
 }
 
 // ========================================================================
@@ -298,10 +398,13 @@ mod tests {
             alias: "a@d".into(),
             subject: "S".into(),
             text: huge,
+            message_id: String::new(),
+            html: None,
+            link_auth: Default::default(),
         };
-        let out = render_body(&f);
+        let out = render_body(&f, None, TG_TEXT_MAX);
         assert!(out.contains("truncated"));
-        assert!(out.chars().count() < 4096);
+        assert!(out.chars().count() <= TG_TEXT_MAX);
     }
 
     #[test]
@@ -314,10 +417,57 @@ mod tests {
             alias: "shop@kedi.dev".into(),
             subject: "Order".into(),
             text: "Body".into(),
+            message_id: String::new(),
+            html: None,
+            link_auth: Default::default(),
         };
-        let out = render_body(&f);
+        let out = render_body(&f, None, TG_TEXT_MAX);
         assert!(out.starts_with("From: alice@example.org\n"));
         assert!(out.contains("To: shop@kedi.dev\n"));
         assert!(out.contains("Subject: Order\n\nBody"));
+    }
+
+    #[test]
+    fn render_body_appends_viewer_link_when_provided() {
+        let f = BotForward {
+            channel: BotChannel::Telegram {
+                chat_id: "1".into(),
+            },
+            original_sender: "s@x".into(),
+            alias: "a@d".into(),
+            subject: "S".into(),
+            text: "Body".into(),
+            message_id: "abc".into(),
+            html: None,
+            link_auth: Default::default(),
+        };
+        let out = render_body(&f, Some("https://x.test/m/abc"), TG_TEXT_MAX);
+        assert!(out.ends_with("View full email → https://x.test/m/abc"));
+    }
+
+    #[test]
+    fn render_body_caption_budget_respected() {
+        let huge = "y".repeat(5_000);
+        let f = BotForward {
+            channel: BotChannel::Telegram {
+                chat_id: "1".into(),
+            },
+            original_sender: "s@x".into(),
+            alias: "a@d".into(),
+            subject: "S".into(),
+            text: huge,
+            message_id: "abc".into(),
+            html: None,
+            link_auth: Default::default(),
+        };
+        let url = "https://x.test/m/abc?t=tok";
+        let out = render_body(&f, Some(url), TG_CAPTION_MAX);
+        assert!(
+            out.chars().count() <= TG_CAPTION_MAX,
+            "len {}",
+            out.chars().count()
+        );
+        assert!(out.ends_with(url));
+        assert!(out.contains("truncated"));
     }
 }

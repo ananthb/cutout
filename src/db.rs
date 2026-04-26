@@ -87,6 +87,46 @@ pub async fn save_message(
     Ok(())
 }
 
+/// A `messages` row sufficient to render the viewer header card and locate
+/// the body in R2.
+#[derive(Clone, Debug)]
+pub struct MessageMeta {
+    pub sender: String,
+    pub recipient: String,
+    pub subject: String,
+    pub r2_key: String,
+    pub created_at: Option<String>,
+}
+
+#[derive(Deserialize)]
+struct MessageMetaRow {
+    sender: String,
+    recipient: String,
+    subject: String,
+    r2_key: String,
+    created_at: Option<String>,
+}
+
+/// Fetch the metadata row for a stored message; returns `None` when the id
+/// is unknown.
+pub async fn get_message_meta(db: &D1Database, id: &str) -> Result<Option<MessageMeta>> {
+    let row = db
+        .prepare(
+            "SELECT sender, recipient, subject, r2_key, created_at \
+             FROM messages WHERE id = ?",
+        )
+        .bind(&[id.into()])?
+        .first::<MessageMetaRow>(None)
+        .await?;
+    Ok(row.map(|r| MessageMeta {
+        sender: r.sender,
+        recipient: r.recipient,
+        subject: r.subject,
+        r2_key: r.r2_key,
+        created_at: r.created_at,
+    }))
+}
+
 #[derive(Deserialize)]
 struct ReplyContextRow {
     alias_address: String,
