@@ -94,7 +94,41 @@ wrangler queues create cutout-retries-dlq</code></pre>
 <h2><span class="step-num">08</span> Protect <code>/manage</code> with Cloudflare Access</h2>
 <p>The management UI must not be public. Create an Access application whose policy covers <code>cutout.&lt;yourdomain&gt;/manage/*</code> (or whichever route you mapped to the worker). Copy the application's <strong>AUD tag</strong> and your team domain into the <code>CF_ACCESS_AUD</code> and <code>CF_ACCESS_TEAM</code> GitHub Secrets, then re-run the deploy workflow so the worker picks them up.</p>
 
-<h2><span class="step-num">09</span> Add routing rules</h2>
+<h2><span class="step-num">09</span> Optional: enable Telegram and Discord destinations</h2>
+<p>Skip this step if you only want to forward to email. The <code>/manage</code> editor only offers a chat channel as a destination kind once the relevant bot secrets are set on the Worker. Use <code>wrangler secret put</code> from your fork's checkout (the dev shell has wrangler):</p>
+
+<h3>Telegram</h3>
+<ol>
+  <li>Talk to <a href="https://t.me/BotFather">@BotFather</a> on Telegram and create a bot. Copy the <strong>HTTP API token</strong>.</li>
+  <li>Set the token as a Worker secret:
+    <pre><code>nix develop --command wrangler secret put TELEGRAM_BOT_TOKEN -c wrangler.production.toml</code></pre>
+  </li>
+  <li><em>Optional but recommended.</em> Set a webhook secret so only Telegram can post to your worker:
+    <pre><code>nix develop --command wrangler secret put TELEGRAM_WEBHOOK_SECRET -c wrangler.production.toml</code></pre>
+  </li>
+  <li>Register the webhook with Telegram (replace <code>&lt;TOKEN&gt;</code> and <code>&lt;HOST&gt;</code>; the <code>secret_token</code> param is only needed if you set <code>TELEGRAM_WEBHOOK_SECRET</code>):
+    <pre><code>curl -X POST "https://api.telegram.org/bot&lt;TOKEN&gt;/setWebhook" \
+  -d "url=https://&lt;HOST&gt;/telegram/webhook" \
+  -d "secret_token=&lt;WEBHOOK_SECRET&gt;"</code></pre>
+  </li>
+  <li>Add the bot to each chat or channel you want messages forwarded to. To find a chat's <code>chat_id</code>, post anything in the chat then visit <code>https://api.telegram.org/bot&lt;TOKEN&gt;/getUpdates</code>: the integer (negative for groups, positive for DMs) is what you put in a rule destination as <code>telegram:&lt;chat_id&gt;</code>.</li>
+</ol>
+
+<h3>Discord</h3>
+<ol>
+  <li>Open the <a href="https://discord.com/developers/applications">Discord Developer Portal</a> and create an application. Under <strong>Bot</strong>, reset and copy the <strong>token</strong>. Under <strong>General Information</strong>, copy the <strong>Application ID</strong> and <strong>Public Key</strong>.</li>
+  <li>Set all three as Worker secrets:
+    <pre><code>nix develop --command wrangler secret put DISCORD_BOT_TOKEN -c wrangler.production.toml
+nix develop --command wrangler secret put DISCORD_APP_ID -c wrangler.production.toml
+nix develop --command wrangler secret put DISCORD_PUBLIC_KEY -c wrangler.production.toml</code></pre>
+  </li>
+  <li>Back in the developer portal, set the <strong>Interactions Endpoint URL</strong> (under <strong>General Information</strong>) to <code>https://&lt;your-cutout-host&gt;/discord/interactions</code>. Discord pings this URL with a verification request: with the public key in place, the worker responds correctly and the URL saves.</li>
+  <li>Invite the bot to your server via OAuth2 (scope <code>bot</code>, permission <strong>Send Messages</strong> for the target channels).</li>
+  <li>For each Discord channel you want forwarded messages in, copy its <strong>Channel ID</strong> (Discord <strong>Settings &rsaquo; Advanced &rsaquo; Developer Mode</strong>, then right-click channel <strong>&rsaquo; Copy Channel ID</strong>) and use it in a rule destination as <code>discord:&lt;channel_id&gt;</code>.</li>
+</ol>
+<p>Telegram replies (Telegram's native reply) and Discord replies (the Reply button on each forwarded message) route back through Cutout to the original email sender, so the chat client becomes a fully functional mailbox for that thread.</p>
+
+<h2><span class="step-num">10</span> Add routing rules</h2>
 <p>Visit <code>https://&lt;your-cutout-host&gt;/manage</code>. Add Forward rules using glob patterns on the local part and domain. For email destinations, use the <strong>Proxy via rewrite mode</strong> toggle to ensure <code>Reply-To</code> works when replying via your custom domain (see <a href="how-it-works.html">How it works</a> for the tradeoffs).</p>
 
 <h2>Updating</h2>
