@@ -168,7 +168,8 @@ pub async fn create_rule(mut req: Request, env: &Env) -> Result<Response> {
         label: form
             .get("label")
             .and_then(|v| v.as_str())
-            .unwrap_or("New rule")
+            .unwrap_or("")
+            .trim()
             .to_string(),
     };
 
@@ -214,8 +215,8 @@ pub async fn update_rule(mut req: Request, env: &Env, rule_id: &str) -> Result<R
         existing.label = form
             .get("label")
             .and_then(|v| v.as_str())
-            .unwrap_or(&existing.label)
-            .to_string();
+            .map(|s| s.trim().to_string())
+            .unwrap_or_else(|| existing.label.clone());
         existing.local_pattern = form
             .get("local_pattern")
             .and_then(|v| v.as_str())

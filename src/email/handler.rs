@@ -90,7 +90,7 @@ pub async fn handle_email(
         Some(rule) => {
             let result = execute_action(
                 &rule.action,
-                &rule.label,
+                &rule.display_label(),
                 from,
                 to,
                 raw_bytes,

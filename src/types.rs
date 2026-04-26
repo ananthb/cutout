@@ -19,6 +19,70 @@ impl Rule {
     pub fn is_catch_all(&self) -> bool {
         self.local_pattern == "*" && self.domain_pattern == "*"
     }
+
+    /// User-provided label if non-empty, otherwise an auto-generated one
+    /// derived from pattern + action.
+    pub fn display_label(&self) -> String {
+        let trimmed = self.label.trim();
+        if !trimmed.is_empty() {
+            return trimmed.to_string();
+        }
+        self.auto_label()
+    }
+
+    /// Generate a semantic label from the rule's pattern and action.
+    /// Examples: "Catch-all", "*@example.com → Telegram",
+    /// "news@*.org → Email + Discord", "*@example.com → drop".
+    pub fn auto_label(&self) -> String {
+        let is_catch = self.is_catch_all();
+        match (&self.action, is_catch) {
+            (Action::Drop, true) => "Catch-all".to_string(),
+            (action, _) => {
+                let prefix = if is_catch {
+                    "Catch-all".to_string()
+                } else {
+                    format!("{}@{}", self.local_pattern, self.domain_pattern)
+                };
+                let suffix = match action {
+                    Action::Drop => "drop".to_string(),
+                    Action::Store { .. } => "store".to_string(),
+                    Action::Forward { destinations, .. } => {
+                        if destinations.is_empty() {
+                            "forward (no destinations)".to_string()
+                        } else {
+                            format_channels(destinations)
+                        }
+                    }
+                };
+                format!("{prefix} → {suffix}")
+            }
+        }
+    }
+}
+
+/// Render a destination list as a compact channel summary.
+/// "Email", "Email + Telegram", "Email ×3 + Discord", etc.
+fn format_channels(destinations: &[Destination]) -> String {
+    let (mut email, mut telegram, mut discord) = (0usize, 0usize, 0usize);
+    for d in destinations {
+        match d {
+            Destination::Email { .. } => email += 1,
+            Destination::Telegram { .. } => telegram += 1,
+            Destination::Discord { .. } => discord += 1,
+        }
+    }
+    let mut parts: Vec<String> = Vec::new();
+    let push = |parts: &mut Vec<String>, n: usize, name: &str| {
+        if n == 1 {
+            parts.push(name.to_string());
+        } else if n > 1 {
+            parts.push(format!("{name} ×{n}"));
+        }
+    };
+    push(&mut parts, email, "Email");
+    push(&mut parts, telegram, "Telegram");
+    push(&mut parts, discord, "Discord");
+    parts.join(" + ")
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug)]

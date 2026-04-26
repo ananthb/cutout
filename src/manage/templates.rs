@@ -101,7 +101,7 @@ code { font-family: var(--font-mono); font-size: 0.88em; }
 /* page shell -------------------------------------------------------- */
 .workbench-shell {
   display: flex; flex-direction: column;
-  min-height: 100vh;
+  height: 100vh;
 }
 .topbar {
   display: flex; align-items: center; justify-content: space-between;
@@ -147,6 +147,7 @@ code { font-family: var(--font-mono); font-size: 0.88em; }
   background: var(--bg-1);
   display: flex; flex-direction: column;
   min-height: 0;
+  overflow-y: auto;
 }
 .pipeline-pane > header {
   padding: 12px 16px; border-bottom: 1px solid var(--line);
@@ -260,6 +261,12 @@ code { font-family: var(--font-mono); font-size: 0.88em; }
   font-family: var(--font-mono); font-size: 13px; font-weight: 500;
 }
 .inspector-body { padding: 24px; display: flex; flex-direction: column; gap: 18px; }
+.inspector-body .rule-scope {
+  display: flex; flex-direction: column; gap: 14px;
+  border-left: 2px solid color-mix(in oklch, var(--accent) 55%, var(--line));
+  padding-left: 14px;
+  margin-left: -2px;
+}
 
 .stat-strip {
   display: grid; grid-template-columns: repeat(4, 1fr);
@@ -677,6 +684,27 @@ function ruleEditor(initial) {
     draft: '',
     err: '',
     enabled: initial.enabled || [],
+    local: initial.local || '*',
+    domain: initial.domain || '*',
+    autoLabel() {
+      const isCatch = this.local === '*' && this.domain === '*';
+      if (this.action === 'drop' && isCatch) return 'Catch-all';
+      const prefix = isCatch ? 'Catch-all' : (this.local + '@' + this.domain);
+      let suffix;
+      if (this.action === 'drop') suffix = 'drop';
+      else if (this.action === 'store') suffix = 'store';
+      else if (this.chips.length === 0) suffix = 'forward (no destinations)';
+      else {
+        const counts = { email: 0, telegram: 0, discord: 0 };
+        this.chips.forEach(c => { counts[c.kind] = (counts[c.kind] || 0) + 1; });
+        const labels = { email: 'Email', telegram: 'Telegram', discord: 'Discord' };
+        suffix = ['email', 'telegram', 'discord']
+          .filter(k => counts[k] > 0)
+          .map(k => counts[k] === 1 ? labels[k] : labels[k] + ' \u00d7' + counts[k])
+          .join(' + ');
+      }
+      return prefix + ' \u2192 ' + suffix;
+    },
     serialize() { return this.chips.map(c => c.kind + ':' + c.value).join('\n'); },
     parse(raw) {
       const text = raw.trim();
@@ -1170,7 +1198,7 @@ fn pipeline_card(rule: &Rule, index: usize, selected: bool) -> String {
 </a>"##,
         id = html_escape(&rule.id),
         order = index + 1,
-        label = html_escape(&rule.label),
+        label = html_escape(&rule.display_label()),
         pattern = pattern_html(&rule.local_pattern, &rule.domain_pattern),
     )
 }
@@ -1370,17 +1398,19 @@ fn inspector_pane(
     <div style="display:flex;gap:6px;flex-shrink:0">{edit_btn}{delete_btn}</div>
   </div>
   <div class="inspector-body">
-    {stat_strip}
-    {issues_card}
-    {destinations_card}
-    {action_summary_card}
+    <div class="rule-scope">
+      {stat_strip}
+      {issues_card}
+      {destinations_card}
+      {action_summary_card}
+    </div>
     {top_senders_card}
     {sandbox}
     {selected_form}
   </div>
 </section>"##,
         id = html_escape(&rule.id),
-        label = html_escape(&rule.label),
+        label = html_escape(&rule.display_label()),
         pattern = pattern_html(&rule.local_pattern, &rule.domain_pattern),
     )
 }
@@ -1693,7 +1723,7 @@ fn inspector_tester(all_rules: &[Rule], _selected: &Rule) -> String {
                 "id": r.id,
                 "local": r.local_pattern,
                 "domain": r.domain_pattern,
-                "label": r.label,
+                "label": r.display_label(),
                 "action": action,
             })
         })
@@ -1872,6 +1902,8 @@ fn editor_modal(
         "action": action_type,
         "chips": chips_json,
         "enabled": enabled_kinds,
+        "local": local,
+        "domain": domain,
     })
     .to_string();
     let init_attr = html_escape(&init_json);
@@ -1893,15 +1925,15 @@ fn editor_modal(
     @submit="onSubmit($event)">
     <div class="modal-body">
       <div class="field">
-        <label>Label</label>
-        <input class="input" name="label" type="text" value="{label}" placeholder="e.g. Newsletter drop" required style="font-family:var(--font-sans)">
+        <label>Label <span class="help" style="text-transform:none;letter-spacing:0;font-family:var(--font-sans);font-size:11px;color:var(--fg-3);font-weight:400">optional</span></label>
+        <input class="input" name="label" type="text" value="{label}" :placeholder="autoLabel()" style="font-family:var(--font-sans)">
       </div>
       <div class="field">
         <label>Pattern</label>
         <div class="pat-input">
-          <input name="local_pattern" type="text" value="{local}" placeholder="*" required>
+          <input name="local_pattern" type="text" value="{local}" placeholder="*" required x-model="local">
           <span class="at">@</span>
-          <input name="domain_pattern" type="text" value="{domain}" placeholder="*" required>
+          <input name="domain_pattern" type="text" value="{domain}" placeholder="*" required x-model="domain">
         </div>
         <span class="help"><span style="color:var(--accent)">*</span> matches anything: <span style="color:var(--accent)">?</span> matches one char</span>
       </div>
