@@ -129,6 +129,8 @@ fn row_to_pending(row: PendingRow) -> Result<PendingDispatch> {
 pub async fn insert_pending(db: &D1Database, p: &PendingDispatch) -> Result<()> {
     let actions_json = serde_json::to_string(&p.pending_actions)
         .map_err(|e| Error::from(format!("encode pending_actions: {e}")))?;
+    // D1 binds reject `bigint`; use `f64` so wasm_bindgen produces a
+    // regular JS Number for the integer columns.
     db.prepare(
         "INSERT INTO pending_dispatches \
          (id, sender, recipient, rule_id, r2_key, pending_actions, attempts, last_error, dead_lettered) \
@@ -141,9 +143,9 @@ pub async fn insert_pending(db: &D1Database, p: &PendingDispatch) -> Result<()> 
         p.rule_id.clone().into(),
         p.r2_key.clone().into(),
         actions_json.into(),
-        (p.attempts as i64).into(),
+        (p.attempts as f64).into(),
         p.last_error.clone().into(),
-        (p.dead_lettered as i64).into(),
+        (if p.dead_lettered { 1.0_f64 } else { 0.0_f64 }).into(),
     ])?
     .run()
     .await?;
@@ -235,7 +237,7 @@ pub async fn list_pending(db: &D1Database, limit: u32) -> Result<Vec<PendingDisp
              ORDER BY dead_lettered DESC, updated_at DESC \
              LIMIT ?",
         )
-        .bind(&[(limit as i64).into()])?
+        .bind(&[(limit as f64).into()])?
         .all()
         .await?;
     let rows: Vec<PendingRow> = result.results()?;
