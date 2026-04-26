@@ -202,8 +202,11 @@ fn parse_aggregates(json: &Value, stats: &mut Stats7d) {
             "store" => stats.stored_total += n,
             _ => {}
         }
-        // Per-rule rollup excludes rejects/replies; matches = forward + drop + store.
-        if matches!(event_type, "forward" | "drop" | "store") && rule_id != "-" {
+        // Per-rule rollup counts every event where the rule fired, regardless
+        // of dispatch outcome: forward (all destinations OK), drop, store, and
+        // error (rule matched but at least one destination failed). Reply and
+        // reject have no rule_id so they're filtered by the `!= "-"` guard.
+        if matches!(event_type, "forward" | "drop" | "store" | "error") && rule_id != "-" {
             let entry = stats.by_rule.entry(rule_id).or_default();
             entry.matches += n;
             entry.last_match_s = Some(match entry.last_match_s {
@@ -257,6 +260,30 @@ mod tests {
         assert_eq!(s.by_rule.get("r2").unwrap().matches, 7);
         // No-match drops aren't attributed to any rule
         assert!(s.by_rule.get("-").is_none());
+    }
+
+    #[test]
+    fn aggregates_count_partial_failures_in_per_rule_matches() {
+        // A rule whose dispatch had at least one destination fail is recorded
+        // as event_type=error. Those still need to show up in matches /
+        // last_match for the rule (it did fire), but not in the global
+        // forwarded/dropped/stored totals.
+        let json: Value = serde_json::from_str(
+            r#"{
+                "data": [
+                    {"rule_id":"r1","event_type":"forward","n":2,"last_ts":1700},
+                    {"rule_id":"r1","event_type":"error","n":3,"last_ts":1900}
+                ]
+            }"#,
+        )
+        .unwrap();
+        let mut s = Stats7d::default();
+        parse_aggregates(&json, &mut s);
+        assert_eq!(s.forwarded_total, 2);
+        assert_eq!(s.dropped_total, 0);
+        let r1 = s.by_rule.get("r1").unwrap();
+        assert_eq!(r1.matches, 5);
+        assert_eq!(r1.last_match_s, Some(1900));
     }
 
     #[test]
