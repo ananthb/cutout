@@ -4,9 +4,11 @@ use worker::*;
 
 use super::templates;
 use crate::bots::EnabledChannels;
+use crate::db;
 use crate::events;
 use crate::helpers::generate_id;
 use crate::kv;
+use crate::r2;
 use crate::stats;
 use crate::types::*;
 use crate::validation;
@@ -329,4 +331,64 @@ pub async fn brand_mark() -> Result<Response> {
     headers.set("Content-Type", "image/svg+xml")?;
     headers.set("Cache-Control", "public, max-age=86400")?;
     Ok(resp)
+}
+
+/// GET /manage/pending: full HTML page listing queued + dead-lettered rows.
+pub async fn list_pending(env: &Env) -> Result<Response> {
+    let database = env.d1("DB")?;
+    let rows = db::list_pending(&database, 200).await?;
+    let html = templates::pending_page(&rows);
+    Response::from_html(html)
+}
+
+/// GET /manage/pending/count: tiny JSON for the live-feed widget. Kept
+/// separate from `/manage/events` so the widget poll doesn't have to parse
+/// the whole event buffer.
+pub async fn pending_count(env: &Env) -> Result<Response> {
+    let database = env.d1("DB")?;
+    let (queued, dead) = db::count_pending(&database).await?;
+    let body = serde_json::json!({ "queued": queued, "dead_lettered": dead });
+    let mut resp = Response::from_json(&body)?;
+    resp.headers_mut().set("Cache-Control", "no-store")?;
+    Ok(resp)
+}
+
+/// POST /manage/pending/{id}/retry: re-publish to `cutout-retries`. The
+/// consumer will pick it up on the next batch and re-run the dispatch.
+pub async fn retry_pending(env: &Env, id: &str) -> Result<Response> {
+    let database = env.d1("DB")?;
+    let pending = match db::load_pending(&database, id).await? {
+        Some(p) => p,
+        None => return Response::error("Not Found", 404),
+    };
+    // If the row was previously dead-lettered we want a clean second life:
+    // clear the flag and reset attempts so the backoff schedule starts over.
+    if pending.dead_lettered {
+        database
+            .prepare(
+                "UPDATE pending_dispatches \
+                 SET dead_lettered = 0, attempts = 0, updated_at = CURRENT_TIMESTAMP \
+                 WHERE id = ?",
+            )
+            .bind(&[id.into()])?
+            .run()
+            .await?;
+    }
+    let queue = env.queue("RETRIES")?;
+    queue.send(&RetryMsg { id: id.to_string() }).await?;
+    Response::ok("requeued")
+}
+
+/// POST /manage/pending/{id}/discard: delete the row + its R2 object. Used
+/// to cut a dead-lettered email loose; the operator has decided not to
+/// re-attempt it.
+pub async fn discard_pending(env: &Env, id: &str) -> Result<Response> {
+    let database = env.d1("DB")?;
+    let pending = match db::load_pending(&database, id).await? {
+        Some(p) => p,
+        None => return Response::error("Not Found", 404),
+    };
+    db::delete_pending(&database, id).await?;
+    r2::delete(env, &pending.r2_key).await.ok();
+    Response::ok("discarded")
 }

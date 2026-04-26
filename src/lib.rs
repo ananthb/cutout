@@ -42,11 +42,14 @@ use worker::*;
 
 mod bots;
 mod db;
+mod dlq;
 mod email;
 mod events;
 mod helpers;
 pub mod kv;
 mod manage;
+mod r2;
+mod retries;
 mod stats;
 mod types;
 mod validation;
@@ -115,47 +118,73 @@ pub async fn email(
         .await
         .map_err(|e| JsValue::from_str(&format!("Email handler error: {e}")))?;
 
-    let mut channels: Vec<String> = Vec::new();
+    let mut succeeded_channels: Vec<String> = Vec::new();
+    let mut failed_actions: Vec<types::PendingAction> = Vec::new();
+    let mut errors: Vec<String> = Vec::new();
+    let mut event_kind = outcome.event_kind;
+    let rule_id = outcome.matched_rule_id.clone();
 
     match outcome.result {
         types::EmailResult::Dispatch(dispatch) => {
-            if dispatch.forward_email.is_some() || !dispatch.send_emails.is_empty() {
-                channels.push("email".into());
-            }
-            for f in &dispatch.bot_forwards {
-                let label = match &f.channel {
-                    types::BotChannel::Telegram { .. } => "telegram",
-                    types::BotChannel::Discord { .. } => "discord",
-                };
-                if !channels.iter().any(|c| c == label) {
-                    channels.push(label.into());
+            // Native EmailMessage.forward() — synchronously, only available here.
+            if let Some(instr) = &dispatch.forward_email {
+                match try_native_forward(&message, instr).await {
+                    Ok(()) => push_unique(&mut succeeded_channels, "email"),
+                    Err(e) => {
+                        errors.push(format!("native forward to {}: {e}", instr.destination));
+                        // Convert to a structured send for retry; we do not
+                        // have an IncomingEmailMessage handle on the queue
+                        // consumer side.
+                        let parsed = email::mime::parse_email(&raw_bytes);
+                        let structured =
+                            email::handler::structured_from_native(parsed.as_ref(), instr);
+                        failed_actions.push(types::PendingAction::SendEmail(structured));
+                    }
                 }
             }
 
-            if let Some(instr) = &dispatch.forward_email {
-                let headers = web_sys::Headers::new()
-                    .map_err(|e| JsValue::from_str(&format!("Headers::new: {e:?}")))?;
-                headers
-                    .set("Reply-To", &instr.reply_to)
-                    .map_err(|e| JsValue::from_str(&format!("set Reply-To: {e:?}")))?;
-                headers
-                    .set("X-Cutout-Forwarded", "1")
-                    .map_err(|e| JsValue::from_str(&format!("set X-Cutout-Forwarded: {e:?}")))?;
-                headers
-                    .set("X-Original-From", &instr.original_from)
-                    .map_err(|e| JsValue::from_str(&format!("set X-Original-From: {e:?}")))?;
-
-                let promise = message.forward(&instr.destination, &headers);
-                wasm_bindgen_futures::JsFuture::from(promise).await?;
-            }
             for outbound in &dispatch.send_emails {
-                email::send::send_outbound(&worker_env, outbound)
-                    .await
-                    .map_err(|e| JsValue::from_str(&format!("send_outbound: {e}")))?;
+                match email::send::send_outbound(&worker_env, outbound).await {
+                    Ok(()) => push_unique(&mut succeeded_channels, "email"),
+                    Err(e) => {
+                        errors.push(format!("send_email to {}: {e}", outbound.to));
+                        failed_actions.push(types::PendingAction::SendEmail(outbound.clone()));
+                    }
+                }
             }
+
             for forward in &dispatch.bot_forwards {
-                if let Err(e) = bots::dispatch(&worker_env, forward).await {
-                    console_log!("bot dispatch failed: {e}");
+                let label = match &forward.channel {
+                    types::BotChannel::Telegram { .. } => "telegram",
+                    types::BotChannel::Discord { .. } => "discord",
+                };
+                match bots::dispatch(&worker_env, forward).await {
+                    Ok(()) => push_unique(&mut succeeded_channels, label),
+                    Err(e) => {
+                        errors.push(format!("bot {label}: {e}"));
+                        failed_actions.push(types::PendingAction::Bot(forward.clone()));
+                    }
+                }
+            }
+
+            if !failed_actions.is_empty() {
+                event_kind = events::EventKind::Error;
+                if let Err(e) = enqueue_for_retry(
+                    &worker_env,
+                    &raw_bytes,
+                    &from,
+                    &to,
+                    rule_id.as_deref(),
+                    &failed_actions,
+                    &errors.join("; "),
+                )
+                .await
+                {
+                    // If we couldn't even persist the retry row, we have no
+                    // durable record. Log loudly so the operator knows the
+                    // email is genuinely lost rather than queued.
+                    console_log!("CRITICAL: enqueue_for_retry failed: {e}; failed_actions lost");
+                    errors.push(format!("enqueue failed: {e}"));
                 }
             }
         }
@@ -167,23 +196,90 @@ pub async fn email(
         }
     }
 
-    // Record event after dispatch executes so channel/size reflect what
-    // actually happened. Failures in the analytics path must not affect
-    // the email's outcome.
+    let error_text = if errors.is_empty() {
+        None
+    } else {
+        Some(errors.join("; "))
+    };
     let event = events::Event {
         ts: events::now_ms(),
-        kind: outcome.event_kind,
+        kind: event_kind,
         from: from.clone(),
         to: to.clone(),
-        rule_id: outcome.matched_rule_id,
-        channels,
+        rule_id,
+        channels: succeeded_channels,
         size_bytes,
+        error: error_text,
     };
     if let Ok(kv) = worker_env.kv("KV") {
         if let Err(e) = events::record(&worker_env, &kv, &event).await {
             console_log!("event record failed: {e}");
         }
     }
+
+    Ok(())
+}
+
+fn push_unique(channels: &mut Vec<String>, label: &str) {
+    if !channels.iter().any(|c| c == label) {
+        channels.push(label.into());
+    }
+}
+
+async fn try_native_forward(
+    message: &IncomingEmailMessage,
+    instr: &types::ForwardInstruction,
+) -> std::result::Result<(), String> {
+    let headers = web_sys::Headers::new().map_err(|e| format!("Headers::new: {e:?}"))?;
+    headers
+        .set("Reply-To", &instr.reply_to)
+        .map_err(|e| format!("set Reply-To: {e:?}"))?;
+    headers
+        .set("X-Cutout-Forwarded", "1")
+        .map_err(|e| format!("set X-Cutout-Forwarded: {e:?}"))?;
+    headers
+        .set("X-Original-From", &instr.original_from)
+        .map_err(|e| format!("set X-Original-From: {e:?}"))?;
+    let promise = message.forward(&instr.destination, &headers);
+    wasm_bindgen_futures::JsFuture::from(promise)
+        .await
+        .map_err(|e| email::send::describe_js_error(&e))?;
+    Ok(())
+}
+
+/// Persist `raw_bytes` to R2, write a `pending_dispatches` row carrying the
+/// still-failing actions, and publish the row id to the `cutout-retries`
+/// queue. Returns `Err` only if the operation truly couldn't be durably
+/// recorded, in which case the caller logs and the inbound is lost.
+async fn enqueue_for_retry(
+    env: &Env,
+    raw_bytes: &[u8],
+    sender: &str,
+    recipient: &str,
+    rule_id: Option<&str>,
+    failed_actions: &[types::PendingAction],
+    last_error: &str,
+) -> Result<()> {
+    let id = uuid::Uuid::new_v4().to_string();
+    let r2_key = r2::pending_key(&id);
+    r2::put(env, &r2_key, raw_bytes).await?;
+
+    let database = env.d1("DB")?;
+    let pending = types::PendingDispatch {
+        id: id.clone(),
+        sender: sender.to_string(),
+        recipient: recipient.to_string(),
+        rule_id: rule_id.map(str::to_string),
+        r2_key,
+        pending_actions: failed_actions.to_vec(),
+        attempts: 0,
+        last_error: Some(last_error.to_string()),
+        dead_lettered: false,
+    };
+    db::insert_pending(&database, &pending).await?;
+
+    let queue = env.queue("RETRIES")?;
+    queue.send(&types::RetryMsg { id }).await?;
 
     Ok(())
 }
@@ -211,5 +307,22 @@ async fn fetch(req: Request, env: Env, _ctx: Context) -> Result<Response> {
         }
         p if p.starts_with("/manage") => manage::handle_manage(req, env, p, method).await,
         _ => Response::error("Not Found", 404),
+    }
+}
+
+/// Queue consumer dispatcher. Two queues land on the same worker:
+/// - `cutout-retries`     → re-run a previously-failed dispatch.
+/// - `cutout-retries-dlq` → terminal handling: send DSN to original sender,
+///   mark the row dead-lettered.
+#[event(queue)]
+async fn queue(batch: MessageBatch<types::RetryMsg>, env: Env, _ctx: Context) -> Result<()> {
+    console_error_panic_hook::set_once();
+    match batch.queue().as_str() {
+        "cutout-retries" => retries::handle(batch, env).await,
+        "cutout-retries-dlq" => dlq::handle(batch, env).await,
+        other => {
+            console_log!("queue handler: unknown queue {other}");
+            Ok(())
+        }
     }
 }

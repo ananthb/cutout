@@ -3,11 +3,13 @@
 use worker::d1::*;
 use worker::*;
 
-use super::{forward, mime, routing};
+use super::{forward, mime, routing, send};
 use crate::db;
 use crate::events::EventKind;
 use crate::kv;
+use crate::r2;
 use crate::types::*;
+use crate::{bots, types};
 
 /// What `handle_email` decided to do with an inbound message, plus the
 /// metadata needed to record an event after the dispatch executes.
@@ -29,6 +31,7 @@ pub async fn handle_email(
 ) -> Result<EmailOutcome> {
     let kv_store = env.kv("KV")?;
     let database = env.d1("DB")?;
+    let env_for_store = env;
 
     // Split recipient into local@domain
     let (local, domain) = match to.rsplit_once('@') {
@@ -92,6 +95,7 @@ pub async fn handle_email(
                 to,
                 raw_bytes,
                 &database,
+                env_for_store,
                 &domain,
             )
             .await?;
@@ -132,6 +136,7 @@ async fn execute_action(
     to: &str,
     raw_bytes: &[u8],
     database: &D1Database,
+    env: &Env,
     domain: &str,
 ) -> Result<EmailResult> {
     match action {
@@ -244,18 +249,10 @@ async fn execute_action(
                     .as_ref()
                     .map(|p| p.subject.clone())
                     .unwrap_or_default();
-                let text = parsed.as_ref().and_then(|p| p.text_body.clone());
-                let html = parsed.as_ref().and_then(|p| p.html_body.clone());
-
-                db::save_message(
-                    database,
-                    from,
-                    to,
-                    &subject,
-                    text.as_deref(),
-                    html.as_deref(),
-                )
-                .await?;
+                let id = uuid::Uuid::new_v4().to_string();
+                let key = r2::message_key(&id);
+                r2::put(env, &key, raw_bytes).await?;
+                db::save_message(database, &id, from, to, &subject, &key).await?;
             }
             Ok(EmailResult::Drop)
         }
@@ -357,6 +354,54 @@ async fn handle_reverse_alias(
         headers,
     });
     Ok(EmailResult::Dispatch(dispatch))
+}
+
+/// Convert a still-failing [`ForwardInstruction`] into the equivalent
+/// [`OutboundEmail`]: the queue consumer cannot replay native
+/// `EmailMessage.forward()` because there is no `IncomingEmailMessage`
+/// handle on the consumer side, so the only durable retry is via
+/// structured `send_email`.
+pub fn structured_from_native(
+    parsed: Option<&mime::ParsedEmail>,
+    instr: &ForwardInstruction,
+) -> OutboundEmail {
+    structured_forward_email(
+        parsed,
+        &instr.reply_to,
+        &instr.destination,
+        &instr.original_from,
+    )
+}
+
+/// Replay a list of pending actions. Returns `(still_failing, errors)`.
+/// Used by the `cutout-retries` queue consumer.
+pub async fn execute_pending_actions(
+    env: &Env,
+    actions: &[PendingAction],
+) -> (Vec<PendingAction>, Vec<String>) {
+    let mut still_failing = Vec::new();
+    let mut errors = Vec::new();
+    for action in actions {
+        match action {
+            PendingAction::SendEmail(out) => {
+                if let Err(e) = send::send_outbound(env, out).await {
+                    errors.push(format!("send_email to {}: {}", out.to, e));
+                    still_failing.push(action.clone());
+                }
+            }
+            PendingAction::Bot(forward) => {
+                let label = match &forward.channel {
+                    types::BotChannel::Telegram { .. } => "telegram",
+                    types::BotChannel::Discord { .. } => "discord",
+                };
+                if let Err(e) = bots::dispatch(env, forward).await {
+                    errors.push(format!("bot {label}: {e}"));
+                    still_failing.push(action.clone());
+                }
+            }
+        }
+    }
+    (still_failing, errors)
 }
 
 #[cfg(test)]

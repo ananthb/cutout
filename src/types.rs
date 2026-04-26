@@ -162,6 +162,7 @@ pub struct ReverseAlias {
 
 /// A single outbound email to send via the EMAIL binding.
 /// Cloudflare Email Service expects structured fields, not raw RFC 2822 bytes.
+#[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct OutboundEmail {
     pub from: String,
     pub to: String,
@@ -189,6 +190,7 @@ pub struct ForwardInstruction {
 /// Bot-channel forward: send the parsed email content to a chat via the
 /// relevant bot API. The caller saves a [`botrelay::ReplyContext`] keyed by
 /// the returned message id so replies route back.
+#[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct BotForward {
     pub channel: BotChannel,
     pub original_sender: String,
@@ -197,10 +199,43 @@ pub struct BotForward {
     pub text: String,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Serialize, Deserialize, Clone, Debug)]
+#[serde(tag = "kind", rename_all = "snake_case")]
 pub enum BotChannel {
     Telegram { chat_id: String },
     Discord { channel_id: String },
+}
+
+/// One outstanding destination on a queued retry. We do NOT carry the native
+/// `EmailMessage.forward()` path here because the queue consumer has no
+/// `IncomingEmailMessage` handle: instead, the original handler converts a
+/// failed native forward into a structured [`OutboundEmail`] before queueing.
+#[derive(Serialize, Deserialize, Clone, Debug)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum PendingAction {
+    SendEmail(OutboundEmail),
+    Bot(BotForward),
+}
+
+/// Queue payload for `cutout-retries` and `cutout-retries-dlq`. Carries only
+/// the row id; the consumer hydrates the full state from D1 + R2.
+#[derive(Serialize, Deserialize, Clone, Debug)]
+pub struct RetryMsg {
+    pub id: String,
+}
+
+/// Hydrated `pending_dispatches` row.
+#[derive(Clone, Debug)]
+pub struct PendingDispatch {
+    pub id: String,
+    pub sender: String,
+    pub recipient: String,
+    pub rule_id: Option<String>,
+    pub r2_key: String,
+    pub pending_actions: Vec<PendingAction>,
+    pub attempts: u32,
+    pub last_error: Option<String>,
+    pub dead_lettered: bool,
 }
 
 /// Result of email processing: drives action in the wasm_bindgen email() export.

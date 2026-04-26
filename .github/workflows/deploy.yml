@@ -48,6 +48,25 @@ jobs:
           database_name = "cutout-db"
           database_id = "${D1_DATABASE_ID}"
 
+          [[r2_buckets]]
+          binding = "EMAILS"
+          bucket_name = "cutout-emails"
+
+          [[queues.producers]]
+          binding = "RETRIES"
+          queue   = "cutout-retries"
+
+          [[queues.consumers]]
+          queue              = "cutout-retries"
+          max_batch_size     = 5
+          max_batch_timeout  = 10
+          max_retries        = 8
+          dead_letter_queue  = "cutout-retries-dlq"
+
+          [[queues.consumers]]
+          queue          = "cutout-retries-dlq"
+          max_batch_size = 5
+
           [[analytics_engine_datasets]]
           binding = "EVENTS"
           dataset = "cutout_events"

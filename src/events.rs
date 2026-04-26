@@ -32,10 +32,14 @@ pub enum EventKind {
     Drop,
     /// Reverse-alias reply routed back to the original sender.
     Reply,
-    /// Inbound mail rejected at SMTP (loop detected, unknown reverse alias, …).
+    /// Inbound mail rejected at SMTP (loop detected, unknown reverse alias, ...).
     Reject,
     /// Inbound mail stored in database.
     Store,
+    /// Rule matched and dispatch was attempted, but at least one downstream
+    /// step (native forward, send_email, or bot post) failed. The `error`
+    /// field on [`Event`] carries the failure detail.
+    Error,
 }
 
 impl EventKind {
@@ -46,6 +50,7 @@ impl EventKind {
             EventKind::Reply => "reply",
             EventKind::Reject => "reject",
             EventKind::Store => "store",
+            EventKind::Error => "error",
         }
     }
 }
@@ -62,6 +67,11 @@ pub struct Event {
     /// Channels actually dispatched to. Ordered email/telegram/discord.
     pub channels: Vec<String>,
     pub size_bytes: u64,
+    /// Failure detail when [`EventKind::Error`]: which destinations failed
+    /// and the upstream error string. `None` for non-error events. Skipped
+    /// during serialization when absent so older buffer entries round-trip.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
 }
 
 /// Append `event` to the ring buffer, truncating to [`MAX_EVENTS`].
@@ -156,7 +166,34 @@ mod tests {
             rule_id: Some("r1".into()),
             channels: vec!["email".into()],
             size_bytes: 100,
+            error: None,
         }
+    }
+
+    #[test]
+    fn event_kind_error_serializes() {
+        let s = serde_json::to_string(&EventKind::Error).unwrap();
+        assert_eq!(s, "\"error\"");
+        assert_eq!(EventKind::Error.as_str(), "error");
+    }
+
+    #[test]
+    fn event_with_error_round_trips() {
+        let mut e = ev(1);
+        e.kind = EventKind::Error;
+        e.error = Some("send_email failed: 500".into());
+        let s = serde_json::to_string(&e).unwrap();
+        assert!(s.contains("\"error\""));
+        assert!(s.contains("send_email failed"));
+        let back: Event = serde_json::from_str(&s).unwrap();
+        assert_eq!(back.kind, EventKind::Error);
+        assert_eq!(back.error.as_deref(), Some("send_email failed: 500"));
+    }
+
+    #[test]
+    fn event_without_error_omits_field() {
+        let s = serde_json::to_string(&ev(1)).unwrap();
+        assert!(!s.contains("error"));
     }
 
     #[test]

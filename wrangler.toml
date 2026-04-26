@@ -23,6 +23,39 @@ binding = "KV"
 name = "EMAIL"
 
 # ============================================================================
+# R2 bucket for raw email bytes: pending retries (`pending/<id>`) and
+# Store action persistence (`messages/<id>`). Successful synchronous
+# forwards do not touch R2.
+# ============================================================================
+[[r2_buckets]]
+binding = "EMAILS"
+bucket_name = "cutout-emails"
+
+# ============================================================================
+# Cloudflare Queues: retry pipeline for failed dispatches.
+#  - `cutout-retries` carries `{id}` payloads pointing at a pending_dispatches
+#    row; same script consumes it.
+#  - `cutout-retries-dlq` receives messages that exhausted retries; the same
+#    script's queue handler dispatches by queue name into the DLQ branch,
+#    which sends an RFC 3464 DSN to the original sender and marks the row
+#    dead-lettered.
+# ============================================================================
+[[queues.producers]]
+binding = "RETRIES"
+queue   = "cutout-retries"
+
+[[queues.consumers]]
+queue              = "cutout-retries"
+max_batch_size     = 5
+max_batch_timeout  = 10
+max_retries        = 8
+dead_letter_queue  = "cutout-retries-dlq"
+
+[[queues.consumers]]
+queue          = "cutout-retries-dlq"
+max_batch_size = 5
+
+# ============================================================================
 # Analytics Engine dataset for aggregated stats (forwarded/dropped 7d,
 # per-rule matches, top senders). Optional: if the dataset isn't created
 # the worker silently skips writes and the dashboard hides stats.

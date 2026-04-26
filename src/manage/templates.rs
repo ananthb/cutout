@@ -7,7 +7,7 @@
 use crate::bots::EnabledChannels;
 use crate::helpers::html_escape;
 use crate::stats::Stats7d;
-use crate::types::{Action, Destination, Rule};
+use crate::types::{Action, Destination, PendingDispatch, Rule};
 use crate::validation::Report;
 
 /// Cutout brand mark, inline. Filled bottom-right square interlocks with
@@ -340,6 +340,21 @@ code { font-family: var(--font-mono); font-size: 0.88em; }
 .live-row.k-drop .evt { color: var(--bad); }
 .live-row.k-reply .evt { color: var(--info); }
 .live-row.k-reject .evt { color: var(--warn); }
+.live-row.k-error .evt { color: var(--bad); }
+.live-row .err {
+  grid-column: 1 / -1;
+  font-size: 11px;
+  color: var(--bad);
+  margin-left: 88px;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.live-feed-bar .pending-pill {
+  margin-left: 8px;
+  font-size: 11px;
+  color: var(--bad);
+  text-decoration: none;
+}
+.live-feed-bar .pending-pill[data-empty="1"] { display: none; }
 .live-row .addr { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .live-row .arrow { color: var(--fg-3); }
 .live-row .chs { display: flex; gap: 3px; }
@@ -743,16 +758,25 @@ function liveFeed() {
     filter: 'all',
     collapsed: true,
     intervalId: null,
-    init() {},
+    pendingId: null,
+    pending: { queued: 0, dead: 0 },
+    init() { this.pollPending(); },
     start() {
       if (this.intervalId) return;
       this.poll(true);
       this.intervalId = setInterval(() => this.poll(false), 2000);
+      if (!this.pendingId) {
+        this.pendingId = setInterval(() => this.pollPending(), 10000);
+      }
     },
     stop() {
       if (this.intervalId) {
         clearInterval(this.intervalId);
         this.intervalId = null;
+      }
+      if (this.pendingId) {
+        clearInterval(this.pendingId);
+        this.pendingId = null;
       }
     },
     async poll(initial) {
@@ -769,6 +793,15 @@ function liveFeed() {
         }
         if (typeof j.now === 'number') this.lastTs = j.now;
       } catch (_) { /* swallow: polling will retry */ }
+    },
+    async pollPending() {
+      try {
+        const r = await fetch('/manage/pending/count', { credentials: 'same-origin' });
+        if (!r.ok) return;
+        const j = await r.json();
+        this.pending.queued = j.queued || 0;
+        this.pending.dead = j.dead_lettered || 0;
+      } catch (_) { /* swallow */ }
     },
     toggle() {
       this.collapsed = !this.collapsed;
@@ -899,10 +932,13 @@ const LIVE_FEED_PANE: &str = r##"<div class="live-feed" :class="{ collapsed }"
       <span x-text="collapsed ? 'paused: click to stream' : 'streaming'"></span>
     </span>
     <div class="filters" x-show="!collapsed">
-      <template x-for="f in ['all','forward','drop','reply','reject']" :key="f">
+      <template x-for="f in ['all','forward','drop','reply','reject','error']" :key="f">
         <button class="filter-chip" :class="{ active: filter === f }" @click="filter = f" x-text="f" type="button"></button>
       </template>
     </div>
+    <a class="pending-pill" href="/manage/pending"
+       :data-empty="(pending.queued + pending.dead) === 0 ? '1' : '0'"
+       x-text="`${pending.queued} queued · ${pending.dead} dead-lettered`"></a>
     <span class="mono" style="margin-left:auto;font-size:11px;color:var(--fg-2)" x-text="visible().length + ' events'"></span>
   </div>
   <div class="live-feed-body" x-show="!collapsed">
@@ -919,6 +955,7 @@ const LIVE_FEED_PANE: &str = r##"<div class="live-feed" :class="{ collapsed }"
           </template>
         </span>
         <span class="size" x-text="fmt_size(e.size_bytes)"></span>
+        <span class="err" x-show="e.error" :title="e.error" x-text="e.error"></span>
       </div>
     </template>
     <div x-show="visible().length === 0" class="empty">No events yet: they'll appear here as mail flows.</div>
@@ -1784,4 +1821,100 @@ fn editor_modal(
         local = html_escape(local),
         domain = html_escape(domain),
     )
+}
+
+/// /manage/pending: a flat table of queued + dead-lettered rows. Lets the
+/// operator see what's stuck in the retry pipeline and either kick a row
+/// back into the queue or discard it.
+pub fn pending_page(rows: &[PendingDispatch]) -> String {
+    let body_rows = if rows.is_empty() {
+        r#"<tr><td colspan="6" class="empty">No pending rows. Failed dispatches will appear here.</td></tr>"#.to_string()
+    } else {
+        rows.iter()
+            .map(|r| {
+                let kind = if r.dead_lettered { "dead" } else { "queued" };
+                let kind_label = if r.dead_lettered { "DEAD-LETTERED" } else { "queued" };
+                let err = r.last_error.as_deref().unwrap_or("");
+                format!(
+                    r##"<tr>
+                        <td><span class="pstatus k-{k}">{kl}</span></td>
+                        <td class="mono">{from} <span class="arrow">→</span> {to}</td>
+                        <td class="mono">{attempts} attempts</td>
+                        <td class="errcell" title="{err_full}">{err_short}</td>
+                        <td>
+                          <form method="post" action="/manage/pending/{id}/retry" style="display:inline">
+                            <button class="btn sm" type="submit">Retry</button>
+                          </form>
+                          <form method="post" action="/manage/pending/{id}/discard" style="display:inline"
+                                onsubmit="return confirm('Discard this email permanently?')">
+                            <button class="btn sm danger" type="submit">Discard</button>
+                          </form>
+                        </td>
+                    </tr>"##,
+                    k = kind,
+                    kl = kind_label,
+                    from = html_escape(&r.sender),
+                    to = html_escape(&r.recipient),
+                    attempts = r.attempts,
+                    err_full = html_escape(err),
+                    err_short = html_escape(if err.len() > 200 { &err[..200] } else { err }),
+                    id = html_escape(&r.id),
+                )
+            })
+            .collect::<String>()
+    };
+
+    let content = format!(
+        r##"<header class="topbar">
+  <a href="/manage" class="brandwrap">
+    <img src="/manage/assets/cutout-mark.svg" width="22" height="22" alt="">
+    <span class="brand">Cutout</span>
+  </a>
+  <span class="title">Pending dispatches</span>
+  <a href="/manage" class="btn ghost sm" style="margin-left:auto">← Back to rules</a>
+</header>
+<main class="pending-main">
+  <p class="lede">Rows here are inbound emails that hit a dispatch failure. The retry queue
+  re-runs them on a backoff; rows marked <strong>dead-lettered</strong> have exhausted retries
+  and the original sender has been notified by DSN.</p>
+  <table class="pending-table">
+    <thead>
+      <tr>
+        <th>Status</th>
+        <th>From → To</th>
+        <th>Attempts</th>
+        <th>Last error</th>
+        <th>Action</th>
+      </tr>
+    </thead>
+    <tbody>{body_rows}</tbody>
+  </table>
+</main>
+<style>
+.pending-main {{ max-width: 1100px; margin: 0 auto; padding: 24px 32px 60px; }}
+.pending-main .lede {{ font-size: 13.5px; color: var(--fg-1); margin: 0 0 18px; max-width: 720px; line-height: 1.5; }}
+.pending-table {{ width: 100%; border-collapse: collapse; font-size: 13px; }}
+.pending-table th, .pending-table td {{
+  padding: 10px 12px; text-align: left; border-bottom: 1px solid var(--line);
+  vertical-align: top;
+}}
+.pending-table th {{
+  font-family: var(--font-mono); text-transform: uppercase; font-size: 10.5px;
+  letter-spacing: 0.06em; color: var(--fg-2);
+}}
+.pending-table td.errcell {{
+  font-family: var(--font-mono); font-size: 11.5px; color: var(--bad);
+  max-width: 360px; overflow: hidden; text-overflow: ellipsis;
+}}
+.pending-table .empty {{ text-align: center; color: var(--fg-2); padding: 40px; }}
+.pstatus {{
+  display: inline-block; padding: 2px 8px; border-radius: 999px;
+  font-family: var(--font-mono); font-size: 10.5px; letter-spacing: 0.04em;
+}}
+.pstatus.k-queued {{ background: var(--info-soft); color: var(--info); }}
+.pstatus.k-dead   {{ background: var(--bad-soft); color: var(--bad); }}
+</style>"##,
+        body_rows = body_rows,
+    );
+    base_html("Pending", &content)
 }

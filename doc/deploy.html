@@ -45,17 +45,20 @@
 <p>Fork <a href="https://github.com/ananthb/cutout">ananthb/cutout</a> on GitHub into your own account or org.</p>
 
 <h2><span class="step-num">02</span> Create the Cloudflare resources</h2>
-<p>You need a KV namespace (rule storage) and a D1 database (reverse-alias mappings + bot reply contexts). Both must exist before the first deploy so you can supply their IDs.</p>
+<p>You need a KV namespace (rule storage), a D1 database (reverse-alias mappings + bot reply contexts), an R2 bucket (raw bytes for queued retries and Store-action persistence), and two queues (the retry pipeline and its dead-letter queue). All must exist before the first deploy so you can supply IDs and queue names.</p>
 <p>Clone your fork locally and use <code>wrangler</code> from the dev shell:</p>
 <pre><code>nix develop                      # or install wrangler manually
 wrangler kv namespace create KV
-wrangler d1 create cutout-db</code></pre>
-<p>Save the returned <code>id</code> (KV) and <code>database_id</code> (D1): you'll paste them into GitHub Secrets next.</p>
+wrangler d1 create cutout-db
+wrangler r2 bucket create cutout-emails
+wrangler queues create cutout-retries
+wrangler queues create cutout-retries-dlq</code></pre>
+<p>Save the returned <code>id</code> (KV) and <code>database_id</code> (D1): you'll paste them into GitHub Secrets next. The R2 bucket and queue names are referenced by name in <code>wrangler.toml</code>; no IDs to copy.</p>
 
 <h2><span class="step-num">03</span> Configure GitHub Secrets</h2>
 <p>In your fork: <strong>Settings &rsaquo; Secrets and variables &rsaquo; Actions</strong>. Add:</p>
 <ul>
-  <li><code>CLOUDFLARE_API_TOKEN</code>: token with <em>Workers Scripts: Edit</em>, <em>Workers KV Storage: Edit</em>, <em>D1: Edit</em>, and <em>Email Routing: Edit</em> permissions.</li>
+  <li><code>CLOUDFLARE_API_TOKEN</code>: token with <em>Workers Scripts: Edit</em>, <em>Workers KV Storage: Edit</em>, <em>D1: Edit</em>, <em>Workers R2 Storage: Edit</em>, <em>Cloudflare Queues: Edit</em>, and <em>Email Routing: Edit</em> permissions.</li>
   <li><code>CLOUDFLARE_ACCOUNT_ID</code>: your Cloudflare Account ID (visible in the dashboard sidebar).</li>
   <li><code>KV_NAMESPACE_ID</code>: the <code>id</code> from step 2.</li>
   <li><code>D1_DATABASE_ID</code>: the <code>database_id</code> from step 2.</li>

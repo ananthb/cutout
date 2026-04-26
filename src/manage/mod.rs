@@ -52,6 +52,18 @@ pub async fn handle_manage(req: Request, env: Env, path: &str, method: Method) -
         // GET /manage/events: JSON tail for the live feed
         (Method::Get, ["events"]) => handlers::list_events(req, &env).await,
 
+        // GET /manage/pending: list of rows in pending_dispatches (queued + dead-lettered)
+        (Method::Get, ["pending"]) => handlers::list_pending(&env).await,
+
+        // GET /manage/pending/count: small JSON for the live-feed widget
+        (Method::Get, ["pending", "count"]) => handlers::pending_count(&env).await,
+
+        // POST /manage/pending/{id}/retry: re-publish to cutout-retries
+        (Method::Post, ["pending", id, "retry"]) => handlers::retry_pending(&env, id).await,
+
+        // POST /manage/pending/{id}/discard: delete the row + R2 object
+        (Method::Post, ["pending", id, "discard"]) => handlers::discard_pending(&env, id).await,
+
         _ => Response::error("Not Found", 404),
     }
 }
