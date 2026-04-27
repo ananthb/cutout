@@ -147,10 +147,7 @@ async fn execute_action(
             Ok(EmailResult::Drop)
         }
 
-        Action::Forward {
-            destinations,
-            replace_reply_to,
-        } => {
+        Action::Forward { destinations } => {
             if destinations.is_empty() {
                 return Ok(EmailResult::Drop);
             }
@@ -203,8 +200,8 @@ async fn execute_action(
 
             for dest in destinations {
                 match dest {
-                    Destination::Email { address } => {
-                        if !replace_reply_to && email_count == 0 {
+                    Destination::Email { address, proxy } => {
+                        if !proxy && email_count == 0 {
                             dispatch.forward_email = Some(ForwardInstruction {
                                 destination: address.clone(),
                                 reply_to: reverse_addr.clone(),

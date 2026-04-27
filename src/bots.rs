@@ -261,14 +261,65 @@ pub async fn handle_telegram_webhook(mut req: Request, env: Env) -> Result<Respo
         None => return Response::ok("ignored"),
     };
 
+    let database = env.d1("DB")?;
+    let chat_id_str = msg.chat.id.to_string();
+    let text_trim = msg.text.as_deref().map(str::trim).unwrap_or("");
+
+    // /start: capture this chat as a destination autofill candidate.
+    if text_trim == "/start" || text_trim.starts_with("/start ") {
+        let from = msg.from.as_ref();
+        db::save_recent_telegram_chat(
+            &database,
+            &chat_id_str,
+            &msg.chat.chat_type,
+            msg.chat.title.as_deref(),
+            msg.chat.username.as_deref(),
+            from.map(|u| u.id),
+            from.and_then(|u| u.username.as_deref()),
+            from.and_then(|u| u.first_name.as_deref()),
+        )
+        .await?;
+        if let Some(bot) = telegram_bot(&env) {
+            let text = format!(
+                "Registered. This chat's id is {chat_id_str}.\n\
+                 It now appears as autofill in the cutout rule editor.\n\
+                 Send /stop to unregister."
+            );
+            bot.send_message(SendMessage {
+                chat_id: chat_id_str.clone(),
+                text,
+                disable_preview: Some(true),
+                ..Default::default()
+            })
+            .await
+            .ok();
+        }
+        return Response::ok("registered");
+    }
+
+    // /stop: drop this chat from the autofill list.
+    if text_trim == "/stop" {
+        db::delete_recent_telegram_chat(&database, &chat_id_str).await?;
+        if let Some(bot) = telegram_bot(&env) {
+            bot.send_message(SendMessage {
+                chat_id: chat_id_str.clone(),
+                text: "Unregistered. Send /start to re-register.".to_string(),
+                disable_preview: Some(true),
+                ..Default::default()
+            })
+            .await
+            .ok();
+        }
+        return Response::ok("unregistered");
+    }
+
     // Only reply-to-message updates trigger routing.
     let reply_to = match &msg.reply_to_message {
         Some(r) => r,
         None => return Response::ok("ignored"),
     };
 
-    let database = env.d1("DB")?;
-    let key = ReplyContext::telegram_key(&msg.chat.id.to_string(), reply_to.message_id);
+    let key = ReplyContext::telegram_key(&chat_id_str, reply_to.message_id);
     let stored = match db::get_bot_ctx(&database, &key).await? {
         Some(c) => c,
         None => {

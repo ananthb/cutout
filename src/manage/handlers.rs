@@ -98,20 +98,7 @@ fn parse_action(form: &serde_json::Value) -> std::result::Result<Action, String>
                 .and_then(|v| v.as_str())
                 .unwrap_or("");
             let destinations = Destination::parse_list(raw)?;
-            let replace_reply_to = form
-                .get("replace_reply_to")
-                .and_then(|v| {
-                    if v.is_boolean() {
-                        v.as_bool()
-                    } else {
-                        v.as_str().map(|s| s == "true" || s == "on")
-                    }
-                })
-                .unwrap_or(false);
-            Ok(Action::Forward {
-                destinations,
-                replace_reply_to,
-            })
+            Ok(Action::Forward { destinations })
         }
         "store" => {
             let persist = form
@@ -432,6 +419,17 @@ pub async fn list_events(req: Request, env: &Env) -> Result<Response> {
     let mut resp = Response::from_json(&body)?;
     let headers = resp.headers_mut();
     headers.set("Cache-Control", "no-store")?;
+    Ok(resp)
+}
+
+/// GET /manage/api/recent-telegram-chats: JSON list of chats that have sent
+/// `/start` to the bot, newest first. Capped at 20 entries; the rule editor's
+/// destination autofill consumes this.
+pub async fn recent_telegram_chats(env: &Env) -> Result<Response> {
+    let database = env.d1("DB")?;
+    let chats = db::list_recent_telegram_chats(&database, 20).await?;
+    let mut resp = Response::from_json(&chats)?;
+    resp.headers_mut().set("Cache-Control", "no-store")?;
     Ok(resp)
 }
 

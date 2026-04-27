@@ -1,4 +1,4 @@
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Deserializer, Serialize};
 
 /// A routing rule. Rules are stored as an ordered `Vec<Rule>` in KV.
 /// Evaluated top-to-bottom; first match wins.
@@ -85,15 +85,12 @@ fn format_channels(destinations: &[Destination]) -> String {
     parts.join(" + ")
 }
 
-#[derive(Serialize, Deserialize, Clone, Debug)]
+#[derive(Serialize, Clone, Debug)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum Action {
     /// Forward inbound mail to one or more destinations (mixed-channel).
-    Forward {
-        destinations: Vec<Destination>,
-        #[serde(default)]
-        replace_reply_to: bool,
-    },
+    /// Reply-to rewriting is per-destination (see [`Destination::Email::proxy`]).
+    Forward { destinations: Vec<Destination> },
     /// Silently drop.
     Drop,
     /// Store message for later retrieval.
@@ -101,6 +98,48 @@ pub enum Action {
         #[serde(default)]
         persist: bool,
     },
+}
+
+// Wire format for `Action`, including the legacy `replace_reply_to` field.
+// Older KV blobs may carry `replace_reply_to: true` at the action level; on
+// load we fan that out into per-`Email` `proxy` flags and drop the field.
+// Newer writes go directly through `Action`'s `Serialize` impl, which never
+// emits this field.
+#[derive(Deserialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+enum ActionWire {
+    Forward {
+        destinations: Vec<Destination>,
+        #[serde(default)]
+        replace_reply_to: bool,
+    },
+    Drop,
+    Store {
+        #[serde(default)]
+        persist: bool,
+    },
+}
+
+impl<'de> Deserialize<'de> for Action {
+    fn deserialize<D: Deserializer<'de>>(de: D) -> Result<Self, D::Error> {
+        Ok(match ActionWire::deserialize(de)? {
+            ActionWire::Forward {
+                mut destinations,
+                replace_reply_to,
+            } => {
+                if replace_reply_to {
+                    for d in destinations.iter_mut() {
+                        if let Destination::Email { proxy, .. } = d {
+                            *proxy = true;
+                        }
+                    }
+                }
+                Action::Forward { destinations }
+            }
+            ActionWire::Drop => Action::Drop,
+            ActionWire::Store { persist } => Action::Store { persist },
+        })
+    }
 }
 
 /// Which URL is embedded in a chat-channel forward as the "View full email"
@@ -138,9 +177,17 @@ impl ViewerAuth {
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum Destination {
-    /// Forward to an email address via Cloudflare's `EmailMessage.forward()`.
-    /// Recipient must be in the zone's Email Routing Destination Addresses.
-    Email { address: String },
+    /// Forward to an email address. With `proxy = false` (default) the message
+    /// is delivered via Cloudflare's `EmailMessage.forward()`, preserving the
+    /// original `From` so the recipient sees the underlying sender. With
+    /// `proxy = true` the forward is rewritten so the `From` and `Reply-To`
+    /// route through the reverse alias, hiding the recipient's address from
+    /// further direct contact.
+    Email {
+        address: String,
+        #[serde(default)]
+        proxy: bool,
+    },
     /// Forward to a Telegram chat via bot `sendMessage`.
     Telegram {
         chat_id: String,
@@ -168,7 +215,7 @@ impl Destination {
     /// The address/id value as a display string.
     pub fn value(&self) -> &str {
         match self {
-            Destination::Email { address } => address,
+            Destination::Email { address, .. } => address,
             Destination::Telegram { chat_id, .. } => chat_id,
             Destination::Discord { channel_id, .. } => channel_id,
         }
@@ -204,12 +251,22 @@ impl Destination {
         }
         match kind.trim().to_lowercase().as_str() {
             "email" => {
-                let value = rest.to_string();
+                // Optional `:proxy` suffix selects reply-to rewriting.
+                let (value, modifier) = match rest.rsplit_once(':') {
+                    Some((v, m)) if !m.trim().is_empty() => (v.trim().to_string(), m.trim()),
+                    _ => (rest.to_string(), ""),
+                };
                 if !value.contains('@') || value.starts_with('@') || value.ends_with('@') {
                     return Err("email address must contain '@'");
                 }
+                let proxy = match modifier.to_lowercase().as_str() {
+                    "" => false,
+                    "proxy" => true,
+                    _ => return Err("email modifier must be 'proxy'"),
+                };
                 Ok(Some(Destination::Email {
                     address: value.to_lowercase(),
+                    proxy,
                 }))
             }
             "telegram" | "tg" => {
@@ -270,16 +327,28 @@ impl Destination {
     }
 
     /// Format a list of destinations as newline-separated `kind:value` lines,
-    /// suitable for round-tripping through [`Destination::parse_list`]. Chat
-    /// destinations append `:token` only when the link auth is non-default.
+    /// suitable for round-tripping through [`Destination::parse_list`]. Each
+    /// destination appends a per-kind modifier when non-default: `:proxy` for
+    /// email, `:token` for chat destinations.
     pub fn format_list(destinations: &[Destination]) -> String {
         destinations
             .iter()
-            .map(|d| match d.link_auth() {
-                Some(ViewerAuth::Token) => {
-                    format!("{}:{}:token", d.kind_label(), d.value())
-                }
-                _ => format!("{}:{}", d.kind_label(), d.value()),
+            .map(|d| match d {
+                Destination::Email {
+                    address,
+                    proxy: true,
+                } => format!("email:{address}:proxy"),
+                Destination::Email { address, .. } => format!("email:{address}"),
+                Destination::Telegram {
+                    chat_id,
+                    link_auth: ViewerAuth::Token,
+                } => format!("telegram:{chat_id}:token"),
+                Destination::Telegram { chat_id, .. } => format!("telegram:{chat_id}"),
+                Destination::Discord {
+                    channel_id,
+                    link_auth: ViewerAuth::Token,
+                } => format!("discord:{channel_id}:token"),
+                Destination::Discord { channel_id, .. } => format!("discord:{channel_id}"),
             })
             .collect::<Vec<_>>()
             .join("\n")
@@ -419,8 +488,9 @@ pub enum EmailResult {
 /// Bot forwards fan out to Telegram/Discord.
 #[derive(Default)]
 pub struct Dispatch {
-    /// At most one: assigned to the first email destination if replace_reply_to
-    /// is false, ensuring high fidelity (PGP/attachments preserved).
+    /// At most one: assigned to the first non-proxy email destination,
+    /// ensuring high fidelity (PGP/attachments preserved). Subsequent or
+    /// proxy email destinations go through `send_emails` instead.
     pub forward_email: Option<ForwardInstruction>,
     /// Email destinations sent via structured `send_email`.
     pub send_emails: Vec<OutboundEmail>,
@@ -446,9 +516,30 @@ mod tests {
         assert_eq!(
             d,
             Destination::Email {
-                address: "foo@bar.com".into()
+                address: "foo@bar.com".into(),
+                proxy: false,
             }
         );
+    }
+
+    #[test]
+    fn parse_email_with_proxy() {
+        let d = Destination::parse_line("email:foo@bar.com:proxy")
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            d,
+            Destination::Email {
+                address: "foo@bar.com".into(),
+                proxy: true,
+            }
+        );
+    }
+
+    #[test]
+    fn rejects_unknown_email_modifier() {
+        let err = Destination::parse_line("email:foo@bar.com:token").unwrap_err();
+        assert!(err.contains("email modifier"), "got: {err}");
     }
 
     #[test]
@@ -599,14 +690,94 @@ mod tests {
         let a = Action::Forward {
             destinations: vec![Destination::Email {
                 address: "a@b".into(),
+                proxy: true,
             }],
-            replace_reply_to: true,
         };
         let j = serde_json::to_value(&a).unwrap();
         assert_eq!(j["type"], "forward");
         assert_eq!(j["destinations"][0]["kind"], "email");
         assert_eq!(j["destinations"][0]["address"], "a@b");
-        assert_eq!(j["replace_reply_to"], true);
+        assert_eq!(j["destinations"][0]["proxy"], true);
+        assert!(j.get("replace_reply_to").is_none());
+    }
+
+    #[test]
+    fn legacy_replace_reply_to_fans_out_to_proxy() {
+        // KV blobs written before the per-destination modifier landed carry
+        // the action-level `replace_reply_to` flag. Loading them must promote
+        // every email destination to `proxy = true`.
+        let legacy = serde_json::json!({
+            "type": "forward",
+            "destinations": [
+                {"kind": "email", "address": "a@b.com"},
+                {"kind": "email", "address": "c@d.com"},
+                {"kind": "telegram", "chat_id": "42"},
+            ],
+            "replace_reply_to": true,
+        });
+        let a: Action = serde_json::from_value(legacy).unwrap();
+        match a {
+            Action::Forward { destinations } => {
+                assert_eq!(destinations.len(), 3);
+                assert_eq!(
+                    destinations[0],
+                    Destination::Email {
+                        address: "a@b.com".into(),
+                        proxy: true,
+                    }
+                );
+                assert_eq!(
+                    destinations[1],
+                    Destination::Email {
+                        address: "c@d.com".into(),
+                        proxy: true,
+                    }
+                );
+                assert!(matches!(destinations[2], Destination::Telegram { .. }));
+            }
+            _ => panic!("expected forward"),
+        }
+    }
+
+    #[test]
+    fn legacy_without_replace_reply_to_keeps_proxy_false() {
+        let legacy = serde_json::json!({
+            "type": "forward",
+            "destinations": [
+                {"kind": "email", "address": "a@b.com"},
+            ],
+        });
+        let a: Action = serde_json::from_value(legacy).unwrap();
+        match a {
+            Action::Forward { destinations } => assert_eq!(
+                destinations[0],
+                Destination::Email {
+                    address: "a@b.com".into(),
+                    proxy: false,
+                }
+            ),
+            _ => panic!("expected forward"),
+        }
+    }
+
+    #[test]
+    fn format_emits_proxy_modifier() {
+        let dests = vec![
+            Destination::Email {
+                address: "a@b.com".into(),
+                proxy: true,
+            },
+            Destination::Email {
+                address: "c@d.com".into(),
+                proxy: false,
+            },
+        ];
+        assert_eq!(
+            Destination::format_list(&dests),
+            "email:a@b.com:proxy\nemail:c@d.com"
+        );
+        let parsed = Destination::parse_list(&Destination::format_list(&dests)).unwrap();
+        assert_eq!(parsed, dests);
     }
 
     #[test]

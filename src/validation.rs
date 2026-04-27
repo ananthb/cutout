@@ -89,11 +89,7 @@ pub fn validate(rules: &[Rule], enabled: &EnabledChannels) -> Report {
 
         // Forward action must have destinations; each destination's channel
         // must be enabled.
-        if let Action::Forward {
-            destinations,
-            replace_reply_to: _,
-        } = &rule.action
-        {
+        if let Action::Forward { destinations } = &rule.action {
             if destinations.is_empty() {
                 report.issues[i].push(Issue::Error(
                     "Forward action needs at least one destination".into(),
@@ -229,8 +225,8 @@ mod tests {
         Action::Forward {
             destinations: vec![Destination::Email {
                 address: dest.into(),
+                proxy: false,
             }],
-            replace_reply_to: false,
         }
     }
 
@@ -320,7 +316,6 @@ mod tests {
             "y",
             Action::Forward {
                 destinations: vec![],
-                replace_reply_to: false,
             },
         )];
         let report = validate(&rules, &all_enabled());
@@ -399,7 +394,6 @@ mod tests {
                     chat_id: "-100123".into(),
                     link_auth: Default::default(),
                 }],
-                replace_reply_to: false,
             },
         )];
         let disabled = EnabledChannels {
@@ -426,7 +420,6 @@ mod tests {
                     channel_id: "42".into(),
                     link_auth: Default::default(),
                 }],
-                replace_reply_to: false,
             },
         )];
         let disabled = EnabledChannels {
@@ -459,7 +452,6 @@ mod tests {
                         link_auth: Default::default(),
                     },
                 ],
-                replace_reply_to: false,
             },
         )];
         let report = validate(&rules, &all_enabled());

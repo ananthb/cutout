@@ -11,6 +11,24 @@ CREATE TABLE IF NOT EXISTS reverse_mappings (
 );
 CREATE INDEX IF NOT EXISTS idx_reverse_mappings_id ON reverse_mappings(id);
 
+-- Self-registered Telegram chats: written when a user sends /start to the
+-- bot, deleted when they send /stop. Surfaces in the rule editor as
+-- destination-field autofill so the operator doesn't have to look up the
+-- chat_id out of band.
+CREATE TABLE IF NOT EXISTS recent_telegram_chats (
+    chat_id TEXT PRIMARY KEY,
+    chat_type TEXT NOT NULL,
+    title TEXT,
+    username TEXT,
+    from_user_id INTEGER,
+    from_username TEXT,
+    from_first_name TEXT,
+    registered_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+);
+CREATE INDEX IF NOT EXISTS idx_recent_telegram_chats_updated
+    ON recent_telegram_chats(updated_at DESC);
+
 -- Durable bot reply contexts
 CREATE TABLE IF NOT EXISTS bot_reply_contexts (
     key TEXT PRIMARY KEY, -- 'tg:<chat_id>:<msg_id>' or 'dc:<channel_id>:<msg_id>'

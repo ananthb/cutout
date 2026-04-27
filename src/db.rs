@@ -47,6 +47,105 @@ pub struct StoredReplyContext {
     pub inbound_references: Option<String>,
 }
 
+/// One row of [`list_recent_telegram_chats`]. `label` is a human-readable
+/// fallback chain: chat title, then username, then sender's first name, then
+/// the chat_id. Used in the rule editor's destination-field autofill.
+#[derive(Clone, Debug, serde::Serialize)]
+pub struct RecentTelegramChat {
+    pub chat_id: String,
+    pub label: String,
+}
+
+#[derive(Deserialize)]
+struct RecentTelegramChatRow {
+    chat_id: String,
+    title: Option<String>,
+    username: Option<String>,
+    from_first_name: Option<String>,
+}
+
+#[allow(clippy::too_many_arguments)]
+pub async fn save_recent_telegram_chat(
+    db: &D1Database,
+    chat_id: &str,
+    chat_type: &str,
+    title: Option<&str>,
+    username: Option<&str>,
+    from_user_id: Option<i64>,
+    from_username: Option<&str>,
+    from_first_name: Option<&str>,
+) -> Result<()> {
+    db.prepare(
+        "INSERT INTO recent_telegram_chats \
+         (chat_id, chat_type, title, username, from_user_id, from_username, from_first_name) \
+         VALUES (?, ?, ?, ?, ?, ?, ?) \
+         ON CONFLICT(chat_id) DO UPDATE SET \
+            chat_type = excluded.chat_type, \
+            title = excluded.title, \
+            username = excluded.username, \
+            from_user_id = excluded.from_user_id, \
+            from_username = excluded.from_username, \
+            from_first_name = excluded.from_first_name, \
+            updated_at = CURRENT_TIMESTAMP",
+    )
+    .bind(&[
+        chat_id.into(),
+        chat_type.into(),
+        title.into(),
+        username.into(),
+        from_user_id.map(|v| v as f64).into(),
+        from_username.into(),
+        from_first_name.into(),
+    ])?
+    .run()
+    .await?;
+    Ok(())
+}
+
+pub async fn delete_recent_telegram_chat(db: &D1Database, chat_id: &str) -> Result<()> {
+    db.prepare("DELETE FROM recent_telegram_chats WHERE chat_id = ?")
+        .bind(&[chat_id.into()])?
+        .run()
+        .await?;
+    Ok(())
+}
+
+pub async fn list_recent_telegram_chats(
+    db: &D1Database,
+    limit: u32,
+) -> Result<Vec<RecentTelegramChat>> {
+    let result = db
+        .prepare(
+            "SELECT chat_id, title, username, from_first_name \
+             FROM recent_telegram_chats \
+             ORDER BY updated_at DESC \
+             LIMIT ?",
+        )
+        .bind(&[(limit as f64).into()])?
+        .all()
+        .await?;
+    let rows: Vec<RecentTelegramChatRow> = result.results()?;
+    Ok(rows
+        .into_iter()
+        .map(|r| {
+            let label = r
+                .title
+                .filter(|s| !s.is_empty())
+                .or_else(|| {
+                    r.username
+                        .filter(|s| !s.is_empty())
+                        .map(|s| format!("@{s}"))
+                })
+                .or_else(|| r.from_first_name.filter(|s| !s.is_empty()))
+                .unwrap_or_else(|| r.chat_id.clone());
+            RecentTelegramChat {
+                chat_id: r.chat_id,
+                label,
+            }
+        })
+        .collect())
+}
+
 pub async fn save_bot_ctx(
     db: &D1Database,
     key: &str,

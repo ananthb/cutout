@@ -9,7 +9,7 @@ use crate::db::MessageListItem;
 use crate::helpers::html_escape;
 use crate::manage::viewer::RenderedEmail;
 use crate::stats::Stats7d;
-use crate::types::{Action, Destination, PendingDispatch, Rule};
+use crate::types::{Action, Destination, PendingDispatch, Rule, ViewerAuth};
 use crate::validation::Report;
 
 /// Cutout brand mark, inline. Filled bottom-right square interlocks with
@@ -730,6 +730,35 @@ code { font-family: var(--font-mono); font-size: 0.88em; }
 .chip-error { display: none; font-size: 11.5px; padding: 4px 6px; border-radius: 3px;
   margin-top: 4px; background: var(--bad-soft); color: var(--bad); }
 .chip-error.visible { display: block; }
+.dest-chip-mod {
+  display: inline-block; padding: 0 4px; margin-left: 4px;
+  border-radius: 3px; font-size: 9.5px; font-weight: 600;
+  letter-spacing: 0.04em; text-transform: uppercase;
+  background: color-mix(in oklch, currentColor 18%, transparent);
+}
+.dest-card-mod {
+  display: inline-block; margin-left: auto; padding: 2px 6px;
+  border-radius: 3px; font-size: 9.5px; font-weight: 600;
+  letter-spacing: 0.04em; text-transform: uppercase;
+  background: var(--bg-inset); color: var(--fg-2);
+}
+.chip-input-wrap { position: relative; flex: 1; min-width: 180px; display: flex; }
+.chip-input-wrap .chip-input { flex: 1; min-width: 0; }
+.chip-suggest {
+  position: absolute; left: 0; right: 0; top: 100%;
+  margin-top: 4px; z-index: 20;
+  background: var(--bg); border: 1px solid var(--line);
+  border-radius: var(--r-sm); box-shadow: 0 6px 14px rgba(0,0,0,0.12);
+  max-height: 220px; overflow-y: auto;
+}
+.chip-suggest-item {
+  display: flex; justify-content: space-between; align-items: baseline;
+  padding: 6px 10px; cursor: pointer; font-size: 12px;
+  font-family: var(--font-mono); color: var(--fg-1);
+}
+.chip-suggest-item.active,
+.chip-suggest-item:hover { background: var(--bg-inset); color: var(--fg); }
+.chip-suggest-hint { color: var(--fg-3); font-size: 11px; }
 
 /* validation issues ------------------------------------------------ */
 .issues { display: flex; flex-direction: column; gap: 6px; }
@@ -986,6 +1015,15 @@ function ruleEditor(initial) {
     enabled: initial.enabled || [],
     local: initial.local || '*',
     domain: initial.domain || '*',
+    suggestions: [],
+    sugIdx: -1,
+    recentChats: null,    // null = not fetched; [] = fetched, empty
+    chipLabel(c) {
+      const base = c.kind + ':' + c.value;
+      if (c.kind === 'email' && c.proxy) return base + ':proxy';
+      if (c.auth && c.auth !== 'access') return base + ':' + c.auth;
+      return base;
+    },
     autoLabel() {
       const isCatch = this.local === '*' && this.domain === '*';
       if (this.action === 'drop' && isCatch) return 'Catch-all';
@@ -1006,10 +1044,7 @@ function ruleEditor(initial) {
       return prefix + ' \u2192 ' + suffix;
     },
     serialize() {
-      return this.chips.map(c => {
-        const base = c.kind + ':' + c.value;
-        return (c.auth && c.auth !== 'access') ? base + ':' + c.auth : base;
-      }).join('\n');
+      return this.chips.map(c => this.chipLabel(c)).join('\n');
     },
     parse(raw) {
       const text = raw.trim();
@@ -1024,12 +1059,31 @@ function ruleEditor(initial) {
       if (!kind) return { err: "unknown kind (use email, telegram, or discord)" };
       if (this.enabled.indexOf(kind) < 0) return { err: kind + " is not enabled on this deployment" };
       if (kind === 'email') {
-        if (!rest.includes('@') || rest.startsWith('@') || rest.endsWith('@'))
+        // Mirror Rust's `rsplit_once(':')` behavior. A non-empty trailing
+        // segment after the last ':' is treated as the modifier and must
+        // be 'proxy'.
+        const lastColon = rest.lastIndexOf(':');
+        let value, modifier = '';
+        if (lastColon >= 0) {
+          const candidate = rest.slice(lastColon + 1).trim();
+          if (candidate !== '') {
+            modifier = candidate;
+            value = rest.slice(0, lastColon).trim();
+          } else {
+            value = rest;
+          }
+        } else {
+          value = rest;
+        }
+        if (!value.includes('@') || value.startsWith('@') || value.endsWith('@'))
           return { err: "email address must contain '@'" };
-        return { kind, value: rest.toLowerCase() };
+        const m = modifier.toLowerCase();
+        let proxy = false;
+        if (m === 'proxy') proxy = true;
+        else if (m !== '') return { err: "email modifier must be 'proxy'" };
+        return { kind, value: value.toLowerCase(), proxy };
       }
-      // For chat kinds, allow an optional ':access' or ':token' suffix
-      // selecting which viewer URL is embedded in the bot post.
+      // Chat kinds: optional ':access' or ':token' suffix.
       let value = rest, auth = 'access';
       const subIdx = rest.indexOf(':');
       if (subIdx >= 0) {
@@ -1054,13 +1108,94 @@ function ruleEditor(initial) {
       if (r.empty) { this.err = ''; return true; }
       if (r.err)   { this.err = r.err; return false; }
       const chip = { kind: r.kind, value: r.value };
+      if (r.proxy) chip.proxy = true;
       if (r.auth) chip.auth = r.auth;
       this.chips.push(chip);
-      this.draft = ''; this.err = '';
+      this.draft = ''; this.err = ''; this.suggestions = []; this.sugIdx = -1;
       return true;
     },
     onSubmit(e) {
       if (this.action === 'forward' && this.draft && !this.commit()) e.preventDefault();
+    },
+    // ---------- autocomplete ----------
+    onChipKey(e) {
+      // Snippet expansion when draft is empty: t/e/d -> kind:.
+      if (!this.draft && e.key.length === 1) {
+        const ch = e.key.toLowerCase();
+        const map = { t: 'telegram', e: 'email', d: 'discord' };
+        if (map[ch] && this.enabled.indexOf(map[ch]) >= 0) {
+          e.preventDefault();
+          this.draft = map[ch] + ':';
+          this.refreshSuggestions();
+          return;
+        }
+      }
+      // Suggestion navigation.
+      if (this.suggestions.length > 0) {
+        if (e.key === 'ArrowDown') { e.preventDefault(); this.sugIdx = (this.sugIdx + 1) % this.suggestions.length; return; }
+        if (e.key === 'ArrowUp')   { e.preventDefault(); this.sugIdx = (this.sugIdx - 1 + this.suggestions.length) % this.suggestions.length; return; }
+        if (e.key === 'Tab' && this.sugIdx >= 0) { e.preventDefault(); this.applySuggestion(this.suggestions[this.sugIdx]); return; }
+        if (e.key === 'Escape') { this.suggestions = []; this.sugIdx = -1; return; }
+      }
+      if (e.key === 'Enter') {
+        if (this.sugIdx >= 0 && this.suggestions[this.sugIdx]) {
+          e.preventDefault();
+          this.applySuggestion(this.suggestions[this.sugIdx]);
+          return;
+        }
+        e.preventDefault(); this.commit(); return;
+      }
+      if (e.key === ',' || e.key === ' ') {
+        if (this.draft.trim()) { e.preventDefault(); this.commit(); return; }
+      }
+      if (e.key === 'Backspace' && !this.draft && this.chips.length) { this.chips.pop(); return; }
+      // Anything else: queue a refresh on next tick (after x-model updates).
+      this.err = '';
+      queueMicrotask(() => this.refreshSuggestions());
+    },
+    refreshSuggestions() {
+      const d = this.draft;
+      const colon1 = d.indexOf(':');
+      // Before the first ':', no suggestions yet (snippet expansion handles this).
+      if (colon1 < 0) { this.suggestions = []; this.sugIdx = -1; return; }
+      const kindRaw = d.slice(0, colon1).toLowerCase();
+      const alias = { email: 'email', telegram: 'telegram', tg: 'telegram', discord: 'discord', dc: 'discord' };
+      const kind = alias[kindRaw];
+      if (!kind) { this.suggestions = []; this.sugIdx = -1; return; }
+      const rest = d.slice(colon1 + 1);
+      const colon2 = rest.indexOf(':');
+      // value-position completion
+      if (colon2 < 0) {
+        if (kind === 'telegram') {
+          this.ensureRecentChats();
+          const q = rest.trim().toLowerCase();
+          const matches = (this.recentChats || []).filter(c => !q || c.chat_id.includes(q) || (c.label || '').toLowerCase().includes(q));
+          this.suggestions = matches.map(c => ({ insert: 'telegram:' + c.chat_id, label: c.label || c.chat_id, hint: 'telegram:' + c.chat_id }));
+          this.sugIdx = this.suggestions.length ? 0 : -1;
+        } else {
+          this.suggestions = []; this.sugIdx = -1;
+        }
+        return;
+      }
+      // modifier-position completion (after second ':')
+      const modRaw = rest.slice(colon2 + 1).toLowerCase();
+      const value = rest.slice(0, colon2);
+      const candidates = kind === 'email' ? ['proxy'] : ['token', 'access'];
+      const filtered = candidates.filter(m => !modRaw || m.startsWith(modRaw));
+      this.suggestions = filtered.map(m => ({ insert: kind + ':' + value + ':' + m, label: m, hint: ':' + m }));
+      this.sugIdx = this.suggestions.length ? 0 : -1;
+    },
+    applySuggestion(s) {
+      this.draft = s.insert;
+      this.suggestions = []; this.sugIdx = -1;
+    },
+    ensureRecentChats() {
+      if (this.recentChats !== null) return;
+      this.recentChats = []; // mark as loading
+      fetch('/manage/api/recent-telegram-chats', { credentials: 'same-origin' })
+        .then(r => r.ok ? r.json() : [])
+        .then(list => { this.recentChats = Array.isArray(list) ? list : []; this.refreshSuggestions(); })
+        .catch(() => { this.recentChats = []; });
     },
   };
 }
@@ -1771,11 +1906,16 @@ fn inspector_pane(
     let messages_card = rule_messages_card(&rule.id, messages.unwrap_or(&[]));
 
     let action_tag = match &rule.action {
-        Action::Forward {
-            replace_reply_to: true,
-            ..
-        } => r#"<span class="tag proxy tip below" data-tip="Forward in proxy/rewrite mode: the message is reconstructed and Reply-To is rewritten so replies route back through the worker via the same custom domain. Strips PGP signatures and attachments.">forward · proxy</span>"#.to_string(),
-        Action::Forward { .. } => r#"<span class="tag forward tip below" data-tip="Forward in native mode: uses Cloudflare EmailMessage.forward(): original bytes (PGP, attachments) pass through untouched; Reply-To is overlaid but may be ignored by some clients.">forward</span>"#.to_string(),
+        Action::Forward { destinations } => {
+            let any_proxy = destinations
+                .iter()
+                .any(|d| matches!(d, Destination::Email { proxy: true, .. }));
+            if any_proxy {
+                r#"<span class="tag proxy tip below" data-tip="At least one email destination is in proxy mode: the message is reconstructed and Reply-To is rewritten so replies route back through the worker via the same custom domain. Strips PGP signatures and attachments on those destinations.">forward · proxy</span>"#.to_string()
+            } else {
+                r#"<span class="tag forward tip below" data-tip="Forward in native mode: uses Cloudflare EmailMessage.forward(): original bytes (PGP, attachments) pass through untouched; Reply-To is overlaid but may be ignored by some clients.">forward</span>"#.to_string()
+            }
+        }
         Action::Drop if is_catch => {
             r#"<span class="tag catch tip below" data-tip="Pinned catch-all rule: silently drops anything no earlier rule matched. Always sits at the end and can't be deleted or moved.">drop · catch-all</span>"#.to_string()
         }
@@ -1805,10 +1945,7 @@ fn inspector_pane(
     };
 
     let destinations_card = match &rule.action {
-        Action::Forward {
-            destinations,
-            replace_reply_to,
-        } => destinations_card(destinations, *replace_reply_to),
+        Action::Forward { destinations } => destinations_card(destinations),
         Action::Drop | Action::Store { .. } => String::new(),
     };
 
@@ -2107,14 +2244,9 @@ fn relative_time_from_seconds(ts_s: i64, now_ms: i64) -> String {
     }
 }
 
-/// "Destinations" card in the inspector, with a card per destination plus
-/// a tag indicating native vs. proxy mode.
-fn destinations_card(destinations: &[Destination], replace_reply_to: bool) -> String {
-    let mode_tag = if replace_reply_to {
-        r#"<span class="tag proxy tip" data-tip="Proxy/rewrite mode: messages are reconstructed via Email Service so Reply-To works when replying via the same custom domain. Strips PGP signatures and attachments.">proxy mode</span>"#
-    } else {
-        r#"<span class="tag forward tip" data-tip="Native mode: uses EmailMessage.forward(): original bytes (PGP, attachments, formatting) pass through untouched. Reply-To is overlaid but may be ignored by some mail clients.">native mode</span>"#
-    };
+/// "Destinations" card in the inspector. Per-destination modifiers (`proxy`
+/// for email, `token` for chat) render as small badges next to each card.
+fn destinations_card(destinations: &[Destination]) -> String {
     let body = if destinations.is_empty() {
         r#"<div class="empty">No destinations: this forward does nothing until you add at least one.</div>"#.to_string()
     } else {
@@ -2123,6 +2255,19 @@ fn destinations_card(destinations: &[Destination], replace_reply_to: bool) -> St
             .map(|d| {
                 let kind = d.kind_label();
                 let icon = channel_icon(kind);
+                let modifier = match d {
+                    Destination::Email { proxy: true, .. } => Some(("proxy", "Proxy mode: message is reconstructed and Reply-To is rewritten to a reverse alias. Replies route through the worker. Strips PGP signatures and attachments.")),
+                    Destination::Telegram { link_auth: ViewerAuth::Token, .. }
+                    | Destination::Discord { link_auth: ViewerAuth::Token, .. } => Some(("token", "Token mode: 'View full email' link is signed and shareable; viewer doesn't require Cloudflare Access.")),
+                    _ => None,
+                };
+                let mod_badge = match modifier {
+                    Some((label, tip)) => format!(
+                        r##"<span class="dest-card-mod tip" data-tip="{tip}">{label}</span>"##,
+                        tip = html_escape(tip),
+                    ),
+                    None => String::new(),
+                };
                 format!(
                     r##"<div class="dest-card {kind}">
   <span class="icon-wrap">{icon}</span>
@@ -2130,6 +2275,7 @@ fn destinations_card(destinations: &[Destination], replace_reply_to: bool) -> St
     <span class="kind">{kind}</span>
     <span class="value">{value}</span>
   </div>
+  {mod_badge}
 </div>"##,
                     value = html_escape(d.value()),
                 )
@@ -2142,7 +2288,6 @@ fn destinations_card(destinations: &[Destination], replace_reply_to: bool) -> St
         r##"<div class="card">
   <header>
     <h3>Destinations <small>({n})</small></h3>
-    {mode_tag}
   </header>
   <div class="card-body">{body}</div>
 </div>"##,
@@ -2176,11 +2321,16 @@ fn tester_init_attr(all_rules: &[Rule], selected_id: &str) -> String {
             let action = match &r.action {
                 Action::Drop => "drop",
                 Action::Store { .. } => "store",
-                Action::Forward {
-                    replace_reply_to: true,
-                    ..
-                } => "forward · proxy",
-                Action::Forward { .. } => "forward",
+                Action::Forward { destinations } => {
+                    let any_proxy = destinations
+                        .iter()
+                        .any(|d| matches!(d, Destination::Email { proxy: true, .. }));
+                    if any_proxy {
+                        "forward · proxy"
+                    } else {
+                        "forward"
+                    }
+                }
             };
             serde_json::json!({
                 "id": r.id,
@@ -2292,26 +2442,42 @@ fn destinations_field(enabled: &EnabledChannels) -> String {
     format!(
         r##"<div class="dest-wrapper">
   <div class="dest-field" @click.self="$refs.chipInput.focus()">
-    <template x-for="(c, i) in chips" :key="i + ':' + c.kind + ':' + c.value + ':' + (c.auth || '')">
+    <template x-for="(c, i) in chips" :key="i + ':' + chipLabel(c)">
       <span class="dest-chip" :class="'dest-' + c.kind">
-        <span x-text="c.kind + ':' + c.value + ((c.auth && c.auth !== 'access') ? ':' + c.auth : '')"></span>
+        <span x-text="c.kind + ':' + c.value"></span>
+        <template x-if="c.kind === 'email' && c.proxy">
+          <span class="dest-chip-mod">proxy</span>
+        </template>
+        <template x-if="c.auth && c.auth !== 'access'">
+          <span class="dest-chip-mod" x-text="c.auth"></span>
+        </template>
         <button type="button" aria-label="remove" @click="chips.splice(i, 1)">×</button>
       </span>
     </template>
-    <input x-ref="chipInput"
-      class="chip-input" type="text" x-model="draft"
-      placeholder="email:you@example.com"
-      autocomplete="off" spellcheck="false"
-      @keydown.enter.prevent="commit()"
-      @keydown.window.escape="cutoutCloseModal()"
-      @keydown="if ($event.key === ',') {{ $event.preventDefault(); commit(); }}
-                else if ($event.key === 'Backspace' && !draft && chips.length) {{ chips.pop(); }}
-                else {{ err = ''; }}">
+    <div class="chip-input-wrap">
+      <input x-ref="chipInput"
+        class="chip-input" type="text" x-model="draft"
+        placeholder="type t / e / d to start"
+        autocomplete="off" spellcheck="false"
+        @keydown.window.escape="cutoutCloseModal()"
+        @keydown="onChipKey($event)"
+        @focus="refreshSuggestions()"
+        @blur="setTimeout(() => {{ suggestions = []; sugIdx = -1; }}, 120)">
+      <div class="chip-suggest" x-show="suggestions.length > 0" x-cloak>
+        <template x-for="(s, i) in suggestions" :key="i + ':' + s.insert">
+          <div class="chip-suggest-item" :class="{{ active: i === sugIdx }}"
+            @mousedown.prevent="applySuggestion(s)">
+            <span class="chip-suggest-label" x-text="s.label"></span>
+            <span class="chip-suggest-hint" x-text="s.hint"></span>
+          </div>
+        </template>
+      </div>
+    </div>
     <input type="hidden" name="destinations" :value="serialize()">
   </div>
   <div class="chip-error" :class="{{ visible: !!err }}" x-text="err"></div>
 </div>
-<div class="help" style="margin-top:6px">Press Enter or comma to add. Each entry is <code>kind:value</code>. Available: {kinds_help}.{missing} For chat destinations, append <code>:token</code> (e.g. <code>telegram:-100:token</code>) to use a public signed-link viewer instead of the default Cloudflare Access viewer.</div>"##,
+<div class="help" style="margin-top:6px">Type <code>t</code>, <code>e</code>, or <code>d</code> to start an entry. Press space, comma, or enter to add. Each entry is <code>kind:value</code>. Available: {kinds_help}.{missing} Append <code>:proxy</code> on email to rewrite Reply-To, or <code>:token</code> on chat destinations to use a public signed-link viewer.</div>"##,
     )
 }
 
@@ -2338,15 +2504,12 @@ fn editor_modal(
     let local = rule.map(|r| r.local_pattern.as_str()).unwrap_or("*");
     let domain = rule.map(|r| r.domain_pattern.as_str()).unwrap_or("*");
 
-    let (action_type, destinations, replace_reply_to, persist): (&str, &[Destination], bool, bool) =
+    let (action_type, destinations, persist): (&str, &[Destination], bool) =
         match rule.map(|r| &r.action) {
-            Some(Action::Forward {
-                destinations,
-                replace_reply_to,
-            }) => ("forward", destinations.as_slice(), *replace_reply_to, false),
-            Some(Action::Drop) => ("drop", &[], false, false),
-            Some(Action::Store { persist }) => ("store", &[], false, *persist),
-            None => ("forward", &[], false, false),
+            Some(Action::Forward { destinations }) => ("forward", destinations.as_slice(), false),
+            Some(Action::Drop) => ("drop", &[], false),
+            Some(Action::Store { persist }) => ("store", &[], *persist),
+            None => ("forward", &[], false),
         };
 
     let title = if rule.is_some() {
@@ -2356,7 +2519,6 @@ fn editor_modal(
     };
 
     let dest_field = destinations_field(enabled);
-    let replace_checked = if replace_reply_to { " checked" } else { "" };
     let persist_checked = if persist { " checked" } else { "" };
     let hx_attr = match method {
         "put" => format!(r#"hx-put="{form_action}""#),
@@ -2377,6 +2539,9 @@ fn editor_modal(
         .iter()
         .map(|d| {
             let mut obj = serde_json::json!({ "kind": d.kind_label(), "value": d.value() });
+            if let Destination::Email { proxy: true, .. } = d {
+                obj["proxy"] = serde_json::Value::Bool(true);
+            }
             if let Some(auth) = d.link_auth() {
                 obj["auth"] = serde_json::Value::String(auth.as_token().to_string());
             }
@@ -2416,11 +2581,12 @@ fn editor_modal(
       <div class="field">
         <label>Pattern</label>
         <div class="pat-input">
-          <input name="local_pattern" type="text" value="{local}" placeholder="*" required x-model="local">
+          <input name="local_pattern" type="text" value="{local}" placeholder="*" required x-model="local"
+            @keydown="if ($event.key === '@') {{ $event.preventDefault(); $refs.domainInput.focus(); $refs.domainInput.setSelectionRange(0, 0); }}">
           <span class="at">@</span>
-          <input name="domain_pattern" type="text" value="{domain}" placeholder="*" required x-model="domain">
+          <input name="domain_pattern" x-ref="domainInput" type="text" value="{domain}" placeholder="*" required x-model="domain">
         </div>
-        <span class="help"><span style="color:var(--accent)">*</span> matches anything: <span style="color:var(--accent)">?</span> matches one char</span>
+        <span class="help"><span style="color:var(--accent)">*</span> matches anything: <span style="color:var(--accent)">?</span> matches one char. Type <code>@</code> to jump to the domain.</span>
       </div>
       <div class="field">
         <label>Action</label>
@@ -2449,15 +2615,8 @@ fn editor_modal(
         <span class="help">If enabled, the parsed email content (subject, text, html) is saved to the <code>messages</code> table.</span>
       </div>
       <div class="field" x-show="action === 'forward'">
-        <label style="display:flex;justify-content:space-between;align-items:center">
-          <span>Destinations</span>
-          <label style="display:flex;align-items:center;gap:6px;font-family:var(--font-sans);font-size:11.5px;text-transform:none;letter-spacing:0;color:var(--fg-1);cursor:pointer">
-            <input type="checkbox" name="replace_reply_to"{replace_checked}>
-            Proxy via rewrite mode
-          </label>
-        </label>
+        <label>Destinations</label>
         {dest_field}
-        <span class="help">Rewrite mode ensures reply-to works when replying via the same domain, but strips PGP and attachments.</span>
       </div>
     </div>
     <div class="modal-footer">

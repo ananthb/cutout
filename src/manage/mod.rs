@@ -53,6 +53,12 @@ pub async fn handle_manage(req: Request, env: Env, path: &str, method: Method) -
         // GET /manage/events: JSON tail for the live feed
         (Method::Get, ["events"]) => handlers::list_events(req, &env).await,
 
+        // GET /manage/api/recent-telegram-chats: JSON list of chats that
+        // have sent /start to the bot. Used as autofill in the rule editor.
+        (Method::Get, ["api", "recent-telegram-chats"]) => {
+            handlers::recent_telegram_chats(&env).await
+        }
+
         // GET /manage/pending: list of rows in pending_dispatches (queued + dead-lettered)
         (Method::Get, ["pending"]) => handlers::list_pending(&env).await,
 
