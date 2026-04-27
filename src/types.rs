@@ -354,6 +354,14 @@ pub struct BotForward {
     /// Which viewer URL style to embed in the chat post.
     #[serde(default)]
     pub link_auth: ViewerAuth,
+    /// RFC 5322 `Message-ID` of the inbound email, used to thread replies
+    /// back into the original conversation in the recipient's mail client.
+    #[serde(default)]
+    pub inbound_message_id: Option<String>,
+    /// RFC 5322 `References` of the inbound email, prepended to the new
+    /// `References` chain on the outbound reply.
+    #[serde(default)]
+    pub inbound_references: Option<String>,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug)]

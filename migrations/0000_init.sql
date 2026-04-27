@@ -17,6 +17,8 @@ CREATE TABLE IF NOT EXISTS bot_reply_contexts (
     alias_address TEXT NOT NULL,
     original_sender TEXT NOT NULL,
     subject TEXT,
+    inbound_message_id TEXT, -- RFC 5322 Message-ID of the forwarded email; for In-Reply-To/References on outbound replies
+    inbound_references TEXT, -- RFC 5322 References header from the forwarded email
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP
 );
 

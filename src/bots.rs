@@ -100,7 +100,14 @@ pub async fn dispatch(env: &Env, forward: &BotForward) -> Result<()> {
                 }
             };
             let key = ReplyContext::telegram_key(chat_id, msg.message_id);
-            db::save_bot_ctx(&database, &key, &ctx).await?;
+            db::save_bot_ctx(
+                &database,
+                &key,
+                &ctx,
+                forward.inbound_message_id.as_deref(),
+                forward.inbound_references.as_deref(),
+            )
+            .await?;
             Ok(())
         }
         BotChannel::Discord { channel_id } => {
@@ -133,7 +140,14 @@ pub async fn dispatch(env: &Env, forward: &BotForward) -> Result<()> {
                 None => bot.create_message(channel_id, params).await?,
             };
             let key = ReplyContext::discord_key(channel_id, &msg.id);
-            db::save_bot_ctx(&database, &key, &ctx).await?;
+            db::save_bot_ctx(
+                &database,
+                &key,
+                &ctx,
+                forward.inbound_message_id.as_deref(),
+                forward.inbound_references.as_deref(),
+            )
+            .await?;
             Ok(())
         }
     }
@@ -255,7 +269,7 @@ pub async fn handle_telegram_webhook(mut req: Request, env: Env) -> Result<Respo
 
     let database = env.d1("DB")?;
     let key = ReplyContext::telegram_key(&msg.chat.id.to_string(), reply_to.message_id);
-    let ctx = match db::get_bot_ctx(&database, &key).await? {
+    let stored = match db::get_bot_ctx(&database, &key).await? {
         Some(c) => c,
         None => {
             console_log!("telegram: no context for {key}");
@@ -268,7 +282,7 @@ pub async fn handle_telegram_webhook(mut req: Request, env: Env) -> Result<Respo
         return Response::ok("empty reply");
     }
 
-    send_reply_email(&env, &ctx, &body_text).await?;
+    send_reply_email(&env, &stored, &body_text).await?;
     Response::ok("ok")
 }
 
@@ -351,7 +365,7 @@ pub async fn handle_discord_interaction(mut req: Request, env: Env) -> Result<Re
 
         let database = env.d1("DB")?;
         let key = ReplyContext::discord_key(channel_id, message_id);
-        let ctx = match db::get_bot_ctx(&database, &key).await? {
+        let stored = match db::get_bot_ctx(&database, &key).await? {
             Some(c) => c,
             None => {
                 return Response::from_json(&InteractionResponse::ephemeral_message(
@@ -360,7 +374,7 @@ pub async fn handle_discord_interaction(mut req: Request, env: Env) -> Result<Re
             }
         };
 
-        send_reply_email(&env, &ctx, text).await?;
+        send_reply_email(&env, &stored, text).await?;
         return Response::from_json(&InteractionResponse::ephemeral_message("Reply sent."));
     }
 
@@ -369,7 +383,17 @@ pub async fn handle_discord_interaction(mut req: Request, env: Env) -> Result<Re
     ))
 }
 
-async fn send_reply_email(env: &Env, ctx: &ReplyContext, text: &str) -> Result<()> {
+async fn send_reply_email(env: &Env, stored: &db::StoredReplyContext, text: &str) -> Result<()> {
+    let ctx = &stored.ctx;
+    let mut headers = vec![("X-Cutout-Forwarded".to_string(), "1".to_string())];
+    if let Some(mid) = &stored.inbound_message_id {
+        headers.push(("In-Reply-To".to_string(), mid.clone()));
+        let refs = match &stored.inbound_references {
+            Some(r) => format!("{r} {mid}"),
+            None => mid.clone(),
+        };
+        headers.push(("References".to_string(), refs));
+    }
     let outbound = OutboundEmail {
         from: ctx.alias.clone(),
         to: ctx.original_sender.clone(),
@@ -377,7 +401,7 @@ async fn send_reply_email(env: &Env, ctx: &ReplyContext, text: &str) -> Result<(
         text: Some(text.to_string()),
         html: None,
         reply_to: Some(ctx.alias.clone()),
-        headers: vec![("X-Cutout-Forwarded".to_string(), "1".to_string())],
+        headers,
     };
     send::send_outbound(env, &outbound).await
 }
@@ -401,6 +425,8 @@ mod tests {
             message_id: String::new(),
             html: None,
             link_auth: Default::default(),
+            inbound_message_id: None,
+            inbound_references: None,
         };
         let out = render_body(&f, None, TG_TEXT_MAX);
         assert!(out.contains("truncated"));
@@ -420,6 +446,8 @@ mod tests {
             message_id: String::new(),
             html: None,
             link_auth: Default::default(),
+            inbound_message_id: None,
+            inbound_references: None,
         };
         let out = render_body(&f, None, TG_TEXT_MAX);
         assert!(out.starts_with("From: alice@example.org\n"));
@@ -440,6 +468,8 @@ mod tests {
             message_id: "abc".into(),
             html: None,
             link_auth: Default::default(),
+            inbound_message_id: None,
+            inbound_references: None,
         };
         let out = render_body(&f, Some("https://x.test/m/abc"), TG_TEXT_MAX);
         assert!(out.ends_with("View full email → https://x.test/m/abc"));
@@ -459,6 +489,8 @@ mod tests {
             message_id: "abc".into(),
             html: None,
             link_auth: Default::default(),
+            inbound_message_id: None,
+            inbound_references: None,
         };
         let url = "https://x.test/m/abc?t=tok";
         let out = render_body(&f, Some(url), TG_CAPTION_MAX);

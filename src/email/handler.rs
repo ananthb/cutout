@@ -238,6 +238,8 @@ async fn execute_action(
                             message_id: stored_message_id.clone().unwrap_or_default(),
                             html: inlined_html.clone(),
                             link_auth: *link_auth,
+                            inbound_message_id: parsed.as_ref().and_then(|p| p.message_id.clone()),
+                            inbound_references: parsed.as_ref().and_then(|p| p.references.clone()),
                         });
                     }
                     Destination::Discord {
@@ -261,6 +263,8 @@ async fn execute_action(
                             message_id: stored_message_id.clone().unwrap_or_default(),
                             html: inlined_html.clone(),
                             link_auth: *link_auth,
+                            inbound_message_id: parsed.as_ref().and_then(|p| p.message_id.clone()),
+                            inbound_references: parsed.as_ref().and_then(|p| p.references.clone()),
                         });
                     }
                 }
