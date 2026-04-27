@@ -32,9 +32,9 @@ The following secrets must be configured in the GitHub repository for the offici
 
 ## Outbound email backend
 
-The generated `wrangler.production.toml` sets `remote = true` on the `[[send_email]]` block, so outbound (proxy-mode forwards, reverse-alias replies, retry redispatch) goes through **Email Service "Email Sending"** and can deliver to any recipient. This requires the sending domains onboarded to Email Service and a paid Workers plan.
+The generated `wrangler.production.toml` uses Email Routing's free `send_email` binding, so outbound (proxy-mode forwards, reverse-alias replies, retry redispatch) only delivers to addresses verified as Email Routing destinations on the account. Add new recipients under **Email → Routing → Destination addresses** and click the verification link.
 
-For self-hosted forks that don't want the paid plan, drop `remote = true` and the worker falls back to Email Routing's free `send_email`, which only delivers to verified destination addresses on the account.
+To deliver to any recipient without per-address verification, add `remote = true` to the `[[send_email]]` block in the workflow. That switches to **Email Service "Email Sending"**, which requires the sending domains onboarded to Email Service and a paid Workers plan ($5/month + per-message billing).
 
 ## Manual Deployment
 If manual deployment is necessary:
