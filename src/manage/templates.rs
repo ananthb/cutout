@@ -356,6 +356,9 @@ code { font-family: var(--font-mono); font-size: 0.88em; }
   padding: 16px 24px; border-bottom: 1px solid var(--line);
   display: flex; align-items: flex-start; justify-content: space-between; gap: 16px;
 }
+/* Mobile-only "back to rules" link inside the inspector header. Hidden
+   here on desktop; the mobile media query un-hides it. */
+.inspector-back { display: none; }
 .inspector-header .meta { display: flex; flex-direction: column; gap: 6px; min-width: 0; }
 .inspector-header .meta .id-row {
   display: flex; align-items: center; gap: 8px;
@@ -870,15 +873,30 @@ code { font-family: var(--font-mono); font-size: 0.88em; }
     border-top: 1px dashed var(--line-2);
   }
 
-  /* workbench: pipeline gets the top half, inspector pinned to the
-     bottom half. Each pane scrolls internally; the inspector empty
-     state still centers within its share. */
+  /* workbench shows ONE pane at a time on mobile, full-screen.
+     - no rule selected: pipeline + tester own the viewport.
+     - rule selected:    inspector owns the viewport, pipeline hides.
+     The visible pane gets the entire 1fr row. */
   .workbench {
     grid-template-columns: 1fr;
-    grid-template-rows: minmax(0, 1fr) minmax(0, 1fr);
+    grid-template-rows: minmax(0, 1fr);
   }
-  .pipeline-pane { border-right: none; border-bottom: 1px solid var(--line); }
+  .workbench.no-selection .inspector-pane { display: none; }
+  .workbench.has-selection .pipeline-pane { display: none; }
+
+  /* Pipeline becomes a single scroll container so the tester scrolls
+     away with the rules instead of staying pinned at the top. */
+  .pipeline-pane { border-right: none; overflow-y: auto; }
+  .pipeline-tester {
+    border-bottom: 1px solid var(--line);
+    padding: 12px 14px;
+  }
+  .pipeline-list { overflow: visible; flex: 0 0 auto; }
+
+  /* Inspector tweaks: stack the header so the back link sits on its
+     own line, tighten body padding. */
   .inspector-header { flex-direction: column; align-items: stretch; }
+  .inspector-back { display: inline-flex; align-self: flex-start; }
   .inspector-body { padding: 16px 14px; gap: 14px; }
   .stat-strip { grid-template-columns: repeat(2, 1fr); }
 
@@ -1421,8 +1439,16 @@ pub fn workbench(
     let selected_value = selected_idx
         .and_then(|i| rules.get(i).map(|r| r.id.as_str()))
         .unwrap_or("");
+    // `has-selection` / `no-selection` lets the mobile CSS show only the
+    // relevant pane full-screen instead of cramming both into half the
+    // viewport.
+    let sel_cls = if selected_idx.is_some() {
+        "has-selection"
+    } else {
+        "no-selection"
+    };
     format!(
-        r##"<div id="workbench" class="workbench">
+        r##"<div id="workbench" class="workbench {sel_cls}">
 {pipeline}
 {inspector}
 <form id="workbench-form" style="display:none">
@@ -1792,6 +1818,7 @@ fn inspector_pane(
         r##"<section class="inspector-pane">
   <div class="inspector-rule-section">
     <div class="inspector-header">
+      <a class="inspector-back btn ghost sm" href="/manage" title="Back to rules">← Rules</a>
       <div class="meta">
         <div class="id-row"><span class="tip below" data-tip="Stable random identifier (UUID v4) for this rule. Used in the URL when editing or deleting and in stats keyed by rule.">rule · {id}</span>{action_tag}</div>
         <h2>{label}</h2>
