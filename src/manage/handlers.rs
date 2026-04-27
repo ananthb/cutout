@@ -464,6 +464,8 @@ pub async fn pending_count(env: &Env) -> Result<Response> {
 
 /// POST /manage/pending/{id}/retry: re-publish to `cutout-retries`. The
 /// consumer will pick it up on the next batch and re-run the dispatch.
+/// Redirects back to /manage/pending so the operator sees the row's new
+/// state instead of a bare "requeued" string.
 pub async fn retry_pending(env: &Env, id: &str) -> Result<Response> {
     let database = env.d1("DB")?;
     let pending = match db::load_pending(&database, id).await? {
@@ -485,7 +487,9 @@ pub async fn retry_pending(env: &Env, id: &str) -> Result<Response> {
     }
     let queue = env.queue("RETRIES")?;
     queue.send(&RetryMsg { id: id.to_string() }).await?;
-    Response::ok("requeued")
+    let headers = Headers::new();
+    headers.set("Location", "/manage/pending")?;
+    Ok(Response::empty()?.with_status(303).with_headers(headers))
 }
 
 /// GET /manage/rules/{id}/messages?before={ts}: HTML fragment listing the

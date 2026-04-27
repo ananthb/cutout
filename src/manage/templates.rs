@@ -92,9 +92,16 @@ body {
   font-size: 14px; line-height: 1.45;
   color: var(--fg); background: var(--bg);
   -webkit-font-smoothing: antialiased;
-  /* Lock the viewport so iOS/Android address-bar offsets don't push
-     the live-feed (or selected inspector) below the fold. The shell
-     uses dvh below to claim the actually-visible viewport. */
+}
+/* Workbench page only: lock the viewport so iOS/Android address-bar
+   offsets don't push the live-feed (or selected inspector) below the
+   fold, and so the page itself doesn't acquire a scrollbar in addition
+   to the inner pane scrollers. The shell uses dvh below to claim the
+   actually-visible viewport. Pages that should scroll normally (e.g.
+   /manage/pending) use `body.page-flow` instead. */
+html:has(body.page-shell) { height: 100%; overflow: hidden; }
+body.page-shell {
+  height: 100dvh;
   overflow: hidden;
   overscroll-behavior: none;
 }
@@ -1380,8 +1387,10 @@ function liveFeed() {
 }
 "##;
 
-/// Render the base HTML wrapper used by every /manage page.
-pub fn base_html(title: &str, content: &str) -> String {
+/// Render the base HTML wrapper used by every /manage page. `body_class`
+/// distinguishes the viewport-locked workbench page from regular flow pages
+/// (e.g. /manage/pending) — see the `body.page-shell` rules in `CSS`.
+pub fn base_html(title: &str, content: &str, body_class: &str) -> String {
     format!(
         r##"<!DOCTYPE html>
 <html lang="en">
@@ -1399,7 +1408,7 @@ pub fn base_html(title: &str, content: &str) -> String {
 <script>{alpine_script}</script>
 <script defer src="https://unpkg.com/alpinejs@3.14.1/dist/cdn.min.js" crossorigin="anonymous"></script>
 </head>
-<body>
+<body class="{body_class}">
 {content}
 <div id="editor-modal"></div>
 <div id="rule-conflict-banner"
@@ -1523,7 +1532,7 @@ pub fn rules_page(
         workbench = workbench,
         live_feed = LIVE_FEED_PANE,
     );
-    base_html("Rules", &content)
+    base_html("Rules", &content, "page-shell")
 }
 
 /// The bottom live feed pane. Sits outside `#workbench` so its Alpine
@@ -2723,8 +2732,17 @@ pub fn pending_page(rows: &[PendingDispatch]) -> String {
 }}
 .pstatus.k-queued {{ background: var(--info-soft); color: var(--info); }}
 .pstatus.k-dead   {{ background: var(--bad-soft); color: var(--bad); }}
+@media (max-width: 880px) {{
+  .pending-main {{ padding: 14px 12px 40px; }}
+  .pending-table {{ font-size: 12px; table-layout: fixed; }}
+  .pending-table th, .pending-table td {{ padding: 8px 8px; word-break: break-word; }}
+  .pending-table td.errcell {{ max-width: none; font-size: 11px; white-space: normal; word-break: break-word; }}
+  .pending-table td.mono {{ word-break: break-all; }}
+  .pending-table form {{ display: block !important; margin-bottom: 4px; }}
+  .pending-table form .btn {{ width: 100%; }}
+}}
 </style>"##,
         body_rows = body_rows,
     );
-    base_html("Pending", &content)
+    base_html("Pending", &content, "page-flow")
 }
