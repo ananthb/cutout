@@ -106,16 +106,16 @@ code { font-family: var(--font-mono); font-size: 0.88em; }
   height: 100vh;
 }
 .topbar {
-  display: flex; align-items: center; justify-content: space-between;
+  display: flex; align-items: center; gap: 16px;
   padding: 10px 18px;
   background: var(--bg-1);
   border-bottom: 1px solid var(--line);
 }
-.topbar .brand { display: flex; align-items: center; gap: 14px; }
+.topbar .brand { display: flex; align-items: center; gap: 14px; flex-shrink: 0; }
 .topbar .brand .title { display: flex; flex-direction: column; line-height: 1.1; }
 .topbar .brand .title b { font-weight: 600; font-size: 14px; }
 .topbar .brand .title small { font-family: var(--font-mono); font-size: 10.5px; color: var(--fg-2); }
-.topbar .right { display: flex; align-items: center; gap: 12px; font-size: 11.5px; color: var(--fg-2); }
+.topbar .right { display: flex; align-items: center; gap: 12px; font-size: 11.5px; color: var(--fg-2); flex-shrink: 0; }
 .topbar .right .health { display: inline-flex; align-items: center; gap: 6px; font-family: var(--font-mono); }
 .topbar .right .health .dot { width: 6px; height: 6px; border-radius: 999px; background: var(--ok); }
 .topbar .right .user { font-family: var(--font-mono); }
@@ -135,6 +135,39 @@ code { font-family: var(--font-mono); font-size: 0.88em; }
   text-transform: uppercase; letter-spacing: 0.06em;
 }
 
+/* top senders ticker tape, sits in the topbar gap. Doubled track scrolls
+   left at constant speed; pauses on hover so an operator can read it. */
+.topbar-ticker {
+  flex: 1; min-width: 0;
+  display: flex; align-items: center; gap: 10px;
+  overflow: hidden;
+  -webkit-mask-image: linear-gradient(to right, transparent, black 6%, black 94%, transparent);
+          mask-image: linear-gradient(to right, transparent, black 6%, black 94%, transparent);
+  height: 22px;
+}
+.topbar-ticker .label {
+  font-family: var(--font-mono); font-size: 9.5px;
+  text-transform: uppercase; letter-spacing: 0.08em;
+  color: var(--fg-3); flex-shrink: 0;
+}
+.topbar-ticker .track {
+  display: flex; align-items: center; gap: 24px;
+  white-space: nowrap;
+  animation: topbar-ticker-roll 60s linear infinite;
+  will-change: transform;
+}
+.topbar-ticker:hover .track { animation-play-state: paused; }
+.topbar-ticker .item {
+  display: inline-flex; align-items: baseline; gap: 6px;
+  font-family: var(--font-mono); font-size: 11px;
+}
+.topbar-ticker .item .n { color: var(--accent); font-weight: 600; }
+.topbar-ticker .item .addr { color: var(--fg-2); }
+@keyframes topbar-ticker-roll {
+  0%   { transform: translateX(0); }
+  100% { transform: translateX(-50%); }
+}
+
 .workbench {
   flex: 1; min-height: 0;
   display: grid; grid-template-columns: 440px 1fr;
@@ -149,7 +182,7 @@ code { font-family: var(--font-mono); font-size: 0.88em; }
   background: var(--bg-1);
   display: flex; flex-direction: column;
   min-height: 0;
-  overflow-y: auto;
+  overflow: hidden;
 }
 .pipeline-pane > header {
   padding: 12px 16px; border-bottom: 1px solid var(--line);
@@ -163,7 +196,21 @@ code { font-family: var(--font-mono); font-size: 0.88em; }
   display: block;
   font-family: var(--font-mono); font-size: 10.5px; color: var(--fg-2);
 }
-.pipeline-list { padding: 16px 14px; }
+.pipeline-tester {
+  flex-shrink: 0;
+  padding: 12px 14px 12px;
+  border-bottom: 1px dashed var(--line-2);
+}
+.pipeline-tester .card { background: var(--bg); }
+.pipeline-tester .card > header {
+  padding: 8px 10px; min-height: 0;
+}
+.pipeline-tester .card > header h3 { font-size: 12px; }
+.pipeline-tester .card > .card-body { padding: 8px 10px 12px; gap: 8px; }
+.pipeline-list {
+  flex: 1; min-height: 0; overflow-y: auto;
+  padding: 16px 14px;
+}
 .pipeline-node {
   display: inline-flex; align-items: center; gap: 10px;
   padding: 8px 10px;
@@ -243,15 +290,64 @@ code { font-family: var(--font-mono); font-size: 0.88em; }
 }
 .rule-card.selected .move-tools, .rule-card:hover .move-tools { opacity: 1; pointer-events: auto; }
 
+/* tester-driven evaluation animation. While the tester input parses to an
+   address, the firing card pulses with an accent halo and a soft sweep;
+   non-firing cards dim slightly so the eye lands on the firing one. */
+.rule-card.tester-firing {
+  border-color: var(--accent);
+  box-shadow:
+    0 0 0 3px color-mix(in oklch, var(--accent) 25%, transparent),
+    0 0 22px color-mix(in oklch, var(--accent) 32%, transparent);
+  animation: rule-firing-pulse 1.6s ease-in-out infinite;
+  z-index: 2;
+}
+.rule-card.tester-firing::after {
+  content: ""; position: absolute; inset: 0; border-radius: inherit;
+  pointer-events: none;
+  background: linear-gradient(120deg,
+    transparent 30%,
+    color-mix(in oklch, var(--accent) 18%, transparent) 50%,
+    transparent 70%);
+  background-size: 220% 100%;
+  animation: rule-firing-sweep 2.4s linear infinite;
+  mix-blend-mode: plus-lighter;
+}
+.rule-card.tester-dim { opacity: 0.55; }
+@keyframes rule-firing-pulse {
+  0%, 100% { box-shadow:
+    0 0 0 3px color-mix(in oklch, var(--accent) 22%, transparent),
+    0 0 18px color-mix(in oklch, var(--accent) 26%, transparent); }
+  50%      { box-shadow:
+    0 0 0 6px color-mix(in oklch, var(--accent) 30%, transparent),
+    0 0 30px color-mix(in oklch, var(--accent) 45%, transparent); }
+}
+@keyframes rule-firing-sweep {
+  0%   { background-position: 100% 0; }
+  100% { background-position: -100% 0; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .rule-card.tester-firing { animation: none; }
+  .rule-card.tester-firing::after { animation: none; opacity: 0.4; }
+}
+
 /* inspector pane ---------------------------------------------------- */
 .inspector-pane { overflow: hidden; min-height: 0; display: flex; flex-direction: column; }
 .inspector-rule-section {
-  flex: 1; min-height: 0; overflow-y: auto;
+  flex: 1; min-height: 0;
+  display: flex; flex-direction: column;
   background: var(--bg-1);
-  border-bottom: 1px solid var(--line);
 }
-.inspector-global-section {
-  flex: 1; min-height: 0; overflow-y: auto;
+.inspector-empty {
+  flex: 1; display: flex; align-items: center; justify-content: center;
+  padding: 32px;
+}
+.inspector-empty .hint {
+  max-width: 360px; text-align: center;
+  color: var(--fg-2); font-size: 13px; line-height: 1.6;
+}
+.inspector-empty .hint .arrow {
+  display: block; font-family: var(--font-mono); font-size: 22px;
+  color: var(--fg-3); margin-bottom: 8px;
 }
 .inspector-header {
   padding: 16px 24px; border-bottom: 1px solid var(--line);
@@ -270,7 +366,18 @@ code { font-family: var(--font-mono); font-size: 0.88em; }
   width: fit-content;
   font-family: var(--font-mono); font-size: 13px; font-weight: 500;
 }
-.inspector-body { padding: 24px; display: flex; flex-direction: column; gap: 18px; }
+.inspector-body {
+  padding: 24px;
+  display: flex; flex-direction: column; gap: 18px;
+  flex: 1; min-height: 0; overflow: hidden;
+}
+.inspector-body > .messages-card {
+  flex: 1; min-height: 240px;
+  display: flex; flex-direction: column; overflow: hidden;
+}
+.inspector-body > .messages-card > .card-body {
+  flex: 1; min-height: 0; overflow-y: auto;
+}
 
 .stat-strip {
   display: grid; grid-template-columns: repeat(4, 1fr);
@@ -293,27 +400,6 @@ code { font-family: var(--font-mono); font-size: 0.88em; }
 .stat-strip .v.muted { color: var(--fg-2); }
 .stat-strip .sub {
   font-family: var(--font-mono); font-size: 10.5px; color: var(--fg-3);
-}
-
-.senders { display: flex; flex-direction: column; gap: 6px; }
-.sender-row { display: grid; grid-template-columns: 1fr 44px; gap: 8px; align-items: center; }
-.sender-bar {
-  position: relative; height: 22px;
-  background: var(--bg-inset); border-radius: 3px; overflow: hidden;
-}
-.sender-bar > .fill {
-  position: absolute; inset: 0;
-  background: color-mix(in oklch, var(--accent) 55%, transparent);
-}
-.sender-bar > .label {
-  position: relative; padding: 0 8px;
-  line-height: 22px; font-family: var(--font-mono);
-  font-size: 11.5px; color: var(--fg);
-  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
-  display: block;
-}
-.sender-row .n {
-  text-align: right; font-family: var(--font-mono); font-size: 11.5px;
 }
 
 .stats-missing {
@@ -1060,6 +1146,9 @@ fn topbar(email: &str, stats: Option<&Stats7d>) -> String {
         ),
         None => String::new(),
     };
+    let ticker = stats
+        .map(|s| top_senders_ticker(&s.top_senders))
+        .unwrap_or_default();
     format!(
         r##"<header class="topbar">
   <div class="brand">
@@ -1070,6 +1159,7 @@ fn topbar(email: &str, stats: Option<&Stats7d>) -> String {
     </div>
     {microstats}
   </div>
+  {ticker}
   <div class="right">
     <span class="health"><span class="dot"></span>worker live</span>
     <span class="user">{email}</span>
@@ -1077,6 +1167,33 @@ fn topbar(email: &str, stats: Option<&Stats7d>) -> String {
 </header>"##,
         logo = LOGO_SVG,
         email = html_escape(email),
+    )
+}
+
+/// Top senders rendered as a horizontally-scrolling marquee for the
+/// topbar gap. The track is duplicated so the CSS animation can loop
+/// seamlessly (translate from 0 to -50% repeats without a visible jump).
+/// Nothing renders when there are no senders.
+fn top_senders_ticker(senders: &[crate::stats::TopSender]) -> String {
+    if senders.is_empty() {
+        return String::new();
+    }
+    let one_pass: String = senders
+        .iter()
+        .map(|s| {
+            format!(
+                r##"<span class="item"><span class="n">{n}</span><span class="addr">{addr}</span></span>"##,
+                n = s.n,
+                addr = html_escape(&s.address),
+            )
+        })
+        .collect::<Vec<_>>()
+        .join("");
+    format!(
+        r##"<div class="topbar-ticker" title="Top senders · 7d (forwarded)">
+  <span class="label">top senders · 7d</span>
+  <div class="track" aria-hidden="false">{one_pass}{one_pass}</div>
+</div>"##,
     )
 }
 
@@ -1197,23 +1314,19 @@ pub fn workbench(
     )
 }
 
-/// Inspector when no rule is selected: just the always-on globals
-/// (Top senders + Tester) in the scrollable section. No L-shape.
-fn inspector_globals(rules: &[Rule], stats: Option<&Stats7d>) -> String {
-    let top_senders_card = stats
-        .map(|s| render_top_senders(&s.top_senders))
-        .unwrap_or_default();
-    let sandbox = inspector_tester(rules, None);
-    format!(
-        r##"<section class="inspector-pane">
-  <div class="inspector-global-section">
-    <div class="inspector-body">
-      {top_senders_card}
-      {sandbox}
+/// Inspector when no rule is selected: a soft hint pointing the user at
+/// the pipeline. The tester now lives at the top of the pipeline pane and
+/// top senders ride the topbar ticker, so this view stays out of the way.
+fn inspector_globals(_rules: &[Rule], _stats: Option<&Stats7d>) -> String {
+    r##"<section class="inspector-pane">
+  <div class="inspector-empty">
+    <div class="hint">
+      <span class="arrow">←</span>
+      Pick a rule from the pipeline to see its destinations, recent stats and the emails it has stored.
     </div>
   </div>
-</section>"##,
-    )
+</section>"##
+        .to_string()
 }
 
 /// HTMX-targeted response: same as `workbench`, plus an out-of-band
@@ -1230,7 +1343,9 @@ pub fn workbench_response(
     format!("{body}\n<div id=\"editor-modal\" hx-swap-oob=\"true\"></div>")
 }
 
-/// Left pane: pipeline of rule cards, top-to-bottom.
+/// Left pane: tester + pipeline of rule cards, top-to-bottom. The whole
+/// pane shares one `tester(...)` Alpine scope so typing in the tester
+/// input animates the matching rule card via `:class` bindings.
 fn pipeline_pane(rules: &[Rule], selected_idx: Option<usize>) -> String {
     let cards: String = rules
         .iter()
@@ -1248,8 +1363,13 @@ fn pipeline_pane(rules: &[Rule], selected_idx: Option<usize>) -> String {
     } else {
         ""
     };
+    let selected_id = selected_idx
+        .and_then(|i| rules.get(i).map(|r| r.id.as_str()))
+        .unwrap_or("");
+    let init_attr = tester_init_attr(rules, selected_id);
+    let tester = tester_card(selected_idx.is_some());
     format!(
-        r##"<aside class="pipeline-pane">
+        r##"<aside class="pipeline-pane" x-data='tester({init_attr})'>
   <header>
     <div>
       <h3>Routing pipeline</h3>
@@ -1265,6 +1385,7 @@ fn pipeline_pane(rules: &[Rule], selected_idx: Option<usize>) -> String {
       </button>
     </div>
   </header>
+  <div class="pipeline-tester">{tester}</div>
   <div class="pipeline-list">
     <div class="pipeline-node enter"><span class="dot"></span>INBOUND · email_routing</div>
     {cards}
@@ -1338,8 +1459,15 @@ fn pipeline_card(rule: &Rule, index: usize, selected: bool) -> String {
     } else {
         ""
     };
+    let id_e = html_escape(&rule.id);
+    // Reactive class bindings consume the surrounding pipeline-pane's
+    // tester() Alpine scope: this card glows when the typed address
+    // resolves to it; siblings dim so the eye lands on the firing one.
+    let alpine_class = format!(
+        r##":class="{{ 'tester-firing': to.includes('@') && firstMatch() && firstMatch().id === '{id_e}', 'tester-dim': to.includes('@') && firstMatch() && firstMatch().id !== '{id_e}' }}""##,
+    );
     format!(
-        r##"<a href="{href}" class="{card_cls}" data-rule-id="{id}"{title}>
+        r##"<a href="{href}" class="{card_cls}" {alpine_class} data-rule-id="{id_e}"{title}>
   <div class="grid">
     <div class="{order_cls}"><span>{order:02}</span></div>
     <div class="body">
@@ -1354,7 +1482,6 @@ fn pipeline_card(rule: &Rule, index: usize, selected: bool) -> String {
   </div>
   {move_tools}
 </a>"##,
-        id = html_escape(&rule.id),
         order = index + 1,
         label = html_escape(&rule.display_label()),
         pattern = pattern_html(&rule.local_pattern, &rule.domain_pattern),
@@ -1569,7 +1696,10 @@ fn inspector_pane(
     )
 }
 
-/// Card wrapping the per-rule "Stored emails" list.
+/// Card wrapping the per-rule "Stored emails" list. The `messages-card`
+/// class hooks into `.inspector-body` styling so this card grows to fill
+/// remaining vertical space and scrolls internally instead of forcing
+/// the whole inspector to scroll.
 pub fn rule_messages_card(rule_id: &str, items: &[MessageListItem]) -> String {
     let count = items.len();
     let count_label = if count == 25 {
@@ -1583,7 +1713,7 @@ pub fn rule_messages_card(rule_id: &str, items: &[MessageListItem]) -> String {
         rule_messages_list(rule_id, items, false)
     };
     format!(
-        r##"<div class="card">
+        r##"<div class="card messages-card">
   <header><h3>Stored emails</h3><small>{count_label}</small></header>
   <div class="card-body" style="padding:0">{body}</div>
 </div>"##,
@@ -1761,42 +1891,6 @@ fn render_stat_strip(rule: &Rule, dest_count: usize, stats: Option<&Stats7d>) ->
     )
 }
 
-/// "Top senders" card. Always renders (under the inspector body), since
-/// the data is global rather than per-rule.
-fn render_top_senders(senders: &[crate::stats::TopSender]) -> String {
-    if senders.is_empty() {
-        return r##"<div class="card">
-  <header><h3>Top senders · 7d</h3><small>global</small></header>
-  <div class="card-body"><div class="empty">No forwarded mail in the last 7 days.</div></div>
-</div>"##
-            .to_string();
-    }
-    let max = senders.iter().map(|s| s.n).max().unwrap_or(1).max(1);
-    let rows: String = senders
-        .iter()
-        .map(|s| {
-            let pct = (s.n as f64 / max as f64 * 100.0).round();
-            format!(
-                r##"<div class="sender-row">
-  <div class="sender-bar">
-    <div class="fill" style="width:{pct}%"></div>
-    <span class="label">{addr}</span>
-  </div>
-  <span class="n">{n}</span>
-</div>"##,
-                addr = html_escape(&s.address),
-                n = s.n,
-            )
-        })
-        .collect();
-    format!(
-        r##"<div class="card">
-  <header><h3>Top senders · 7d</h3><small>global · forwarded only</small></header>
-  <div class="card-body"><div class="senders">{rows}</div></div>
-</div>"##,
-    )
-}
-
 /// Render a "5m ago" / "3h ago" style relative time from a unix-second
 /// timestamp, anchored to `now_ms` (unix milliseconds).
 fn relative_time_from_seconds(ts_s: i64, now_ms: i64) -> String {
@@ -1878,14 +1972,10 @@ fn channel_icon(kind: &str) -> &'static str {
     }
 }
 
-/// Interactive tester card in the inspector. Mirrors the routing engine's
-/// glob matcher in JS so each keystroke runs the full ruleset client-side
-/// and shows: (a) does the *selected* rule's pattern match this address,
-/// (b) which rule actually fires (top-down, first match wins), (c) if a
-/// different rule fires earlier, link to it.
-fn inspector_tester(all_rules: &[Rule], selected: Option<&Rule>) -> String {
-    // Pass enough rule metadata for client-side eval. Action label drives
-    // the result tag colour.
+/// JSON init payload for the `tester(...)` Alpine factory. Pre-escaped
+/// for use inside an HTML attribute (the `x-data='...'` wrapper lives on
+/// the surrounding aside, see [`pipeline_pane`]).
+fn tester_init_attr(all_rules: &[Rule], selected_id: &str) -> String {
     let rules_json: Vec<serde_json::Value> = all_rules
         .iter()
         .map(|r| {
@@ -1907,21 +1997,31 @@ fn inspector_tester(all_rules: &[Rule], selected: Option<&Rule>) -> String {
             })
         })
         .collect();
-    let selected_id = selected.map(|r| r.id.as_str()).unwrap_or("");
     let init = serde_json::json!({
         "rules": rules_json,
         "selectedId": selected_id,
     })
     .to_string();
-    let init_attr = html_escape(&init);
-    let header_small = if selected.is_some() {
+    html_escape(&init)
+}
+
+/// Interactive tester card. Mirrors the routing engine's glob matcher in
+/// JS so each keystroke runs the full ruleset client-side and shows:
+/// (a) does the *selected* rule's pattern match this address,
+/// (b) which rule actually fires (top-down, first match wins),
+/// (c) if a different rule fires earlier, link to it.
+///
+/// Lives at the top of the pipeline pane and shares its `tester(...)`
+/// Alpine scope with the surrounding pipeline cards: typing in the input
+/// drives the firing-card animation in [`pipeline_card`].
+fn tester_card(has_selected: bool) -> String {
+    let header_small = if has_selected {
         "this rule + full ruleset"
     } else {
         "full ruleset"
     };
-
     format!(
-        r##"<div class="card" x-data='tester({init_attr})'>
+        r##"<div class="card tester-card">
   <header><h3>Tester</h3><small>{header_small}</small></header>
   <div class="card-body">
     <div class="field">
