@@ -104,6 +104,7 @@ code { font-family: var(--font-mono); font-size: 0.88em; }
 .workbench-shell {
   display: flex; flex-direction: column;
   height: 100vh;
+  overflow-x: hidden;
 }
 .topbar {
   display: flex; align-items: center; gap: 16px;
@@ -849,8 +850,72 @@ code { font-family: var(--font-mono); font-size: 0.88em; }
 ::-webkit-scrollbar-track { background: transparent; }
 
 @media (max-width: 880px) {
+  /* topbar: brand + microstats + right cluster on the first row, ticker
+     drops to its own full-width row underneath. Hide the "routing
+     pipeline" subtitle to make room for microstats next to the brand. */
+  .topbar {
+    flex-wrap: wrap;
+    padding: 8px 12px;
+    column-gap: 12px; row-gap: 6px;
+  }
+  .topbar .brand .title small { display: none; }
+  .topbar .brand { gap: 10px; }
+  .microstats { gap: 10px; }
+  .microstat .v { font-size: 13px; }
+  .topbar-ticker {
+    order: 99;
+    flex: 1 1 100%;
+    min-width: 0; height: 20px;
+    padding-top: 4px;
+    border-top: 1px dashed var(--line-2);
+  }
+
+  /* workbench: pipeline gets the top half, inspector pinned to the
+     bottom half. Each pane scrolls internally; the inspector empty
+     state still centers within its share. */
+  .workbench {
+    grid-template-columns: 1fr;
+    grid-template-rows: minmax(0, 1fr) minmax(0, 1fr);
+  }
   .pipeline-pane { border-right: none; border-bottom: 1px solid var(--line); }
   .inspector-header { flex-direction: column; align-items: stretch; }
+  .inspector-body { padding: 16px 14px; gap: 14px; }
+  .stat-strip { grid-template-columns: repeat(2, 1fr); }
+
+  /* live feed bar: trim the filter chips (low value on mobile) so the
+     pending pill + event count survive on one row. */
+  .live-feed { height: 180px; }
+  .live-feed-bar { gap: 8px; padding: 0 10px; }
+  .live-feed-bar .filters { display: none; }
+
+  /* live-row: drop fixed-width columns that caused the horizontal
+     overflow; show ts / kind / from only and rely on the live-feed bar
+     "N events" counter for the size signal. */
+  .live-feed-body { padding: 4px 10px 8px; }
+  .live-row {
+    grid-template-columns: 60px 60px minmax(0, 1fr);
+    column-gap: 8px;
+    padding: 5px 0;
+    border-bottom: 1px dashed var(--line-2);
+  }
+  .live-row .arrow,
+  .live-row > .addr ~ .addr,
+  .live-row .chs,
+  .live-row .size { display: none; }
+  .live-row .err { margin-left: 0; }
+
+  /* pipeline-card reorder buttons live behind a hover state on desktop;
+     touch can't hover, so always show them on mobile. */
+  .rule-card .move-tools { opacity: 1; pointer-events: auto; }
+
+  /* conflict banner: full-width on narrow screens instead of clipped
+     center column. */
+  .conflict-banner {
+    left: 12px; right: 12px; bottom: 12px;
+    transform: none; max-width: none;
+    flex-wrap: wrap;
+  }
+  .conflict-banner .msg { flex-basis: 100%; }
 }
 "##;
 
