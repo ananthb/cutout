@@ -1,8 +1,16 @@
 use crate::types::{PendingAction, PendingDispatch, ReverseAlias};
 use botrelay::reply::ReplyContext;
 use serde::Deserialize;
+use wasm_bindgen::JsValue;
 use worker::d1::*;
 use worker::*;
+
+/// `Option<T>::into::<JsValue>()` produces `JsValue::UNDEFINED` for `None`,
+/// which D1 rejects with `D1_TYPE_ERROR: Type 'undefined' not supported`.
+/// Use this helper for any nullable bind argument so `None` becomes SQL NULL.
+fn js_opt<T: Into<JsValue>>(v: Option<T>) -> JsValue {
+    v.map(Into::into).unwrap_or(JsValue::null())
+}
 
 pub async fn save_reverse_mapping(
     db: &D1Database,
@@ -91,11 +99,11 @@ pub async fn save_recent_telegram_chat(
     .bind(&[
         chat_id.into(),
         chat_type.into(),
-        title.into(),
-        username.into(),
-        from_user_id.map(|v| v as f64).into(),
-        from_username.into(),
-        from_first_name.into(),
+        js_opt(title),
+        js_opt(username),
+        js_opt(from_user_id.map(|v| v as f64)),
+        js_opt(from_username),
+        js_opt(from_first_name),
     ])?
     .run()
     .await?;
@@ -159,8 +167,8 @@ pub async fn save_bot_ctx(
             ctx.alias.clone().into(),
             ctx.original_sender.clone().into(),
             ctx.subject.clone().into(),
-            inbound_message_id.into(),
-            inbound_references.into(),
+            js_opt(inbound_message_id),
+            js_opt(inbound_references),
         ])?
         .run()
         .await?;
@@ -209,7 +217,7 @@ pub async fn save_message(
         recipient.into(),
         subject.into(),
         r2_key.into(),
-        rule_id.into(),
+        js_opt(rule_id),
     ])?
     .run()
     .await?;
@@ -252,7 +260,7 @@ pub async fn list_messages_for_rule(
              ORDER BY created_at DESC \
              LIMIT ?3",
         )
-        .bind(&[rule_id.into(), before.into(), (limit as f64).into()])?
+        .bind(&[rule_id.into(), js_opt(before), (limit as f64).into()])?
         .all()
         .await?;
     let rows: Vec<MessageListRow> = result.results()?;
@@ -365,11 +373,11 @@ pub async fn insert_pending(db: &D1Database, p: &PendingDispatch) -> Result<()> 
         p.id.clone().into(),
         p.sender.clone().into(),
         p.recipient.clone().into(),
-        p.rule_id.clone().into(),
+        js_opt(p.rule_id.clone()),
         p.r2_key.clone().into(),
         actions_json.into(),
         (p.attempts as f64).into(),
-        p.last_error.clone().into(),
+        js_opt(p.last_error.clone()),
         (if p.dead_lettered { 1.0_f64 } else { 0.0_f64 }).into(),
     ])?
     .run()
@@ -403,7 +411,7 @@ pub async fn update_pending_after_attempt(
          SET pending_actions = ?, attempts = attempts + 1, last_error = ?, updated_at = CURRENT_TIMESTAMP \
          WHERE id = ?",
     )
-    .bind(&[actions_json.into(), last_error.into(), id.into()])?
+    .bind(&[actions_json.into(), js_opt(last_error), id.into()])?
     .run()
     .await?;
     Ok(())
@@ -423,7 +431,7 @@ pub async fn mark_dead_lettered(db: &D1Database, id: &str, last_error: Option<&s
          SET dead_lettered = 1, last_error = COALESCE(?, last_error), updated_at = CURRENT_TIMESTAMP \
          WHERE id = ?",
     )
-    .bind(&[last_error.into(), id.into()])?
+    .bind(&[js_opt(last_error), id.into()])?
     .run()
     .await?;
     Ok(())
