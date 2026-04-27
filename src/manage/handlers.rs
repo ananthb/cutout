@@ -31,11 +31,13 @@ async fn fetch_messages_for_selected(
         .ok()
 }
 
-/// Ensure the rules list has a catch-all as the last rule.
-/// If empty, creates a default catch-all with Drop action.
-async fn ensure_catch_all(kv_store: &worker::kv::KvStore) -> Result<Vec<Rule>> {
-    let mut rules = kv::get_rules(kv_store).await?;
-    if rules.is_empty() || !rules.last().is_some_and(|r| r.is_catch_all()) {
+/// Ensure the rules list has a catch-all as the last rule. If the
+/// stored set is missing one (only happens on first deploy), inserts a
+/// default Drop catch-all and force-saves it. Returns the loaded set
+/// with its current version so callers can thread it through CAS saves.
+async fn ensure_catch_all(kv_store: &worker::kv::KvStore) -> Result<kv::RuleSet> {
+    let mut set = kv::get_rule_set(kv_store).await?;
+    if set.rules.is_empty() || !set.rules.last().is_some_and(|r| r.is_catch_all()) {
         let catch_all = Rule {
             id: generate_id(),
             local_pattern: "*".into(),
@@ -43,10 +45,42 @@ async fn ensure_catch_all(kv_store: &worker::kv::KvStore) -> Result<Vec<Rule>> {
             action: Action::Drop,
             label: "Catch-all".into(),
         };
-        rules.push(catch_all);
-        kv::save_rules(kv_store, &rules).await?;
+        set.rules.push(catch_all);
+        kv::save_rule_set_force(kv_store, &set.rules, set.version).await?;
     }
-    Ok(rules)
+    Ok(set)
+}
+
+/// Read the editor's expected `rules_version` from the form. A missing
+/// or unparseable field is taken as version 0, which only ever matches
+/// a freshly-bootstrapped store, so any concurrent change will already
+/// produce a conflict.
+fn version_from_form(form: &serde_json::Value) -> u64 {
+    form.get("rules_version")
+        .and_then(|v| match v {
+            serde_json::Value::String(s) => s.parse::<u64>().ok(),
+            serde_json::Value::Number(n) => n.as_u64(),
+            _ => None,
+        })
+        .unwrap_or(0)
+}
+
+/// HTMX-friendly 409 for the "another operator saved while you were
+/// editing" case. Emits an `HX-Trigger: rule-conflict` event header so
+/// a global Alpine listener can show a sticky banner; the body itself
+/// is a fallback message in case the event isn't wired up.
+fn conflict_response(current_version: u64) -> Result<Response> {
+    let body = format!(
+        "Rules version conflict: another operator saved (now version {current_version}). Refresh and try again."
+    );
+    let mut resp = Response::ok(body)?.with_status(409);
+    let headers = resp.headers_mut();
+    headers.set(
+        "HX-Trigger",
+        &format!(r#"{{"rule-conflict":{{"current_version":{current_version}}}}}"#),
+    )?;
+    headers.set("HX-Reswap", "none")?;
+    Ok(resp)
 }
 
 /// Parse an Action from form JSON. The `destinations` field is a
@@ -115,6 +149,7 @@ fn selected_from_query(req: &Request) -> Option<String> {
 async fn render_workbench(
     env: &Env,
     rules: &[Rule],
+    version: u64,
     enabled: &EnabledChannels,
     selected: Option<&str>,
 ) -> String {
@@ -124,6 +159,7 @@ async fn render_workbench(
     let messages = fetch_messages_for_selected(env, selected).await;
     templates::workbench_response(
         rules,
+        version,
         &report,
         enabled,
         idx,
@@ -144,15 +180,16 @@ fn validation_error_response(report: &validation::Report) -> Result<Response> {
 /// GET /manage: list rules
 pub async fn list_rules(req: Request, env: &Env, email: &str) -> Result<Response> {
     let kv_store = env.kv("KV")?;
-    let rules = ensure_catch_all(&kv_store).await?;
+    let set = ensure_catch_all(&kv_store).await?;
     let enabled = EnabledChannels::from_env(env);
-    let report = validation::validate(&rules, &enabled);
+    let report = validation::validate(&set.rules, &enabled);
     let selected = selected_from_query(&req);
     let stats = stats::fetch_7d(env).await;
     let messages = fetch_messages_for_selected(env, selected.as_deref()).await;
 
     Response::from_html(templates::rules_page(
-        &rules,
+        &set.rules,
+        set.version,
         email,
         &report,
         &enabled,
@@ -178,7 +215,11 @@ pub async fn create_rule(mut req: Request, env: &Env) -> Result<Response> {
         Err(e) => return Response::error(format!("destinations: {e}"), 400),
     };
 
-    let mut rules = ensure_catch_all(&kv_store).await?;
+    let expected_version = version_from_form(&form);
+    let mut set = ensure_catch_all(&kv_store).await?;
+    if set.version != expected_version {
+        return conflict_response(set.version);
+    }
 
     let rule = Rule {
         id: generate_id(),
@@ -202,17 +243,24 @@ pub async fn create_rule(mut req: Request, env: &Env) -> Result<Response> {
     };
 
     let new_id = rule.id.clone();
-    let insert_pos = rules.len().saturating_sub(1);
-    rules.insert(insert_pos, rule);
+    let insert_pos = set.rules.len().saturating_sub(1);
+    set.rules.insert(insert_pos, rule);
 
     let enabled = EnabledChannels::from_env(env);
-    let report = validation::validate(&rules, &enabled);
+    let report = validation::validate(&set.rules, &enabled);
     if report.has_errors() {
         return validation_error_response(&report);
     }
 
-    kv::save_rules(&kv_store, &rules).await?;
-    Response::from_html(render_workbench(env, &rules, &enabled, Some(&new_id)).await)
+    let new_version = match kv::save_rule_set_if_unchanged(&kv_store, &set.rules, set.version)
+        .await?
+    {
+        kv::SaveOutcome::Saved { new_version } => new_version,
+        kv::SaveOutcome::Conflict { current_version } => return conflict_response(current_version),
+    };
+    Response::from_html(
+        render_workbench(env, &set.rules, new_version, &enabled, Some(&new_id)).await,
+    )
 }
 
 /// GET /manage/rules/{id}/edit: return edit form partial
@@ -237,9 +285,13 @@ pub async fn update_rule(mut req: Request, env: &Env, rule_id: &str) -> Result<R
         Err(e) => return Response::error(format!("destinations: {e}"), 400),
     };
 
-    let mut rules = kv::get_rules(&kv_store).await?;
+    let expected_version = version_from_form(&form);
+    let mut set = kv::get_rule_set(&kv_store).await?;
+    if set.version != expected_version {
+        return conflict_response(set.version);
+    }
 
-    if let Some(existing) = rules.iter_mut().find(|r| r.id == rule_id) {
+    if let Some(existing) = set.rules.iter_mut().find(|r| r.id == rule_id) {
         existing.label = form
             .get("label")
             .and_then(|v| v.as_str())
@@ -259,21 +311,34 @@ pub async fn update_rule(mut req: Request, env: &Env, rule_id: &str) -> Result<R
     }
 
     let enabled = EnabledChannels::from_env(env);
-    let report = validation::validate(&rules, &enabled);
+    let report = validation::validate(&set.rules, &enabled);
     if report.has_errors() {
         return validation_error_response(&report);
     }
 
-    kv::save_rules(&kv_store, &rules).await?;
-    Response::from_html(render_workbench(env, &rules, &enabled, Some(rule_id)).await)
+    let new_version = match kv::save_rule_set_if_unchanged(&kv_store, &set.rules, set.version)
+        .await?
+    {
+        kv::SaveOutcome::Saved { new_version } => new_version,
+        kv::SaveOutcome::Conflict { current_version } => return conflict_response(current_version),
+    };
+    Response::from_html(
+        render_workbench(env, &set.rules, new_version, &enabled, Some(rule_id)).await,
+    )
 }
 
 /// DELETE /manage/rules/{id}: delete a rule (blocked for catch-all)
 pub async fn delete_rule(mut req: Request, env: &Env, rule_id: &str) -> Result<Response> {
     let kv_store = env.kv("KV")?;
-    let mut rules = kv::get_rules(&kv_store).await?;
+    let form: serde_json::Value = req.json().await.unwrap_or(serde_json::Value::Null);
 
-    if let Some(rule) = rules.iter().find(|r| r.id == rule_id) {
+    let expected_version = version_from_form(&form);
+    let mut set = kv::get_rule_set(&kv_store).await?;
+    if set.version != expected_version {
+        return conflict_response(set.version);
+    }
+
+    if let Some(rule) = set.rules.iter().find(|r| r.id == rule_id) {
         if rule.is_catch_all() {
             return Response::error("Cannot delete the catch-all rule", 400);
         }
@@ -281,15 +346,21 @@ pub async fn delete_rule(mut req: Request, env: &Env, rule_id: &str) -> Result<R
 
     // Best-effort selection preservation: if the deleted rule was selected,
     // fall back to whatever the form said (or default in template).
-    let form: serde_json::Value = req.json().await.unwrap_or(serde_json::Value::Null);
     let selected = selected_from_form(&form)
         .filter(|s| *s != rule_id)
         .map(str::to_string);
 
-    rules.retain(|r| r.id != rule_id);
-    kv::save_rules(&kv_store, &rules).await?;
+    set.rules.retain(|r| r.id != rule_id);
+    let new_version = match kv::save_rule_set_if_unchanged(&kv_store, &set.rules, set.version)
+        .await?
+    {
+        kv::SaveOutcome::Saved { new_version } => new_version,
+        kv::SaveOutcome::Conflict { current_version } => return conflict_response(current_version),
+    };
     let enabled = EnabledChannels::from_env(env);
-    Response::from_html(render_workbench(env, &rules, &enabled, selected.as_deref()).await)
+    Response::from_html(
+        render_workbench(env, &set.rules, new_version, &enabled, selected.as_deref()).await,
+    )
 }
 
 /// POST /manage/rules/reorder: move a rule up or down
@@ -301,31 +372,42 @@ pub async fn reorder_rules(mut req: Request, env: &Env) -> Result<Response> {
     let direction = form.get("direction").and_then(|v| v.as_str()).unwrap_or("");
     let selected = selected_from_form(&form).map(str::to_string);
 
-    let mut rules = kv::get_rules(&kv_store).await?;
+    let expected_version = version_from_form(&form);
+    let mut set = kv::get_rule_set(&kv_store).await?;
+    if set.version != expected_version {
+        return conflict_response(set.version);
+    }
 
     let enabled = EnabledChannels::from_env(env);
-    if let Some(pos) = rules.iter().position(|r| r.id == rule_id) {
-        if rules[pos].is_catch_all() {
+    if let Some(pos) = set.rules.iter().position(|r| r.id == rule_id) {
+        if set.rules[pos].is_catch_all() {
             return Response::from_html(
-                render_workbench(env, &rules, &enabled, selected.as_deref()).await,
+                render_workbench(env, &set.rules, set.version, &enabled, selected.as_deref()).await,
             );
         }
 
-        let catch_all_pos = rules.len().saturating_sub(1);
+        let catch_all_pos = set.rules.len().saturating_sub(1);
 
         match direction {
             "up" if pos > 0 => {
-                rules.swap(pos, pos - 1);
+                set.rules.swap(pos, pos - 1);
             }
             "down" if pos + 1 < catch_all_pos => {
-                rules.swap(pos, pos + 1);
+                set.rules.swap(pos, pos + 1);
             }
             _ => {}
         }
     }
 
-    kv::save_rules(&kv_store, &rules).await?;
-    Response::from_html(render_workbench(env, &rules, &enabled, selected.as_deref()).await)
+    let new_version = match kv::save_rule_set_if_unchanged(&kv_store, &set.rules, set.version)
+        .await?
+    {
+        kv::SaveOutcome::Saved { new_version } => new_version,
+        kv::SaveOutcome::Conflict { current_version } => return conflict_response(current_version),
+    };
+    Response::from_html(
+        render_workbench(env, &set.rules, new_version, &enabled, selected.as_deref()).await,
+    )
 }
 
 /// GET /manage/events?since={unix_ms}: JSON tail of the event ring buffer.

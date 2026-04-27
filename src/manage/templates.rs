@@ -821,6 +821,24 @@ code { font-family: var(--font-mono); font-size: 0.88em; }
 .rule-message-body .embed-footer { margin-top: 8px; display: flex; justify-content: flex-end; }
 [x-cloak] { display: none !important; }
 
+/* sticky banner shown when a CRUD save loses a concurrency race;
+   triggered by `HX-Trigger: rule-conflict` from the server. */
+.conflict-banner {
+  position: fixed; left: 50%; bottom: 24px;
+  transform: translateX(-50%);
+  z-index: 1000; max-width: 540px;
+  display: flex; align-items: center; gap: 12px;
+  padding: 12px 14px;
+  background: color-mix(in oklch, var(--bad) 14%, var(--bg-1));
+  border: 1px solid color-mix(in oklch, var(--bad) 50%, var(--line));
+  border-radius: var(--r-md);
+  box-shadow: 0 12px 28px rgba(0,0,0,0.12);
+  font-size: 12.5px;
+}
+.conflict-banner .msg { flex: 1; line-height: 1.45; }
+.conflict-banner .msg strong { display: block; color: var(--bad); margin-bottom: 2px; }
+.conflict-banner .conflict-dismiss { font-size: 16px; line-height: 1; padding: 4px 8px; }
+
 /* misc ------------------------------------------------------------ */
 .empty {
   padding: 28px; color: var(--fg-2); font-size: 12.5px;
@@ -1123,6 +1141,17 @@ pub fn base_html(title: &str, content: &str) -> String {
 <body>
 {content}
 <div id="editor-modal"></div>
+<div id="rule-conflict-banner"
+  x-data="{{ show: false, currentVersion: 0 }}"
+  x-on:rule-conflict.window="show = true; currentVersion = ($event.detail && $event.detail.current_version) || 0"
+  x-show="show" x-cloak class="conflict-banner">
+  <div class="msg">
+    <strong>Another operator just saved.</strong>
+    <span>Your last action was rejected to avoid overwriting their changes. Reload to see the latest rules (now version <span x-text="currentVersion"></span>).</span>
+  </div>
+  <button class="btn primary sm" type="button" @click="window.location.reload()">Reload</button>
+  <button class="btn ghost sm conflict-dismiss" type="button" @click="show = false" title="Dismiss">×</button>
+</div>
 </body>
 </html>"##,
         title = html_escape(title),
@@ -1205,6 +1234,7 @@ fn top_senders_ticker(senders: &[crate::stats::TopSender]) -> String {
 /// Full rules management page (the workbench).
 pub fn rules_page(
     rules: &[Rule],
+    rules_version: u64,
     email: &str,
     report: &Report,
     enabled: &EnabledChannels,
@@ -1213,7 +1243,15 @@ pub fn rules_page(
     messages: Option<&[MessageListItem]>,
 ) -> String {
     let selected_idx = pick_selected_idx(rules, selected_id);
-    let workbench = workbench(rules, report, enabled, selected_idx, stats, messages);
+    let workbench = workbench(
+        rules,
+        rules_version,
+        report,
+        enabled,
+        selected_idx,
+        stats,
+        messages,
+    );
     let content = format!(
         r##"<div class="workbench-shell">
 {topbar}
@@ -1297,9 +1335,13 @@ pub const LOGO_SVG_FILE: &str = r##"<svg xmlns="http://www.w3.org/2000/svg" view
 </svg>"##;
 
 /// The two-pane workbench (pipeline + inspector). Wrapped in `#workbench`
-/// so HTMX endpoints can swap the whole region after CRUD.
+/// so HTMX endpoints can swap the whole region after CRUD. The hidden
+/// `#workbench-form` carries `rules_version` (and `selected` when a
+/// rule is open) so every CRUD button can `hx-include` it; `rules_version`
+/// drives the optimistic-concurrency check on the server.
 pub fn workbench(
     rules: &[Rule],
+    rules_version: u64,
     report: &Report,
     enabled: &EnabledChannels,
     selected_idx: Option<usize>,
@@ -1311,11 +1353,19 @@ pub fn workbench(
         Some(i) if i < rules.len() => inspector_pane(rules, i, report, enabled, stats, messages),
         _ => inspector_globals(rules, stats),
     };
+    let selected_value = selected_idx
+        .and_then(|i| rules.get(i).map(|r| r.id.as_str()))
+        .unwrap_or("");
     format!(
         r##"<div id="workbench" class="workbench">
 {pipeline}
 {inspector}
-</div>"##
+<form id="workbench-form" style="display:none">
+  <input type="hidden" name="rules_version" value="{rules_version}">
+  <input type="hidden" name="selected" value="{selected_value}">
+</form>
+</div>"##,
+        selected_value = html_escape(selected_value),
     )
 }
 
@@ -1338,13 +1388,22 @@ fn inspector_globals(_rules: &[Rule], _stats: Option<&Stats7d>) -> String {
 /// `#editor-modal` clear so any open modal closes after a successful CRUD.
 pub fn workbench_response(
     rules: &[Rule],
+    rules_version: u64,
     report: &Report,
     enabled: &EnabledChannels,
     selected_idx: Option<usize>,
     stats: Option<&Stats7d>,
     messages: Option<&[MessageListItem]>,
 ) -> String {
-    let body = workbench(rules, report, enabled, selected_idx, stats, messages);
+    let body = workbench(
+        rules,
+        rules_version,
+        report,
+        enabled,
+        selected_idx,
+        stats,
+        messages,
+    );
     format!("{body}\n<div id=\"editor-modal\" hx-swap-oob=\"true\"></div>")
 }
 
@@ -1444,12 +1503,12 @@ fn pipeline_card(rule: &Rule, index: usize, selected: bool) -> String {
     hx-post="/manage/rules/reorder" hx-vals='{up_vals}'
     hx-target="#workbench" hx-swap="outerHTML"
     hx-ext="json-enc"
-    hx-include="[name=selected]">↑</button>
+    hx-include="#workbench-form">↑</button>
   <button class="btn ghost icon sm" title="Move down"
     hx-post="/manage/rules/reorder" hx-vals='{down_vals}'
     hx-target="#workbench" hx-swap="outerHTML"
     hx-ext="json-enc"
-    hx-include="[name=selected]">↓</button>
+    hx-include="#workbench-form">↓</button>
 </div>"##,
         )
     };
@@ -1600,20 +1659,10 @@ fn inspector_pane(
   hx-confirm="Delete this rule?"
   hx-target="#workbench" hx-swap="outerHTML"
   hx-ext="json-enc"
-  hx-include="[name=selected]">Delete</button>"##,
+  hx-include="#workbench-form">Delete</button>"##,
             id = html_escape(&rule.id),
         )
     };
-
-    // Hidden form holding the currently-selected rule id, picked up by
-    // hx-include on every CRUD button so the server can preserve selection
-    // across swaps.
-    let selected_form = format!(
-        r#"<form id="selection-form" style="display:none">
-  <input type="hidden" name="selected" value="{id}">
-</form>"#,
-        id = html_escape(&rule.id),
-    );
 
     let destinations_card = match &rule.action {
         Action::Forward {
@@ -1691,7 +1740,6 @@ fn inspector_pane(
       {destinations_card}
       {action_summary_card}
       {messages_card}
-      {selected_form}
     </div>
   </div>
 </section>"##,
@@ -2217,7 +2265,7 @@ fn editor_modal(
     {hx_attr}
     hx-target="#workbench" hx-swap="outerHTML"
     hx-ext="json-enc"
-    hx-include="[name=selected]"
+    hx-include="#workbench-form"
     @submit="onSubmit($event)">
     <div class="modal-body">
       <div class="field">
