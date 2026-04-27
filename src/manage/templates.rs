@@ -116,8 +116,6 @@ code { font-family: var(--font-mono); font-size: 0.88em; }
 .topbar .brand .title b { font-weight: 600; font-size: 14px; }
 .topbar .brand .title small { font-family: var(--font-mono); font-size: 10.5px; color: var(--fg-2); }
 .topbar .right { display: flex; align-items: center; gap: 12px; font-size: 11.5px; color: var(--fg-2); flex-shrink: 0; }
-.topbar .right .health { display: inline-flex; align-items: center; gap: 6px; font-family: var(--font-mono); }
-.topbar .right .health .dot { width: 6px; height: 6px; border-radius: 999px; background: var(--ok); }
 .topbar .right .user { font-family: var(--font-mono); }
 .microstats { display: flex; align-items: center; gap: 14px; }
 .microstat { display: flex; flex-direction: column; line-height: 1.1; gap: 1px; }
@@ -135,14 +133,13 @@ code { font-family: var(--font-mono); font-size: 0.88em; }
   text-transform: uppercase; letter-spacing: 0.06em;
 }
 
-/* top senders ticker tape, sits in the topbar gap. Doubled track scrolls
-   left at constant speed; pauses on hover so an operator can read it. */
+/* top senders ticker tape, sits in the topbar gap. Label stays in
+   normal flow on the left; only the scrolling track gets the edge
+   mask. Doubled track scrolls left at a slow constant rate and
+   pauses on hover so an operator can read it. */
 .topbar-ticker {
   flex: 1; min-width: 0;
   display: flex; align-items: center; gap: 10px;
-  overflow: hidden;
-  -webkit-mask-image: linear-gradient(to right, transparent, black 6%, black 94%, transparent);
-          mask-image: linear-gradient(to right, transparent, black 6%, black 94%, transparent);
   height: 22px;
 }
 .topbar-ticker .label {
@@ -150,13 +147,18 @@ code { font-family: var(--font-mono); font-size: 0.88em; }
   text-transform: uppercase; letter-spacing: 0.08em;
   color: var(--fg-3); flex-shrink: 0;
 }
+.topbar-ticker .ticker-window {
+  flex: 1; min-width: 0; overflow: hidden;
+  -webkit-mask-image: linear-gradient(to right, transparent, black 4%, black 96%, transparent);
+          mask-image: linear-gradient(to right, transparent, black 4%, black 96%, transparent);
+}
 .topbar-ticker .track {
   display: flex; align-items: center; gap: 24px;
   white-space: nowrap;
   animation: topbar-ticker-roll 60s linear infinite;
   will-change: transform;
 }
-.topbar-ticker:hover .track { animation-play-state: paused; }
+.topbar-ticker .ticker-window:hover .track { animation-play-state: paused; }
 .topbar-ticker .item {
   display: inline-flex; align-items: baseline; gap: 6px;
   font-family: var(--font-mono); font-size: 11px;
@@ -1161,7 +1163,6 @@ fn topbar(email: &str, stats: Option<&Stats7d>) -> String {
   </div>
   {ticker}
   <div class="right">
-    <span class="health"><span class="dot"></span>worker live</span>
     <span class="user">{email}</span>
   </div>
 </header>"##,
@@ -1192,7 +1193,9 @@ fn top_senders_ticker(senders: &[crate::stats::TopSender]) -> String {
     format!(
         r##"<div class="topbar-ticker" title="Top senders · 7d (forwarded)">
   <span class="label">top senders · 7d</span>
-  <div class="track" aria-hidden="false">{one_pass}{one_pass}</div>
+  <div class="ticker-window">
+    <div class="track" aria-hidden="false">{one_pass}{one_pass}</div>
+  </div>
 </div>"##,
     )
 }
