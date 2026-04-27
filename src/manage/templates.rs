@@ -92,6 +92,11 @@ body {
   font-size: 14px; line-height: 1.45;
   color: var(--fg); background: var(--bg);
   -webkit-font-smoothing: antialiased;
+  /* Lock the viewport so iOS/Android address-bar offsets don't push
+     the live-feed (or selected inspector) below the fold. The shell
+     uses dvh below to claim the actually-visible viewport. */
+  overflow: hidden;
+  overscroll-behavior: none;
 }
 button { font: inherit; color: inherit; background: none; border: 0; cursor: pointer; padding: 0; }
 input, select, textarea { font: inherit; color: inherit; }
@@ -103,7 +108,11 @@ code { font-family: var(--font-mono); font-size: 0.88em; }
 /* page shell -------------------------------------------------------- */
 .workbench-shell {
   display: flex; flex-direction: column;
+  /* `dvh` follows the visible viewport as the mobile browser chrome
+     (address bar, toolbar) shows and hides; `vh` is the static fallback
+     for browsers without dvh support. */
   height: 100vh;
+  height: 100dvh;
   overflow-x: hidden;
 }
 .topbar {
@@ -894,11 +903,36 @@ code { font-family: var(--font-mono); font-size: 0.88em; }
   .pipeline-list { overflow: visible; flex: 0 0 auto; }
 
   /* Inspector tweaks: stack the header so the back link sits on its
-     own line, tighten body padding. */
+     own line, tighten body padding, and let the whole body scroll as
+     one unit (the desktop pattern of "messages card grows + scrolls
+     internally" clips on a small viewport because the other cards
+     plus the 240px floor on the messages card add up to more than
+     the inspector's height). */
   .inspector-header { flex-direction: column; align-items: stretch; }
   .inspector-back { display: inline-flex; align-self: flex-start; }
-  .inspector-body { padding: 16px 14px; gap: 14px; }
+  .inspector-body {
+    padding: 16px 14px; gap: 14px;
+    overflow-y: auto;
+  }
+  .inspector-body > .messages-card {
+    flex: 0 0 auto; min-height: 0;
+  }
+  .inspector-body > .messages-card > .card-body { overflow: visible; }
   .stat-strip { grid-template-columns: repeat(2, 1fr); }
+
+  /* The live-feed drag handle is 6px tall by default which is unusable
+     with a finger. Bump the touch target on mobile and give it a faint
+     visible bar so users know it's draggable. */
+  .live-feed-handle {
+    height: 16px; top: -8px;
+  }
+  .live-feed-handle::after {
+    content: ""; display: block;
+    position: absolute; left: 50%; top: 50%;
+    transform: translate(-50%, -50%);
+    width: 36px; height: 4px; border-radius: 999px;
+    background: var(--line-2);
+  }
 
   /* live feed bar: trim the filter chips (low value on mobile) so the
      pending pill + event count survive on one row. */
@@ -1112,21 +1146,30 @@ function liveFeed() {
     startResize(e) {
       if (this.collapsed) return;
       e.preventDefault();
-      const startY = e.clientY;
+      // Unified mouse + touch: read clientY from the right place and
+      // bind the matching pair of move/up listeners. Without this the
+      // handle is dead on touch devices.
+      const isTouch = e.type === 'touchstart';
+      const yOf = (ev) => isTouch ? ev.touches[0].clientY : ev.clientY;
+      const startY = yOf(e);
       const startHeight = this.height;
       this.resizing = true;
+      const moveEvt = isTouch ? 'touchmove' : 'mousemove';
+      const endEvt  = isTouch ? 'touchend'  : 'mouseup';
       const onMove = (ev) => {
         // Drag up = bigger feed; drag down = smaller.
-        this.height = clampH(startHeight + (startY - ev.clientY));
+        const y = isTouch ? ev.touches[0].clientY : ev.clientY;
+        this.height = clampH(startHeight + (startY - y));
+        if (isTouch) ev.preventDefault();
       };
       const onUp = () => {
         this.resizing = false;
         this.save();
-        document.removeEventListener('mousemove', onMove);
-        document.removeEventListener('mouseup', onUp);
+        document.removeEventListener(moveEvt, onMove);
+        document.removeEventListener(endEvt, onUp);
       };
-      document.addEventListener('mousemove', onMove);
-      document.addEventListener('mouseup', onUp);
+      document.addEventListener(moveEvt, onMove, isTouch ? { passive: false } : undefined);
+      document.addEventListener(endEvt, onUp);
     },
     init() {
       this.pollPending();
@@ -1354,7 +1397,10 @@ const LIVE_FEED_PANE: &str = r##"<div class="live-feed"
   :class="{ collapsed, resizing }"
   :style="!collapsed ? ('height:' + height + 'px') : ''"
   x-data="liveFeed()" x-init="init()">
-  <div class="live-feed-handle" @mousedown="startResize($event)" title="Drag to resize"></div>
+  <div class="live-feed-handle"
+    @mousedown="startResize($event)"
+    @touchstart="startResize($event)"
+    title="Drag to resize"></div>
   <div class="live-feed-bar">
     <button class="btn ghost sm" @click="toggle()" type="button" style="padding:0 6px">
       <span x-text="collapsed ? '▸' : '▾'"></span>
