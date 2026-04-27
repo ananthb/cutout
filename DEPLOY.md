@@ -30,6 +30,12 @@ The following secrets must be configured in the GitHub repository for the offici
 |----------|-------------|
 | `PUBLIC_BASE_URL` (optional) | Public origin for the deployed Worker (e.g. `https://cutout.example.com`). When set, Telegram/Discord posts include a `View full email →` link to `/manage/m/{id}` (or `/m/{id}?t=…` for `:token` destinations). Empty suppresses the link. |
 
+## Outbound email backend
+
+The generated `wrangler.production.toml` sets `remote = true` on the `[[send_email]]` block, so outbound (proxy-mode forwards, reverse-alias replies, retry redispatch) goes through **Email Service "Email Sending"** and can deliver to any recipient. This requires the sending domains onboarded to Email Service and a paid Workers plan.
+
+For self-hosted forks that don't want the paid plan, drop `remote = true` and the worker falls back to Email Routing's free `send_email`, which only delivers to verified destination addresses on the account.
+
 ## Manual Deployment
 If manual deployment is necessary:
 1.  Ensure you have `nix` installed.

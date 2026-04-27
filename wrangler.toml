@@ -17,10 +17,20 @@ database_id = ""
 binding = "KV"
 
 # ============================================================================
-# Email Routing: send_email binding for outbound forwarding
+# Outbound email binding. Two backends share the same `EMAIL` binding name
+# and JS API:
+#   - Email Routing (default): only delivers to addresses verified as
+#     Email Routing destinations on this account. Free.
+#   - Email Service "Email Sending" (uncomment `remote = true`): delivers to
+#     any recipient. Requires the sending domain onboarded to Email Service
+#     and a paid Workers plan; billed per message.
+# Switching only affects proxy-mode forwards, reverse-alias replies, and
+# the queue retry/DLQ path — non-proxy synchronous forwards use
+# `EmailMessage.forward()` and are unaffected.
 # ============================================================================
 [[send_email]]
 name = "EMAIL"
+# remote = true
 
 # ============================================================================
 # R2 bucket for raw email bytes: pending retries (`pending/<id>`) and
