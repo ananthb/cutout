@@ -1416,8 +1416,11 @@ const LIVE_FEED_PANE: &str = r##"<div class="live-feed"
       </template>
     </div>
     <a class="pending-pill" href="/manage/pending"
-       :data-empty="(pending.queued + pending.dead) === 0 ? '1' : '0'"
-       x-text="`${pending.queued} queued · ${pending.dead} dead-lettered`"></a>
+       :data-empty="(pending.queued + pending.dead) === 0 ? '1' : '0'">
+      <span x-show="pending.queued > 0"><span x-text="pending.queued"></span> queued</span>
+      <span x-show="pending.queued > 0 && pending.dead > 0" style="opacity:0.5"> · </span>
+      <span x-show="pending.dead > 0"><span x-text="pending.dead"></span> DLQ</span>
+    </a>
     <span class="mono" style="margin-left:auto;font-size:11px;color:var(--fg-2)" x-text="visible().length + ' events'"></span>
   </div>
   <div class="live-feed-body" x-show="!collapsed">
