@@ -155,7 +155,7 @@ code { font-family: var(--font-mono); font-size: 0.88em; }
 .topbar-ticker .track {
   display: flex; align-items: center; gap: 24px;
   white-space: nowrap;
-  animation: topbar-ticker-roll 60s linear infinite;
+  animation: topbar-ticker-roll 24s linear infinite;
   will-change: transform;
 }
 .topbar-ticker .ticker-window:hover .track { animation-play-state: paused; }
@@ -1164,6 +1164,8 @@ fn topbar(email: &str, stats: Option<&Stats7d>) -> String {
   {ticker}
   <div class="right">
     <span class="user">{email}</span>
+    <a class="btn ghost sm" href="/cdn-cgi/access/logout"
+       title="Sign out via Cloudflare Access">Log out</a>
   </div>
 </header>"##,
         logo = LOGO_SVG,
