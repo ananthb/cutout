@@ -5,7 +5,9 @@
 //! inspector for the selected rule. Edit/add forms render as overlays.
 
 use crate::bots::EnabledChannels;
+use crate::db::MessageListItem;
 use crate::helpers::html_escape;
+use crate::manage::viewer::RenderedEmail;
 use crate::stats::Stats7d;
 use crate::types::{Action, Destination, PendingDispatch, Rule};
 use crate::validation::Report;
@@ -244,7 +246,7 @@ code { font-family: var(--font-mono); font-size: 0.88em; }
 /* inspector pane ---------------------------------------------------- */
 .inspector-pane { overflow: hidden; min-height: 0; display: flex; flex-direction: column; }
 .inspector-rule-section {
-  flex-shrink: 0;
+  flex: 1; min-height: 0; overflow-y: auto;
   background: var(--bg-1);
   border-bottom: 1px solid var(--line);
 }
@@ -672,6 +674,65 @@ code { font-family: var(--font-mono); font-size: 0.88em; }
   display: flex; justify-content: flex-end; gap: 8px;
 }
 
+/* per-rule stored emails ------------------------------------------ */
+.rule-messages {
+  list-style: none; margin: 0; padding: 0;
+  display: flex; flex-direction: column;
+  border-top: 1px solid var(--line);
+}
+.rule-message { border-bottom: 1px solid var(--line); }
+.rule-message-row {
+  display: grid;
+  grid-template-columns: 88px minmax(0, 1.2fr) minmax(0, 2fr) 18px;
+  gap: 12px; align-items: baseline;
+  width: 100%; padding: 8px 12px;
+  background: transparent; border: 0; text-align: left;
+  font: inherit; color: var(--fg-1); cursor: pointer;
+}
+.rule-message-row:hover { background: var(--bg-1); }
+.rule-message-row .ts {
+  font-family: var(--font-mono); font-size: 11px; color: var(--fg-2);
+  white-space: nowrap;
+}
+.rule-message-row .from {
+  font-size: 12.5px; color: var(--fg-1);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.rule-message-row .subj {
+  font-size: 12.5px; color: var(--fg-2);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.rule-message-row .caret {
+  color: var(--fg-2); font-size: 11px;
+  transition: transform 120ms ease;
+}
+.rule-message-row .caret.open { transform: rotate(90deg); }
+.rule-message-body { background: var(--bg-1); padding: 12px; }
+.rule-message-body .embed-header {
+  display: flex; flex-direction: column; gap: 4px;
+  padding: 10px 12px; margin-bottom: 8px;
+  background: var(--bg); border: 1px solid var(--line); border-radius: 8px;
+}
+.rule-message-body .embed-header .row { display: flex; gap: 10px; font-size: 12px; line-height: 1.5; }
+.rule-message-body .embed-header .row .k {
+  width: 48px; flex-shrink: 0;
+  color: var(--fg-2); text-transform: uppercase; letter-spacing: 0.4px;
+  font-size: 10px; padding-top: 1px;
+}
+.rule-message-body .embed-header .row span:not(.k) { word-break: break-all; }
+.rule-message-body iframe.email-body {
+  width: 100%; min-height: 480px; max-height: 70vh;
+  border: 1px solid var(--line); border-radius: 8px; background: #fff;
+}
+.rule-message-body pre.email-text {
+  margin: 0; padding: 12px;
+  background: var(--bg); border: 1px solid var(--line); border-radius: 8px;
+  white-space: pre-wrap; font-family: var(--font-mono); font-size: 12px; line-height: 1.55;
+  max-height: 70vh; overflow: auto;
+}
+.rule-message-body .embed-footer { margin-top: 8px; display: flex; justify-content: flex-end; }
+[x-cloak] { display: none !important; }
+
 /* misc ------------------------------------------------------------ */
 .empty {
   padding: 28px; color: var(--fg-2); font-size: 12.5px;
@@ -1027,9 +1088,10 @@ pub fn rules_page(
     enabled: &EnabledChannels,
     selected_id: Option<&str>,
     stats: Option<&Stats7d>,
+    messages: Option<&[MessageListItem]>,
 ) -> String {
     let selected_idx = pick_selected_idx(rules, selected_id);
-    let workbench = workbench(rules, report, enabled, selected_idx, stats);
+    let workbench = workbench(rules, report, enabled, selected_idx, stats, messages);
     let content = format!(
         r##"<div class="workbench-shell">
 {topbar}
@@ -1120,10 +1182,11 @@ pub fn workbench(
     enabled: &EnabledChannels,
     selected_idx: Option<usize>,
     stats: Option<&Stats7d>,
+    messages: Option<&[MessageListItem]>,
 ) -> String {
     let pipeline = pipeline_pane(rules, selected_idx);
     let inspector = match selected_idx {
-        Some(i) if i < rules.len() => inspector_pane(rules, i, report, enabled, stats),
+        Some(i) if i < rules.len() => inspector_pane(rules, i, report, enabled, stats, messages),
         _ => inspector_globals(rules, stats),
     };
     format!(
@@ -1161,8 +1224,9 @@ pub fn workbench_response(
     enabled: &EnabledChannels,
     selected_idx: Option<usize>,
     stats: Option<&Stats7d>,
+    messages: Option<&[MessageListItem]>,
 ) -> String {
-    let body = workbench(rules, report, enabled, selected_idx, stats);
+    let body = workbench(rules, report, enabled, selected_idx, stats, messages);
     format!("{body}\n<div id=\"editor-modal\" hx-swap-oob=\"true\"></div>")
 }
 
@@ -1358,6 +1422,7 @@ fn inspector_pane(
     report: &Report,
     _enabled: &EnabledChannels,
     stats: Option<&Stats7d>,
+    messages: Option<&[MessageListItem]>,
 ) -> String {
     let rule = &rules[selected_idx];
     let issues = report
@@ -1372,9 +1437,7 @@ fn inspector_pane(
         Action::Drop | Action::Store { .. } => 0,
     };
     let stat_strip = render_stat_strip(rule, dest_count, stats);
-    let top_senders_card = stats
-        .map(|s| render_top_senders(&s.top_senders))
-        .unwrap_or_default();
+    let messages_card = rule_messages_card(&rule.id, messages.unwrap_or(&[]));
 
     let action_tag = match &rule.action {
         Action::Forward {
@@ -1453,8 +1516,6 @@ fn inspector_pane(
         )
     };
 
-    let sandbox = inspector_tester(rules, Some(rule));
-
     let action_summary_card = if is_fwd {
         String::new()
     } else {
@@ -1497,12 +1558,7 @@ fn inspector_pane(
       {issues_card}
       {destinations_card}
       {action_summary_card}
-    </div>
-  </div>
-  <div class="inspector-global-section">
-    <div class="inspector-body">
-      {top_senders_card}
-      {sandbox}
+      {messages_card}
       {selected_form}
     </div>
   </div>
@@ -1510,6 +1566,127 @@ fn inspector_pane(
         id = html_escape(&rule.id),
         label = html_escape(&rule.display_label()),
         pattern = pattern_html(&rule.local_pattern, &rule.domain_pattern),
+    )
+}
+
+/// Card wrapping the per-rule "Stored emails" list.
+pub fn rule_messages_card(rule_id: &str, items: &[MessageListItem]) -> String {
+    let count = items.len();
+    let count_label = if count == 25 {
+        "25+".to_string()
+    } else {
+        count.to_string()
+    };
+    let body = if items.is_empty() {
+        r##"<div class="empty">No stored emails for this rule yet. Emails appear here when the rule stores them or forwards to a Telegram or Discord destination.</div>"##.to_string()
+    } else {
+        rule_messages_list(rule_id, items, false)
+    };
+    format!(
+        r##"<div class="card">
+  <header><h3>Stored emails</h3><small>{count_label}</small></header>
+  <div class="card-body" style="padding:0">{body}</div>
+</div>"##,
+    )
+}
+
+/// HTML for the email list. When `append` is false, emits the wrapping
+/// `<ul>` plus all rows; when true, emits only the rows so an HTMX
+/// "Load more" can append into an existing `<ul>` via beforeend swap.
+pub fn rule_messages_list(rule_id: &str, items: &[MessageListItem], append: bool) -> String {
+    let rows: String = items
+        .iter()
+        .map(|m| render_message_row(rule_id, m))
+        .collect();
+    let oldest = items.last().and_then(|m| m.created_at.as_deref());
+    let load_more = if items.len() == 25 {
+        load_more_button(rule_id, oldest)
+    } else {
+        String::new()
+    };
+    if append {
+        format!("{rows}\n{load_more}")
+    } else {
+        format!(
+            r##"<ul class="rule-messages" id="rule-messages-{id}">
+{rows}
+</ul>
+<div id="rule-messages-{id}-more">{load_more}</div>"##,
+            id = html_escape(rule_id),
+        )
+    }
+}
+
+fn render_message_row(rule_id: &str, m: &MessageListItem) -> String {
+    let url = format!(
+        "/manage/rules/{}/messages/{}",
+        html_escape(rule_id),
+        html_escape(&m.id),
+    );
+    let ts_display = m.created_at.as_deref().unwrap_or("-");
+    format!(
+        r##"<li class="rule-message" x-data="{{ open: false }}">
+  <button class="rule-message-row" type="button"
+    @click="open = !open; if (open && !$refs.body.dataset.loaded) {{ htmx.ajax('GET','{url}',{{ target: $refs.body, swap: 'innerHTML' }}).then(() => {{ $refs.body.dataset.loaded = '1'; }}); }}">
+    <span class="ts">{ts}</span>
+    <span class="from">{from}</span>
+    <span class="subj">{subj}</span>
+    <span class="caret" :class="{{ open }}">▸</span>
+  </button>
+  <div class="rule-message-body" x-show="open" x-cloak x-ref="body"></div>
+</li>"##,
+        url = url,
+        ts = html_escape(ts_display),
+        from = html_escape(&m.sender),
+        subj = html_escape(&m.subject),
+    )
+}
+
+fn load_more_button(rule_id: &str, before: Option<&str>) -> String {
+    let before = before.unwrap_or("");
+    let encoded: String = before
+        .bytes()
+        .map(|b| match b {
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => {
+                (b as char).to_string()
+            }
+            _ => format!("%{:02X}", b),
+        })
+        .collect();
+    format!(
+        r##"<div style="padding:10px;display:flex;justify-content:center">
+  <button class="btn ghost sm"
+    hx-get="/manage/rules/{rid}/messages?before={enc}"
+    hx-target="#rule-messages-{rid}"
+    hx-swap="beforeend"
+    hx-on::after-request="this.parentElement.remove()">Load more</button>
+</div>"##,
+        rid = html_escape(rule_id),
+        enc = encoded,
+    )
+}
+
+/// Inline-expanded body fragment for one stored email. Reuses the
+/// sandboxed iframe / sanitized HTML that `viewer::build_rendered`
+/// produced; adds an "Open in new tab" footer link.
+pub fn rule_message_fragment(message_id: &str, rendered: &RenderedEmail) -> String {
+    format!(
+        r##"<div class="embed-header">
+  <div class="row"><span class="k">From</span><span>{from}</span></div>
+  <div class="row"><span class="k">To</span><span>{to}</span></div>
+  {date_line}
+  <div class="row"><span class="k">Subject</span><span>{subject}</span></div>
+</div>
+{body}
+<div class="embed-footer">
+  <a class="btn ghost sm" href="/manage/m/{id}" target="_blank" rel="noopener">Open in new tab</a>
+</div>"##,
+        from = html_escape(&rendered.from),
+        to = html_escape(&rendered.to),
+        date_line = rendered.date_line,
+        subject = html_escape(&rendered.subject),
+        body = rendered.body_section,
+        id = html_escape(message_id),
     )
 }
 

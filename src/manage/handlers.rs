@@ -3,6 +3,7 @@
 use worker::*;
 
 use super::templates;
+use super::viewer;
 use crate::bots::EnabledChannels;
 use crate::db;
 use crate::events;
@@ -12,6 +13,23 @@ use crate::r2;
 use crate::stats;
 use crate::types::*;
 use crate::validation;
+
+/// Page size for the per-rule "Stored emails" list (and the cursor that
+/// drives "Load more" pagination).
+const RULE_MESSAGES_PAGE_SIZE: u32 = 25;
+
+/// Fetch the first page of stored emails for `selected` (when set), so the
+/// inspector can render the list inline without a second round-trip.
+async fn fetch_messages_for_selected(
+    env: &Env,
+    selected: Option<&str>,
+) -> Option<Vec<db::MessageListItem>> {
+    let rule_id = selected?;
+    let database = env.d1("DB").ok()?;
+    db::list_messages_for_rule(&database, rule_id, RULE_MESSAGES_PAGE_SIZE, None)
+        .await
+        .ok()
+}
 
 /// Ensure the rules list has a catch-all as the last rule.
 /// If empty, creates a default catch-all with Drop action.
@@ -103,7 +121,15 @@ async fn render_workbench(
     let report = validation::validate(rules, enabled);
     let idx = templates::pick_selected_idx(rules, selected);
     let stats = stats::fetch_7d(env).await;
-    templates::workbench_response(rules, &report, enabled, idx, stats.as_ref())
+    let messages = fetch_messages_for_selected(env, selected).await;
+    templates::workbench_response(
+        rules,
+        &report,
+        enabled,
+        idx,
+        stats.as_ref(),
+        messages.as_deref(),
+    )
 }
 
 /// If validation rejects the proposed rule set, return a 400 response with a
@@ -123,6 +149,7 @@ pub async fn list_rules(req: Request, env: &Env, email: &str) -> Result<Response
     let report = validation::validate(&rules, &enabled);
     let selected = selected_from_query(&req);
     let stats = stats::fetch_7d(env).await;
+    let messages = fetch_messages_for_selected(env, selected.as_deref()).await;
 
     Response::from_html(templates::rules_page(
         &rules,
@@ -131,6 +158,7 @@ pub async fn list_rules(req: Request, env: &Env, email: &str) -> Result<Response
         &enabled,
         selected.as_deref(),
         stats.as_ref(),
+        messages.as_deref(),
     ))
 }
 
@@ -378,6 +406,50 @@ pub async fn retry_pending(env: &Env, id: &str) -> Result<Response> {
     let queue = env.queue("RETRIES")?;
     queue.send(&RetryMsg { id: id.to_string() }).await?;
     Response::ok("requeued")
+}
+
+/// GET /manage/rules/{id}/messages?before={ts}: HTML fragment listing the
+/// next page of stored emails for a rule (newest first). Used by the
+/// inspector's "Load more" button (HTMX appends rows into the list).
+pub async fn list_rule_messages(req: Request, env: &Env, rule_id: &str) -> Result<Response> {
+    let database = env.d1("DB")?;
+    let before = req.url().ok().and_then(|u| {
+        u.query_pairs()
+            .find(|(k, _)| k == "before")
+            .map(|(_, v)| v.into_owned())
+            .filter(|s| !s.is_empty())
+    });
+    let items = db::list_messages_for_rule(
+        &database,
+        rule_id,
+        RULE_MESSAGES_PAGE_SIZE,
+        before.as_deref(),
+    )
+    .await?;
+    Response::from_html(templates::rule_messages_list(rule_id, &items, true))
+}
+
+/// GET /manage/rules/{id}/messages/{msg_id}: HTML fragment with one
+/// stored email's expanded body. Verifies the message belongs to the
+/// rule (defense in depth: Cloudflare Access already gates the route).
+pub async fn rule_message_fragment(env: &Env, rule_id: &str, msg_id: &str) -> Result<Response> {
+    let database = env.d1("DB")?;
+    let meta = match db::get_message_meta(&database, msg_id).await? {
+        Some(m) => m,
+        None => return Response::error("Not Found", 404),
+    };
+    if meta.rule_id.as_deref() != Some(rule_id) {
+        return Response::error("Not Found", 404);
+    }
+    let rendered = match viewer::build_rendered(env, msg_id).await? {
+        Some(r) => r,
+        None => return Response::error("Not Found", 404),
+    };
+    let mut resp = Response::from_html(templates::rule_message_fragment(msg_id, &rendered))?;
+    let headers = resp.headers_mut();
+    headers.set("Cache-Control", "private, no-store")?;
+    headers.set("X-Content-Type-Options", "nosniff")?;
+    Ok(resp)
 }
 
 /// POST /manage/pending/{id}/discard: delete the row + its R2 object. Used

@@ -90,6 +90,7 @@ pub async fn handle_email(
         Some(rule) => {
             let result = execute_action(
                 &rule.action,
+                &rule.id,
                 &rule.display_label(),
                 from,
                 to,
@@ -131,6 +132,7 @@ pub async fn handle_email(
 /// handler to fan out into `message.forward()`, `send_email`, or bot posts.
 async fn execute_action(
     action: &Action,
+    rule_id: &str,
     rule_label: &str,
     from: &str,
     to: &str,
@@ -183,7 +185,7 @@ async fn execute_action(
                     .as_ref()
                     .map(|p| p.subject.clone())
                     .unwrap_or_default();
-                db::save_message(database, &id, from, to, &subject, &key).await?;
+                db::save_message(database, &id, from, to, &subject, &key, Some(rule_id)).await?;
                 Some(id)
             } else {
                 None
@@ -291,7 +293,7 @@ async fn execute_action(
                 let id = uuid::Uuid::new_v4().to_string();
                 let key = r2::message_key(&id);
                 r2::put(env, &key, raw_bytes).await?;
-                db::save_message(database, &id, from, to, &subject, &key).await?;
+                db::save_message(database, &id, from, to, &subject, &key, Some(rule_id)).await?;
             }
             Ok(EmailResult::Drop)
         }

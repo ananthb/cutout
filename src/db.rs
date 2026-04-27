@@ -63,7 +63,9 @@ pub async fn get_bot_ctx(db: &D1Database, key: &str) -> Result<Option<ReplyConte
 
 /// Insert a metadata row pointing at the R2 object that holds the body.
 /// The body itself must already have been uploaded to R2 at `r2_key` (see
-/// [`crate::r2::message_key`]).
+/// [`crate::r2::message_key`]). `rule_id` records which rule's match
+/// produced the row so the manage UI can list messages per rule; pass
+/// `None` only when the matching rule isn't known.
 pub async fn save_message(
     db: &D1Database,
     id: &str,
@@ -71,9 +73,10 @@ pub async fn save_message(
     recipient: &str,
     subject: &str,
     r2_key: &str,
+    rule_id: Option<&str>,
 ) -> Result<()> {
     db.prepare(
-        "INSERT INTO messages (id, sender, recipient, subject, r2_key) VALUES (?, ?, ?, ?, ?)",
+        "INSERT INTO messages (id, sender, recipient, subject, r2_key, rule_id) VALUES (?, ?, ?, ?, ?, ?)",
     )
     .bind(&[
         id.into(),
@@ -81,10 +84,62 @@ pub async fn save_message(
         recipient.into(),
         subject.into(),
         r2_key.into(),
+        rule_id.into(),
     ])?
     .run()
     .await?;
     Ok(())
+}
+
+/// A row shape for the per-rule message list in the manage inspector.
+/// Deliberately omits `r2_key` and `recipient`: expanding a row triggers a
+/// separate fetch via [`get_message_meta`] + the viewer renderer.
+#[derive(Clone, Debug)]
+pub struct MessageListItem {
+    pub id: String,
+    pub sender: String,
+    pub subject: String,
+    pub created_at: Option<String>,
+}
+
+#[derive(Deserialize)]
+struct MessageListRow {
+    id: String,
+    sender: String,
+    subject: String,
+    created_at: Option<String>,
+}
+
+/// List stored messages for a rule, newest first. Cursor-based pagination
+/// on `created_at`: pass the oldest `created_at` from the previous page as
+/// `before` to fetch the next page. Uses `idx_messages_rule_created`.
+pub async fn list_messages_for_rule(
+    db: &D1Database,
+    rule_id: &str,
+    limit: u32,
+    before: Option<&str>,
+) -> Result<Vec<MessageListItem>> {
+    let result = db
+        .prepare(
+            "SELECT id, sender, subject, created_at \
+             FROM messages \
+             WHERE rule_id = ?1 AND (?2 IS NULL OR created_at < ?2) \
+             ORDER BY created_at DESC \
+             LIMIT ?3",
+        )
+        .bind(&[rule_id.into(), before.into(), (limit as f64).into()])?
+        .all()
+        .await?;
+    let rows: Vec<MessageListRow> = result.results()?;
+    Ok(rows
+        .into_iter()
+        .map(|r| MessageListItem {
+            id: r.id,
+            sender: r.sender,
+            subject: r.subject,
+            created_at: r.created_at,
+        })
+        .collect())
 }
 
 /// A `messages` row sufficient to render the viewer header card and locate
@@ -96,6 +151,7 @@ pub struct MessageMeta {
     pub subject: String,
     pub r2_key: String,
     pub created_at: Option<String>,
+    pub rule_id: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -105,6 +161,7 @@ struct MessageMetaRow {
     subject: String,
     r2_key: String,
     created_at: Option<String>,
+    rule_id: Option<String>,
 }
 
 /// Fetch the metadata row for a stored message; returns `None` when the id
@@ -112,7 +169,7 @@ struct MessageMetaRow {
 pub async fn get_message_meta(db: &D1Database, id: &str) -> Result<Option<MessageMeta>> {
     let row = db
         .prepare(
-            "SELECT sender, recipient, subject, r2_key, created_at \
+            "SELECT sender, recipient, subject, r2_key, created_at, rule_id \
              FROM messages WHERE id = ?",
         )
         .bind(&[id.into()])?
@@ -124,6 +181,7 @@ pub async fn get_message_meta(db: &D1Database, id: &str) -> Result<Option<Messag
         subject: r.subject,
         r2_key: r.r2_key,
         created_at: r.created_at,
+        rule_id: r.rule_id,
     }))
 }
 

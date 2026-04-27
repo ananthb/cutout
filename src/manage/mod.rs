@@ -68,6 +68,18 @@ pub async fn handle_manage(req: Request, env: Env, path: &str, method: Method) -
         // GET /manage/m/{id}: render a stored email (HTML viewer).
         (Method::Get, ["m", id]) => viewer::render(&env, id).await,
 
+        // GET /manage/rules/{id}/messages: list stored emails for a rule
+        // (HTML fragment for HTMX append).
+        (Method::Get, ["rules", id, "messages"]) => {
+            handlers::list_rule_messages(req, &env, id).await
+        }
+
+        // GET /manage/rules/{id}/messages/{msg_id}: inline-expand body for
+        // one stored email (HTML fragment).
+        (Method::Get, ["rules", id, "messages", msg_id]) => {
+            handlers::rule_message_fragment(&env, id, msg_id).await
+        }
+
         _ => Response::error("Not Found", 404),
     }
 }

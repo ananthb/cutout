@@ -30,19 +30,31 @@ pub fn verify_signed_id(key: &str, id: &str, token: &str) -> bool {
     expected.as_bytes().ct_eq(token.as_bytes()).into()
 }
 
-/// Render the viewer for `id`. Returns:
-/// - 200 + HTML when the message exists and has a body to render
-/// - 404 when the row or its R2 object is missing
-pub async fn render(env: &Env, id: &str) -> Result<Response> {
+/// Header + body sections for a stored email, ready to embed. Produced by
+/// [`build_rendered`] and consumed by both the standalone page ([`render`])
+/// and the manage inspector's inline expand fragment.
+pub struct RenderedEmail {
+    pub subject: String,
+    pub from: String,
+    pub to: String,
+    /// Either an empty string or a fully escaped `<div class="row">…Date…</div>`.
+    pub date_line: String,
+    /// Either a sandboxed iframe, a `<pre>`, or an empty-state paragraph.
+    pub body_section: String,
+}
+
+/// Fetch + parse + sanitize a stored email. Returns `None` when the row or
+/// its R2 object is missing.
+pub async fn build_rendered(env: &Env, id: &str) -> Result<Option<RenderedEmail>> {
     let database = env.d1("DB")?;
     let meta = match db::get_message_meta(&database, id).await? {
         Some(m) => m,
-        None => return Response::error("Not Found", 404),
+        None => return Ok(None),
     };
 
     let raw = match r2::get(env, &meta.r2_key).await? {
         Some(bytes) => bytes,
-        None => return Response::error("Body not found", 404),
+        None => return Ok(None),
     };
 
     let parsed = mime::parse_email(&raw);
@@ -83,12 +95,30 @@ pub async fn render(env: &Env, id: &str) -> Result<Response> {
         "<p class=\"empty\">No renderable body.</p>".to_string()
     };
 
+    Ok(Some(RenderedEmail {
+        subject,
+        from,
+        to: meta.recipient,
+        date_line,
+        body_section,
+    }))
+}
+
+/// Render the viewer for `id` as a standalone page. Returns:
+/// - 200 + HTML when the message exists and has a body to render
+/// - 404 when the row or its R2 object is missing
+pub async fn render(env: &Env, id: &str) -> Result<Response> {
+    let rendered = match build_rendered(env, id).await? {
+        Some(r) => r,
+        None => return Response::error("Not Found", 404),
+    };
+
     let page = format!(
         r#"<!DOCTYPE html>
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<title>{subject_html} — cutout</title>
+<title>{subject_html} cutout</title>
 <style>
   body {{ font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif; margin: 0; background: #f5f5f7; color: #1d1d1f; }}
   .wrap {{ max-width: 920px; margin: 24px auto; padding: 0 16px; }}
@@ -117,9 +147,11 @@ pub async fn render(env: &Env, id: &str) -> Result<Response> {
 </div>
 </body>
 </html>"#,
-        subject_html = html_escape(&subject),
-        from_html = html_escape(&from),
-        to_html = html_escape(&meta.recipient),
+        subject_html = html_escape(&rendered.subject),
+        from_html = html_escape(&rendered.from),
+        to_html = html_escape(&rendered.to),
+        date_line = rendered.date_line,
+        body_section = rendered.body_section,
     );
 
     let mut resp = Response::from_html(page)?;

@@ -30,10 +30,12 @@ CREATE TABLE IF NOT EXISTS messages (
     recipient TEXT NOT NULL,
     subject TEXT NOT NULL,
     r2_key TEXT NOT NULL,
+    rule_id TEXT,
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP
 );
 CREATE INDEX IF NOT EXISTS idx_messages_recipient ON messages(recipient);
 CREATE INDEX IF NOT EXISTS idx_messages_created_at ON messages(created_at);
+CREATE INDEX IF NOT EXISTS idx_messages_rule_created ON messages(rule_id, created_at DESC);
 
 -- Failed dispatches awaiting retry. Raw bytes live in R2 at `r2_key`
 -- (`pending/<id>`); `pending_actions` is a JSON-encoded list of the still-
