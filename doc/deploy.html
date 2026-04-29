@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Deploy | Cutout</title>
-<meta name="description" content="Fork Cutout and deploy your own instance to Cloudflare Workers via GitHub Actions.">
+<meta name="description" content="Fork Cutout and deploy your own instance to Cloudflare Workers via Cloudflare Builds.">
 <link rel="icon" type="image/svg+xml" href="cutout-mark.svg">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -39,35 +39,37 @@
   <span class="l-eyebrow">SELF-HOST GUIDE</span>
 </div>
 <h1>Deploy your own Cutout</h1>
-<p class="lede">Cutout is self-host first. Fork the repo, point a few GitHub Secrets at your Cloudflare account, and pushes to <code>main</code> deploy to your own Worker via GitHub Actions.</p>
+<p class="lede">Cutout is self-host first. Click the Deploy to Cloudflare button (or fork manually and connect Cloudflare Builds), wire up bindings and secrets in the Cloudflare dashboard, and pushes to <code>main</code> deploy to your own Worker.</p>
 
-<h2><span class="step-num">01</span> Fork the repo</h2>
-<p>Fork <a href="https://github.com/ananthb/cutout">ananthb/cutout</a> on GitHub into your own account or org.</p>
-
-<h2><span class="step-num">02</span> Create the Cloudflare resources</h2>
-<p>You need a KV namespace (rule storage), a D1 database (reverse-alias mappings + bot reply contexts), an R2 bucket (raw bytes for queued retries and Store-action persistence), and two queues (the retry pipeline and its dead-letter queue). All must exist before the first deploy so you can supply IDs and queue names.</p>
-<p>Clone your fork locally and use <code>wrangler</code> from the dev shell:</p>
-<pre><code>nix develop                      # or install wrangler manually
-wrangler kv namespace create KV
-wrangler d1 create cutout-db
-wrangler r2 bucket create cutout-emails
-wrangler queues create cutout-retries
-wrangler queues create cutout-retries-dlq</code></pre>
-<p>Save the returned <code>id</code> (KV) and <code>database_id</code> (D1): you'll paste them into GitHub Secrets next. The R2 bucket and queue names are referenced by name in <code>wrangler.toml</code>; no IDs to copy.</p>
-
-<h2><span class="step-num">03</span> Configure GitHub Secrets</h2>
-<p>In your fork: <strong>Settings &rsaquo; Secrets and variables &rsaquo; Actions</strong>. Add:</p>
+<h2><span class="step-num">01</span> Deploy to Cloudflare</h2>
+<p>The fastest path is the one-click Deploy button on the <a href="https://github.com/ananthb/cutout">repo README</a>. It forks <code>ananthb/cutout</code> into your account, creates a Worker, auto-provisions the bindings declared in <code>wrangler.toml</code> (D1, KV, R2, Queues, Email send-binding, Analytics Engine), and connects the fork to <strong>Cloudflare Builds</strong> so future pushes deploy automatically.</p>
+<p>If you'd rather wire it up by hand: fork <a href="https://github.com/ananthb/cutout">ananthb/cutout</a>, then in the Cloudflare dashboard create a Worker named <code>cutout</code> and connect the fork under <strong>Workers &rsaquo; cutout &rsaquo; Settings &rsaquo; Builds</strong>. Build configuration:</p>
 <ul>
-  <li><code>CLOUDFLARE_API_TOKEN</code>: token with <em>Workers Scripts: Edit</em>, <em>Workers KV Storage: Edit</em>, <em>D1: Edit</em>, <em>Workers R2 Storage: Edit</em>, <em>Cloudflare Queues: Edit</em>, and <em>Email Routing: Edit</em> permissions.</li>
-  <li><code>CLOUDFLARE_ACCOUNT_ID</code>: your Cloudflare Account ID (visible in the dashboard sidebar).</li>
-  <li><code>KV_NAMESPACE_ID</code>: the <code>id</code> from step 2.</li>
-  <li><code>D1_DATABASE_ID</code>: the <code>database_id</code> from step 2.</li>
-  <li><code>CF_ACCESS_TEAM</code> and <code>CF_ACCESS_AUD</code>: your Cloudflare Access team domain and the AUD tag of the Access app guarding <code>/manage</code> (set this up in step 8).</li>
-  <li><code>CF_API_TOKEN</code> <em>(optional)</em>: separate token with <em>Account Analytics: Read</em> scope. Unlocks the dashboard stats panels (forwarded/dropped totals, per-rule matches, top senders). Leave empty to ship without stats; the live event tail still works.</li>
+  <li><strong>Build command:</strong> leave default (CF Builds detects <code>package.json</code> and runs <code>npm install</code>).</li>
+  <li><strong>Deploy command:</strong> <code>npm run deploy</code> &mdash; the script in <code>package.json</code> runs <code>cargo install -q worker-build &amp;&amp; wrangler d1 migrations apply cutout-db --remote &amp;&amp; wrangler deploy</code>.</li>
 </ul>
 
+<h2><span class="step-num">02</span> Bind resources in the dashboard</h2>
+<p>If you used the Deploy button, most bindings are already created. Otherwise create them and attach by name to the Worker under <strong>Workers &rsaquo; cutout &rsaquo; Settings &rsaquo; Bindings</strong>. The names must match the <code>binding</code> values in <code>wrangler.toml</code>:</p>
+<ul>
+  <li><strong>D1:</strong> <code>DB</code> &rarr; database <code>cutout-db</code> (rule storage, reverse-alias mappings, pending dispatches, bot reply contexts).</li>
+  <li><strong>KV:</strong> <code>KV</code> &rarr; one namespace, any name.</li>
+  <li><strong>R2:</strong> <code>EMAILS</code> &rarr; bucket <code>cutout-emails</code> (raw bytes for queued retries and Store-action persistence).</li>
+  <li><strong>Queues:</strong> producer <code>RETRIES</code> &rarr; <code>cutout-retries</code>; consumers <code>cutout-retries</code> (with DLQ <code>cutout-retries-dlq</code>) and <code>cutout-retries-dlq</code>.</li>
+  <li><strong>Email:</strong> send-binding <code>EMAIL</code>.</li>
+  <li><strong>Analytics Engine:</strong> dataset <code>EVENTS</code> &rarr; <code>cutout_events</code> (optional &mdash; if absent, the dashboard hides aggregated stats).</li>
+</ul>
+
+<h2><span class="step-num">03</span> Set runtime variables and secrets</h2>
+<p>Under <strong>Workers &rsaquo; cutout &rsaquo; Settings &rsaquo; Variables and Secrets</strong>, add:</p>
+<ul>
+  <li><strong>Variables (plain text):</strong> <code>CF_ACCESS_TEAM</code> (your Access team domain) and <code>CF_ACCESS_AUD</code> (AUD tag of the Access app guarding <code>/manage</code>; set up in step 8). Optional: <code>CF_ACCOUNT_ID</code> (enables Analytics Engine SQL API and Browser Rendering REST API features) and <code>PUBLIC_BASE_URL</code> (origin used in viewer links posted to Telegram/Discord; empty suppresses the link).</li>
+  <li><strong>Secrets:</strong> <code>CF_API_TOKEN</code> &mdash; optional, with <em>Account Analytics: Read</em> for stats panels and/or <em>Browser Rendering: Edit</em> for in-chat screenshots; both off if absent. <code>VIEWER_HMAC_KEY</code> &mdash; required only if at least one chat destination uses <code>link_auth = token</code>; generate with <code>openssl rand -hex 32</code>.</li>
+</ul>
+<p>The full reference is at the bottom of <a href="https://github.com/ananthb/cutout/blob/main/wrangler.toml">wrangler.toml</a>.</p>
+
 <h2><span class="step-num">04</span> Push to <code>main</code></h2>
-<p>The <code>Deploy</code> workflow generates <code>wrangler.production.toml</code> from your secrets, applies D1 migrations, runs <code>wrangler deploy</code>, and uploads <code>CF_ACCESS_TEAM</code> / <code>CF_ACCESS_AUD</code> / <code>CF_API_TOKEN</code> as Worker secrets. After it succeeds, your Worker is live at <code>cutout.&lt;your-workers-subdomain&gt;.workers.dev</code> (or a custom route you've added).</p>
+<p>Cloudflare Builds runs <code>npm run deploy</code>: it installs <code>worker-build</code>, applies any pending D1 migrations, then runs <code>wrangler deploy</code>. After it succeeds, your Worker is live at <code>cutout.&lt;your-workers-subdomain&gt;.workers.dev</code> (or a custom route you've added under <strong>Settings &rsaquo; Domains &amp; Routes</strong>).</p>
 
 <h2><span class="step-num">05</span> Enable Email Routing on each domain</h2>
 <p>For every domain you want Cutout to handle, in the Cloudflare dashboard:</p>
@@ -92,20 +94,16 @@ wrangler queues create cutout-retries-dlq</code></pre>
 </ol>
 
 <h2><span class="step-num">08</span> Protect <code>/manage</code> with Cloudflare Access</h2>
-<p>The management UI must not be public. Create an Access application whose policy covers <code>cutout.&lt;yourdomain&gt;/manage/*</code> (or whichever route you mapped to the worker). Copy the application's <strong>AUD tag</strong> and your team domain into the <code>CF_ACCESS_AUD</code> and <code>CF_ACCESS_TEAM</code> GitHub Secrets, then re-run the deploy workflow so the worker picks them up.</p>
+<p>The management UI must not be public. Create an Access application whose policy covers <code>cutout.&lt;yourdomain&gt;/manage/*</code> (or whichever route you mapped to the worker). Copy the application's <strong>AUD tag</strong> and your team domain into the <code>CF_ACCESS_AUD</code> and <code>CF_ACCESS_TEAM</code> Worker variables (step 3) &mdash; Cloudflare Builds preserves them across redeploys.</p>
 
 <h2><span class="step-num">09</span> Optional: enable Telegram and Discord destinations</h2>
-<p>Skip this step if you only want to forward to email. The <code>/manage</code> editor only offers a chat channel as a destination kind once the relevant bot secrets are set on the Worker. Use <code>wrangler secret put</code> from your fork's checkout (the dev shell has wrangler):</p>
+<p>Skip this step if you only want to forward to email. The <code>/manage</code> editor only offers a chat channel as a destination kind once the relevant bot secrets are set on the Worker. Add them under <strong>Workers &rsaquo; cutout &rsaquo; Settings &rsaquo; Variables and Secrets &rsaquo; Secrets</strong>:</p>
 
 <h3>Telegram</h3>
 <ol>
   <li>Talk to <a href="https://t.me/BotFather">@BotFather</a> on Telegram and create a bot. Copy the <strong>HTTP API token</strong>.</li>
-  <li>Set the token as a Worker secret:
-    <pre><code>nix develop --command wrangler secret put TELEGRAM_BOT_TOKEN -c wrangler.production.toml</code></pre>
-  </li>
-  <li><em>Optional but recommended.</em> Set a webhook secret so only Telegram can post to your worker:
-    <pre><code>nix develop --command wrangler secret put TELEGRAM_WEBHOOK_SECRET -c wrangler.production.toml</code></pre>
-  </li>
+  <li>Add it as the secret <code>TELEGRAM_BOT_TOKEN</code> in the dashboard.</li>
+  <li><em>Optional but recommended.</em> Add the secret <code>TELEGRAM_WEBHOOK_SECRET</code> (any random string) so only Telegram can post to your worker.</li>
   <li>Register the webhook with Telegram (replace <code>&lt;TOKEN&gt;</code> and <code>&lt;HOST&gt;</code>; the <code>secret_token</code> param is only needed if you set <code>TELEGRAM_WEBHOOK_SECRET</code>):
     <pre><code>curl -X POST "https://api.telegram.org/bot&lt;TOKEN&gt;/setWebhook" \
   -d "url=https://&lt;HOST&gt;/telegram/webhook" \
@@ -117,11 +115,7 @@ wrangler queues create cutout-retries-dlq</code></pre>
 <h3>Discord</h3>
 <ol>
   <li>Open the <a href="https://discord.com/developers/applications">Discord Developer Portal</a> and create an application. Under <strong>Bot</strong>, reset and copy the <strong>token</strong>. Under <strong>General Information</strong>, copy the <strong>Application ID</strong> and <strong>Public Key</strong>.</li>
-  <li>Set all three as Worker secrets:
-    <pre><code>nix develop --command wrangler secret put DISCORD_BOT_TOKEN -c wrangler.production.toml
-nix develop --command wrangler secret put DISCORD_APP_ID -c wrangler.production.toml
-nix develop --command wrangler secret put DISCORD_PUBLIC_KEY -c wrangler.production.toml</code></pre>
-  </li>
+  <li>Add all three as Worker secrets in the dashboard: <code>DISCORD_BOT_TOKEN</code>, <code>DISCORD_APP_ID</code>, <code>DISCORD_PUBLIC_KEY</code>.</li>
   <li>Back in the developer portal, set the <strong>Interactions Endpoint URL</strong> (under <strong>General Information</strong>) to <code>https://&lt;your-cutout-host&gt;/discord/interactions</code>. Discord pings this URL with a verification request: with the public key in place, the worker responds correctly and the URL saves.</li>
   <li>Invite the bot to your server via OAuth2 (scope <code>bot</code>, permission <strong>Send Messages</strong> for the target channels).</li>
   <li>For each Discord channel you want forwarded messages in, copy its <strong>Channel ID</strong> (Discord <strong>Settings &rsaquo; Advanced &rsaquo; Developer Mode</strong>, then right-click channel <strong>&rsaquo; Copy Channel ID</strong>) and use it in a rule destination as <code>discord:&lt;channel_id&gt;</code>.</li>
@@ -132,7 +126,7 @@ nix develop --command wrangler secret put DISCORD_PUBLIC_KEY -c wrangler.product
 <p>Visit <code>https://&lt;your-cutout-host&gt;/manage</code>. Add Forward rules using glob patterns on the local part and domain. For email destinations, use the <strong>Proxy via rewrite mode</strong> toggle to ensure <code>Reply-To</code> works when replying via your custom domain (see <a href="how-it-works.html">How it works</a> for the tradeoffs).</p>
 
 <h2>Updating</h2>
-<p>Pull from upstream into your fork's <code>main</code> branch (or merge a PR): the deploy workflow re-runs on every push to <code>main</code>.</p>
+<p>Pull from upstream into your fork's <code>main</code> branch (or merge a PR): Cloudflare Builds re-runs on every push to <code>main</code>.</p>
 
 </main>
 
