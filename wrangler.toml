@@ -6,13 +6,19 @@ compatibility_date = "2024-01-01"
 command = "worker-build --release"
 
 # ============================================================================
-# KV Namespace for routing config (aliases → destination mappings)
+# D1 database for routing config and pending dispatches.
+# `database_id` is intentionally omitted — bind via the Cloudflare dashboard
+# (Workers → cutout → Settings → Bindings) or let the "Deploy to Cloudflare"
+# button auto-provision it on first deploy.
 # ============================================================================
 [[d1_databases]]
 binding = "DB"
 database_name = "cutout-db"
-database_id = ""
 
+# ============================================================================
+# KV namespace for routing config (aliases → destination mappings).
+# `id` bound via dashboard / Deploy button.
+# ============================================================================
 [[kv_namespaces]]
 binding = "KV"
 
@@ -75,28 +81,34 @@ binding = "EVENTS"
 dataset = "cutout_events"
 
 [vars]
-ENVIRONMENT = "development"
-CF_ACCESS_TEAM = ""             # Your Cloudflare Access team name
-CF_ACCESS_AUD = ""              # Application Audience (AUD) tag from Access
-# Set CF_ACCOUNT_ID and CF_API_TOKEN as wrangler secrets to enable stats.
-# CF_API_TOKEN needs "Account Analytics: Read" scope. Without these, the
-# dashboard renders without aggregated stats.
-CF_ACCOUNT_ID = ""
-# Public origin used to compose viewer links in Telegram/Discord posts
-# (e.g. "https://cutout.example.com"). Leave empty to suppress the
-# "View full email →" link.
-PUBLIC_BASE_URL = ""
-
-# Additional secrets (set via `wrangler secret put`):
-# - CF_API_TOKEN: Cloudflare API token. Add "Browser Rendering: Edit" to
-#   enable the in-chat screenshot for Telegram/Discord destinations; add
-#   "Account Analytics: Read" to enable the dashboard stats panels. The
-#   same token covers both. Without the Browser Rendering scope, bot
-#   posts skip the screenshot and fall back to text + link.
-# - VIEWER_HMAC_KEY: random 32+ bytes; signs the public viewer URLs used
-#   by destinations configured with `:token` link auth. Required only
-#   when at least one chat destination uses `link_auth = token`.
+ENVIRONMENT = "production"
 
 [observability.logs]
 enabled = true
 invocation_logs = true
+
+# ============================================================================
+# Per-deployment configuration
+# ============================================================================
+# All runtime vars and secrets are managed in the Cloudflare dashboard
+# (Workers → cutout → Settings → Variables and Secrets) so this file stays
+# portable for forks. Cloudflare Builds redeploys preserve them.
+#
+# Plain-text variables (Settings → Variables):
+#   CF_ACCESS_TEAM    Cloudflare Access team name (e.g. "myteam")
+#   CF_ACCESS_AUD     Application Audience (AUD) tag from Access app
+#   CF_ACCOUNT_ID     Cloudflare account ID (for Analytics Engine SQL API
+#                     and Browser Rendering REST calls). Empty disables both.
+#   PUBLIC_BASE_URL   Public origin used for viewer links in Telegram/Discord
+#                     posts (e.g. "https://cutout.example.com"). Empty
+#                     suppresses the link.
+#
+# Secrets (Settings → Secrets):
+#   CF_API_TOKEN      Cloudflare API token. "Account Analytics: Read" enables
+#                     dashboard stats; "Browser Rendering: Edit" enables the
+#                     in-chat screenshot for Telegram/Discord. Same token
+#                     covers both. Empty disables both.
+#   VIEWER_HMAC_KEY   Random 32+ bytes; signs public viewer URLs used by
+#                     destinations configured with `link_auth = token`.
+#                     Required only when at least one chat destination uses
+#                     token link auth.

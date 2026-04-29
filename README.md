@@ -23,7 +23,18 @@ Transparent email alias proxy: similar to [SimpleLogin](https://simplelogin.io) 
 
 ## Getting Started
 
-See the **[Deploy guide](https://ananthb.github.io/cutout/deploy.html)** for step-by-step instructions on forking and deploying your own instance of Cutout to Cloudflare via GitHub Actions.
+See the **[Deploy guide](https://ananthb.github.io/cutout/deploy.html)** for step-by-step instructions on forking and deploying your own instance of Cutout to Cloudflare.
+
+CI/CD is handled by **Cloudflare Builds** (Workers CI), which builds and deploys directly from this repo without needing GitHub Actions or Nix.
+
+To wire up your fork:
+
+1. In the Cloudflare dashboard, create a Worker named (e.g.) `cutout` and connect this repo under **Settings → Builds**.
+   - **Build command:** `cargo install -q worker-build && npx wrangler d1 migrations apply cutout-db --remote`
+   - **Deploy command:** leave default (`npx wrangler deploy`)
+2. Bind a D1 database (`DB`), KV namespace (`KV`), R2 bucket (`EMAILS`), Queues (`RETRIES` producer + `cutout-retries`/`cutout-retries-dlq` consumers), Email send-binding (`EMAIL`), and Analytics Engine dataset (`EVENTS`) under **Settings → Bindings**. Names must match the `binding` values in [`wrangler.toml`](wrangler.toml).
+3. Set runtime variables and secrets under **Settings → Variables and Secrets** — see the list at the bottom of [`wrangler.toml`](wrangler.toml).
+4. Push to `main`. Cloudflare Builds runs the build command (which applies any pending D1 migrations), then `wrangler deploy` — which picks up `[build] command = "worker-build --release"` from `wrangler.toml` to compile the Rust crate to WASM.
 
 ## Features
 
@@ -49,12 +60,14 @@ See the **[Deploy guide](https://ananthb.github.io/cutout/deploy.html)** for ste
 ## Development
 
 ```bash
-nix develop        # enter dev shell with all tools
+nix develop        # enter dev shell with all tools (Nix-only; CI does not use Nix)
 cargo test         # run tests
 cargo clippy       # lint
 wrangler dev       # local dev server
 nix flake check    # run all CI checks (tests, clippy, fmt, pre-commit)
 ```
+
+Nix is for local convenience only — Cloudflare Builds installs the same toolchain via rustup, which reads the channel from [`rust-toolchain.toml`](rust-toolchain.toml).
 
 ## License
 
