@@ -1,0 +1,12 @@
+{
+  "name": "cutout",
+  "version": "0.0.0",
+  "private": true,
+  "scripts": {
+    "deploy": "cargo install -q worker-build && wrangler d1 migrations apply cutout-db --remote && wrangler deploy",
+    "dev": "wrangler dev"
+  },
+  "devDependencies": {
+    "wrangler": "^4"
+  }
+}

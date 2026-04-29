@@ -30,8 +30,8 @@ CI/CD is handled by **Cloudflare Builds** (Workers CI), which builds and deploys
 To wire up your fork:
 
 1. In the Cloudflare dashboard, create a Worker named (e.g.) `cutout` and connect this repo under **Settings → Builds**.
-   - **Build command:** `bash scripts/cf-build.sh` (installs rustup + worker-build and applies pending D1 migrations; CF Builds doesn't ship Rust)
-   - **Deploy command:** `. "$HOME/.cargo/env" && npx wrangler deploy` (sources the cargo env so wrangler finds worker-build)
+   - **Build command:** leave default (CF Builds runs `npm install` from `package.json`)
+   - **Deploy command:** `npm run deploy` (defined in `package.json` — installs `worker-build`, applies pending D1 migrations, then runs `wrangler deploy`)
 2. Bind a D1 database (`DB`), KV namespace (`KV`), R2 bucket (`EMAILS`), Queues (`RETRIES` producer + `cutout-retries`/`cutout-retries-dlq` consumers), Email send-binding (`EMAIL`), and Analytics Engine dataset (`EVENTS`) under **Settings → Bindings**. Names must match the `binding` values in [`wrangler.toml`](wrangler.toml).
 3. Set runtime variables and secrets under **Settings → Variables and Secrets** — see the list at the bottom of [`wrangler.toml`](wrangler.toml).
 4. Push to `main`. Cloudflare Builds runs the build command (which applies any pending D1 migrations), then `wrangler deploy` — which picks up `[build] command = "worker-build --release"` from `wrangler.toml` to compile the Rust crate to WASM.
