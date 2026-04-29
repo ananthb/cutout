@@ -7,13 +7,12 @@ command = "worker-build --release"
 
 # ============================================================================
 # D1 database for routing config and pending dispatches.
-# `database_id` is intentionally omitted — bind via the Cloudflare dashboard
-# (Workers → cutout → Settings → Bindings) or let the "Deploy to Cloudflare"
-# button auto-provision it on first deploy.
+# Forks: replace `database_id` with your own from `wrangler d1 create`.
 # ============================================================================
 [[d1_databases]]
 binding = "DB"
 database_name = "cutout-db"
+database_id = "2d32c0f5-f9c1-4b47-a275-c5a896d272b5"
 
 # ============================================================================
 # KV namespace for routing config (aliases → destination mappings).
