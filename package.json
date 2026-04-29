@@ -3,7 +3,7 @@
   "version": "0.0.0",
   "private": true,
   "scripts": {
-    "deploy": "cargo install -q worker-build && wrangler d1 migrations apply cutout-db --remote && wrangler deploy",
+    "deploy": "(command -v cargo || curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal --default-toolchain none) && . $HOME/.cargo/env && cargo install -q worker-build && wrangler d1 migrations apply cutout-db --remote && wrangler deploy",
     "dev": "wrangler dev"
   },
   "devDependencies": {
