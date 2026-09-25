@@ -67,7 +67,7 @@ pub async fn build_rendered(env: &Env, id: &str) -> Result<Option<RenderedEmail>
 
     let from = parsed
         .as_ref()
-        .map(|p| display_from(p))
+        .map(display_from)
         .unwrap_or_else(|| meta.sender.clone());
     let subject = parsed
         .as_ref()
