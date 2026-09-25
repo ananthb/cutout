@@ -259,7 +259,7 @@ mod tests {
         assert_eq!(s.by_rule.get("r1").unwrap().last_match_s, Some(1800));
         assert_eq!(s.by_rule.get("r2").unwrap().matches, 7);
         // No-match drops aren't attributed to any rule
-        assert!(s.by_rule.get("-").is_none());
+        assert!(!s.by_rule.contains_key("-"));
     }
 
     #[test]

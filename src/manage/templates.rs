@@ -1502,6 +1502,8 @@ fn top_senders_ticker(senders: &[crate::stats::TopSender]) -> String {
 }
 
 /// Full rules management page (the workbench).
+// A full page template takes what the page renders.
+#[allow(clippy::too_many_arguments)]
 pub fn rules_page(
     rules: &[Rule],
     rules_version: u64,

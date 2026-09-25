@@ -140,7 +140,7 @@ fn drop_tag(input: &str, tag: &str, also_close: bool) -> String {
 
 /// Remove `on…="…"` (and `on…='…'`, `on…=value`) attributes from every tag.
 fn strip_event_handler_attrs(input: &str) -> String {
-    rewrite_tags(input, |tag| strip_event_handlers_in_tag(tag))
+    rewrite_tags(input, strip_event_handlers_in_tag)
 }
 
 /// For each `<…>` tag in `input`, run `f` on the tag including the angle
@@ -225,7 +225,7 @@ fn strip_event_handlers_in_tag(tag: &str) -> String {
 }
 
 fn neutralise_javascript_urls(input: &str) -> String {
-    rewrite_tags(input, |tag| neutralise_in_tag(tag))
+    rewrite_tags(input, neutralise_in_tag)
 }
 
 fn neutralise_in_tag(tag: &str) -> String {
