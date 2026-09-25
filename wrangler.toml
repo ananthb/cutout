@@ -3,7 +3,7 @@ main = "worker-shim.mjs"
 compatibility_date = "2024-01-01"
 
 [build]
-command = "worker-build --release"
+command = "./scripts/build-worker.sh"
 
 # ============================================================================
 # D1 database for routing config and pending dispatches.
