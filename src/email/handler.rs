@@ -130,6 +130,8 @@ pub async fn handle_email(
 
 /// Execute a matched action, producing a [`Dispatch`] for the top-level
 /// handler to fan out into `message.forward()`, `send_email`, or bot posts.
+// Wide by nature: an action needs the whole matched-rule context.
+#[allow(clippy::too_many_arguments)]
 async fn execute_action(
     action: &Action,
     rule_id: &str,

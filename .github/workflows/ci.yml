@@ -1,0 +1,63 @@
+name: CI
+
+# Nothing built or tested this repo before a deploy did. `docs.yml` was
+# the only workflow, and wrangler's [build] command runs worker-build on
+# Cloudflare's side, so a break surfaced at deploy time rather than on a
+# PR. These run on every push and PR instead.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  check:
+    name: fmt, clippy, test
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v6
+
+      # rust-toolchain.toml already asks for stable + clippy, rustfmt and
+      # the wasm32 target, so the action reads the channel from there.
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+          targets: wasm32-unknown-unknown
+
+      - uses: Swatinem/rust-cache@v2
+
+      - run: cargo fmt --check
+
+      # Lint the target that actually ships. fmt, clippy and test are all
+      # clean as of this commit, so every one of them gates.
+      - run: cargo clippy --target wasm32-unknown-unknown --all-targets -- -D warnings
+
+      - run: cargo test
+
+  build:
+    name: worker-build
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v6
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+      - uses: Swatinem/rust-cache@v2
+
+      # The check that `cargo build` does not perform. worker-build is
+      # what wrangler's [build] command invokes on deploy, and it refuses
+      # a crate whose `worker` pin is older than itself -- so this is the
+      # step that catches a worker/worker-build mismatch on a PR rather
+      # than mid-deploy. Version tracks the pin in package.json.
+      - run: cargo install -q worker-build --version ^0.8
+      - run: worker-build --release
