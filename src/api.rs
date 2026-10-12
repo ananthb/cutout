@@ -627,23 +627,15 @@ async fn inbox(req: Request, env: &Env, operator: &str) -> Result<Response> {
     });
 
     let database = env.d1("DB")?;
-    let items = db::list_messages_for_rules(
-        &database,
-        &rule_ids,
-        INBOX_PAGE_SIZE,
-        before.as_deref(),
-    )
-    .await?;
+    let items =
+        db::list_messages_for_rules(&database, &rule_ids, INBOX_PAGE_SIZE, before.as_deref())
+            .await?;
     let has_more = items.len() as u32 == INBOX_PAGE_SIZE;
     let next_before = items.last().and_then(|m| m.created_at.clone());
     let messages: Vec<Value> = items
         .iter()
         .map(|m| {
-            let rule_label = m
-                .rule_id
-                .as_deref()
-                .and_then(|id| labels.get(id))
-                .cloned();
+            let rule_label = m.rule_id.as_deref().and_then(|id| labels.get(id)).cloned();
             json!({
                 "id": m.id,
                 "sender": m.sender,

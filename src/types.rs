@@ -95,7 +95,7 @@ impl Rule {
     /// Whether `email` is in this rule's effective reader set (case-insensitive).
     pub fn is_reader(&self, email: &str) -> bool {
         let wanted = email.trim().to_lowercase();
-        !wanted.is_empty() && self.effective_readers().iter().any(|r| r == &wanted)
+        !wanted.is_empty() && self.effective_readers().contains(&wanted)
     }
 }
 
@@ -922,7 +922,10 @@ mod tests {
             label: String::new(),
             inbox_readers: vec!["bob@x.com".into(), "ALICE@Example.com".into(), "  ".into()],
         };
-        assert_eq!(rule.effective_readers(), vec!["alice@example.com", "bob@x.com"]);
+        assert_eq!(
+            rule.effective_readers(),
+            vec!["alice@example.com", "bob@x.com"]
+        );
         assert!(rule.is_reader("alice@example.com"));
         assert!(rule.is_reader("BOB@X.com"));
         assert!(!rule.is_reader("carol@x.com"));
