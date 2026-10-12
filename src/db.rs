@@ -284,7 +284,6 @@ pub struct MessageMeta {
     pub subject: String,
     pub r2_key: String,
     pub created_at: Option<String>,
-    pub rule_id: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -294,7 +293,6 @@ struct MessageMetaRow {
     subject: String,
     r2_key: String,
     created_at: Option<String>,
-    rule_id: Option<String>,
 }
 
 /// Fetch the metadata row for a stored message; returns `None` when the id
@@ -302,7 +300,7 @@ struct MessageMetaRow {
 pub async fn get_message_meta(db: &D1Database, id: &str) -> Result<Option<MessageMeta>> {
     let row = db
         .prepare(
-            "SELECT sender, recipient, subject, r2_key, created_at, rule_id \
+            "SELECT sender, recipient, subject, r2_key, created_at \
              FROM messages WHERE id = ?",
         )
         .bind(&[id.into()])?
@@ -314,7 +312,6 @@ pub async fn get_message_meta(db: &D1Database, id: &str) -> Result<Option<Messag
         subject: r.subject,
         r2_key: r.r2_key,
         created_at: r.created_at,
-        rule_id: r.rule_id,
     }))
 }
 
