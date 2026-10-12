@@ -1,91 +1,17 @@
-//! Management panel: routing rules UI gated by Cloudflare Access.
+//! Management surface: Cloudflare Access verification and the stored-email
+//! viewer. The JSON API lives in `crate::api`; the SPA shell in `crate::shell`.
 
 pub mod access;
-pub mod handlers;
-pub mod templates;
 pub mod viewer;
 
 use worker::*;
 
-/// Handle /manage/* routes. Requires Cloudflare Access (except for
-/// `/manage/assets/*`, which is just static branding).
-pub async fn handle_manage(req: Request, env: Env, path: &str, method: Method) -> Result<Response> {
-    let sub = path
-        .strip_prefix("/manage")
-        .unwrap_or("")
-        .trim_start_matches('/');
-
-    let parts: Vec<&str> = sub.split('/').filter(|s| !s.is_empty()).collect();
-
-    // Public asset routes: no Access challenge so the favicon loads on the
-    // login redirect page too.
-    if let (Method::Get, ["assets", "cutout-mark.svg"]) = (&method, parts.as_slice()) {
-        return handlers::brand_mark().await;
-    }
-
-    let email = match access::verify_access(&req, &env).await {
-        Some(e) => e,
-        None => return Response::error("Forbidden: Cloudflare Access required", 403),
-    };
-
-    match (method, parts.as_slice()) {
-        // GET /manage: list rules
-        (Method::Get, []) => handlers::list_rules(req, &env, &email).await,
-
-        // GET /manage/rules/new: new-rule modal partial
-        (Method::Get, ["rules", "new"]) => handlers::new_rule_form(&env).await,
-
-        // POST /manage/rules: create rule
-        (Method::Post, ["rules"]) => handlers::create_rule(req, &env).await,
-
-        // POST /manage/rules/reorder: move rule up/down
-        (Method::Post, ["rules", "reorder"]) => handlers::reorder_rules(req, &env).await,
-
-        // GET /manage/rules/{id}/edit: edit form partial
-        (Method::Get, ["rules", id, "edit"]) => handlers::edit_form(&env, id).await,
-
-        // PUT /manage/rules/{id}: update rule
-        (Method::Put, ["rules", id]) => handlers::update_rule(req, &env, id).await,
-
-        // DELETE /manage/rules/{id}: delete rule
-        (Method::Delete, ["rules", id]) => handlers::delete_rule(req, &env, id).await,
-
-        // GET /manage/events: JSON tail for the live feed
-        (Method::Get, ["events"]) => handlers::list_events(req, &env).await,
-
-        // GET /manage/api/recent-telegram-chats: JSON list of chats that
-        // have sent /start to the bot. Used as autofill in the rule editor.
-        (Method::Get, ["api", "recent-telegram-chats"]) => {
-            handlers::recent_telegram_chats(&env).await
-        }
-
-        // GET /manage/pending: list of rows in pending_dispatches (queued + dead-lettered)
-        (Method::Get, ["pending"]) => handlers::list_pending(&env).await,
-
-        // GET /manage/pending/count: small JSON for the live-feed widget
-        (Method::Get, ["pending", "count"]) => handlers::pending_count(&env).await,
-
-        // POST /manage/pending/{id}/retry: re-publish to cutout-retries
-        (Method::Post, ["pending", id, "retry"]) => handlers::retry_pending(&env, id).await,
-
-        // POST /manage/pending/{id}/discard: delete the row + R2 object
-        (Method::Post, ["pending", id, "discard"]) => handlers::discard_pending(&env, id).await,
-
-        // GET /manage/m/{id}: render a stored email (HTML viewer).
-        (Method::Get, ["m", id]) => viewer::render(&env, id).await,
-
-        // GET /manage/rules/{id}/messages: list stored emails for a rule
-        // (HTML fragment for HTMX append).
-        (Method::Get, ["rules", id, "messages"]) => {
-            handlers::list_rule_messages(req, &env, id).await
-        }
-
-        // GET /manage/rules/{id}/messages/{msg_id}: inline-expand body for
-        // one stored email (HTML fragment).
-        (Method::Get, ["rules", id, "messages", msg_id]) => {
-            handlers::rule_message_fragment(&env, id, msg_id).await
-        }
-
-        _ => Response::error("Not Found", 404),
-    }
+/// Serve the SPA shell for a route the Elm app owns (`/manage`,
+/// `/manage/pending`). Not cached: the shell is cheap to regenerate and
+/// caching it would pin a stale set of asset integrity hashes across a deploy.
+pub fn serve_app_shell() -> Result<Response> {
+    let headers = Headers::new();
+    headers.set("Content-Type", "text/html; charset=utf-8")?;
+    headers.set("Cache-Control", "no-store")?;
+    Ok(Response::ok(crate::shell::html())?.with_headers(headers))
 }

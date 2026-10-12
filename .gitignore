@@ -33,3 +33,8 @@ site/
 
 # cachix/git-hooks.nix
 .pre-commit-config.yaml
+
+# Elm frontend build artifacts. `scripts/build-frontend.sh` produces app.js;
+# elm-stuff is its incremental cache. Both are rebuilt by the deploy path.
+public/app.js
+frontend/elm-stuff/

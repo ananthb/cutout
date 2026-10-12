@@ -1,0 +1,23 @@
+# Headers for the static assets Cloudflare's edge serves directly.
+#
+# These files are requested under fixed names and pinned by the shell's
+# `integrity` attributes, so they can't be cached immutably: a returning
+# visitor would keep last deploy's file while the HTML asks for this deploy's
+# hash, and SRI would reject it silently. Revalidation answers 304 when nothing
+# changed.
+#
+# The brand mark is immutable by name.
+
+/app.js
+  Cache-Control: public, max-age=0, must-revalidate
+
+/boot.js
+  Cache-Control: public, max-age=0, must-revalidate
+
+/css/*
+  Cache-Control: public, max-age=0, must-revalidate
+
+/cutout-mark.svg
+  Cache-Control: public, max-age=86400
+
+# The Worker serves /manage and /api/*; those carry their own no-store.

@@ -6,6 +6,10 @@ edition = "2021"
 [lib]
 crate-type = ["cdylib"]
 
+[build-dependencies]
+sha2 = "0.10"
+base64 = "0.22"
+
 [dependencies]
 worker = { version = "0.8", features = ["d1", "queue"] }
 serde = { version = "1", features = ["derive"] }

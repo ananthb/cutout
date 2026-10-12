@@ -6,7 +6,7 @@
 //! ## How it works
 //!
 //! 1. You own a domain (e.g. `example.com`) with Cloudflare Email Routing.
-//! 2. Configure routing rules via the HTMX management UI at `/manage`.
+//! 2. Configure routing rules via the Elm management app at `/manage`.
 //! 3. Inbound mail matching a rule is forwarded to your destinations
 //!    (email, Discord, or Telegram) with headers rewritten.
 //! 4. Replies route back through the worker and are re-sent as email from
@@ -19,7 +19,8 @@
 //!   (durable, no expiry).
 //! - `email`: inbound `EmailMessage.forward()` and outbound `send_email()`.
 //! - `bots`: Telegram and Discord destinations plus reply webhooks.
-//! - `manage`: HTMX-based management UI behind Cloudflare Access.
+//! - `api`: the JSON API the Elm app consumes.
+//! - `shell`, `frontend/`: the Elm single-page app behind Cloudflare Access.
 //! - `events`, `stats`: per-event log and Analytics Engine aggregations.
 //!
 //! ## Destination verification
@@ -32,7 +33,8 @@
 //! ## Routes
 //!
 //! - `/` redirects to `/manage`.
-//! - `/manage/*` is protected by the Cloudflare Access application.
+//! - `/manage/*` serves the Elm shell, protected by Cloudflare Access.
+//! - `/api/*` is the JSON API, also gated by Cloudflare Access.
 //! - `/health` returns 200 OK.
 //! - `/telegram/webhook` and `/discord/interactions` are public; they
 //!   authenticate via secret token and Ed25519 signature respectively.
@@ -40,6 +42,7 @@
 use wasm_bindgen::prelude::*;
 use worker::*;
 
+mod api;
 mod bots;
 mod db;
 mod dlq;
@@ -52,6 +55,7 @@ mod r2;
 mod retries;
 mod sanitize;
 mod screenshot;
+mod shell;
 mod stats;
 mod types;
 mod validation;
@@ -290,11 +294,48 @@ async fn enqueue_for_retry(
 async fn fetch(req: Request, env: Env, _ctx: Context) -> Result<Response> {
     console_error_panic_hook::set_once();
 
+    let mut resp = handle_request(req, env).await?;
+
+    // Hardening applies to the HTML shell and the viewer pages. The JSON API
+    // and static assets don't need it (and static assets never reach the
+    // Worker — Cloudflare's asset handler answers them directly).
+    let is_html = resp
+        .headers()
+        .get("Content-Type")
+        .ok()
+        .flatten()
+        .is_some_and(|ct| ct.contains("text/html"));
+    if is_html {
+        add_security_headers(&mut resp)?;
+    }
+    Ok(resp)
+}
+
+fn add_security_headers(resp: &mut Response) -> Result<()> {
+    let headers = resp.headers_mut();
+    headers.set("X-Frame-Options", "DENY")?;
+    headers.set("X-Content-Type-Options", "nosniff")?;
+    headers.set("Referrer-Policy", "strict-origin-when-cross-origin")?;
+    let csp = "default-src 'self'; \
+         script-src 'self'; \
+         style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; \
+         font-src 'self' https://fonts.gstatic.com; \
+         img-src 'self' data: https:; \
+         connect-src 'self'; \
+         frame-src 'self'; \
+         base-uri 'self'; \
+         form-action 'self'; \
+         object-src 'none'";
+    headers.set("Content-Security-Policy", csp)?;
+    Ok(())
+}
+
+async fn handle_request(req: Request, env: Env) -> Result<Response> {
     let url = req.url()?;
-    let path = url.path();
+    let path = url.path().to_string();
     let method = req.method();
 
-    match path {
+    match path.as_str() {
         "/" => {
             let headers = Headers::new();
             headers.set("Location", "/manage")?;
@@ -307,12 +348,29 @@ async fn fetch(req: Request, env: Env, _ctx: Context) -> Result<Response> {
         "/discord/interactions" if method == Method::Post => {
             bots::handle_discord_interaction(req, env).await
         }
-        p if p.starts_with("/manage") => manage::handle_manage(req, env, p, method).await,
+        p if p.starts_with("/api/") => api::handle(req, env, &path, method).await,
         p if p.starts_with("/m/") && method == Method::Get => {
-            handle_public_viewer(req, env, p).await
+            handle_public_viewer(req, env, &path).await
         }
+        p if p.starts_with("/manage/m/") && method == Method::Get => {
+            handle_manage_viewer(req, env, &path).await
+        }
+        p if p == "/manage" || p.starts_with("/manage/") => manage::serve_app_shell(),
         _ => Response::error("Not Found", 404),
     }
+}
+
+/// Access-protected viewer for a stored email (`/manage/m/{id}`), the target of
+/// the inspector's "open in new tab" link.
+async fn handle_manage_viewer(req: Request, env: Env, path: &str) -> Result<Response> {
+    let id = match path.strip_prefix("/manage/m/") {
+        Some(rest) if !rest.is_empty() && !rest.contains('/') => rest,
+        _ => return Response::error("Not Found", 404),
+    };
+    if manage::access::verify_access(&req, &env).await.is_none() {
+        return Response::error("Forbidden: Cloudflare Access required", 403);
+    }
+    manage::viewer::render(&env, id).await
 }
 
 /// Public viewer route `/m/{id}?t={hmac}`. Validates the token is the

@@ -3,10 +3,16 @@
   "version": "0.0.0",
   "private": true,
   "scripts": {
+    "build:frontend": "./scripts/build-frontend.sh",
+    "build:frontend:dev": "./scripts/build-frontend.sh dev",
     "deploy": "(command -v cargo || curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal --default-toolchain none) && . $HOME/.cargo/env && cargo install -q worker-build --version ^0.8 && wrangler d1 migrations apply cutout-db --remote && wrangler deploy",
     "dev": "wrangler dev"
   },
+  "dependencies": {
+    "elm": "0.19.2-0"
+  },
   "devDependencies": {
+    "elm-format": "0.8.8",
     "wrangler": "^4"
   }
 }

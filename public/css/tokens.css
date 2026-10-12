@@ -1,0 +1,141 @@
+/* Design tokens.
+ *
+ * Loaded first: every other stylesheet reads these custom properties. The
+ * palette is warm (the accent is Cutout's orange), and there are two modes —
+ * `[data-theme="dark"]` for a pinned choice, and `[data-theme="system"]` which
+ * follows the OS via the media query at the bottom. boot.js sets the attribute
+ * from localStorage before the first paint.
+ */
+
+:root {
+  --font-sans: "Inter", system-ui, -apple-system, "Segoe UI", sans-serif;
+  --font-mono: "JetBrains Mono", ui-monospace, "SF Mono", Menlo, monospace;
+
+  /* Warm neutrals. */
+  --bg: #fbfaf8;
+  --bg-1: #ffffff;
+  --bg-2: #f4f1ec;
+  --bg-inset: #ece7de;
+  --fg: #241f1a;
+  --fg-1: #4c443b;
+  --fg-2: #7b7166;
+  --fg-3: #a99e90;
+  --line: #e7e1d7;
+  --line-2: #d7cfc1;
+
+  /* Accent. */
+  --accent: #e07b39;
+  --accent-2: #f0a35e;
+  --accent-soft: #fbe9d7;
+  --accent-fg: #fff9f3;
+  --accent-ring: color-mix(in oklab, var(--accent) 28%, transparent);
+
+  /* Status. */
+  --ok: #3f9d63;
+  --ok-soft: #e4f4e9;
+  --warn: #c98a1f;
+  --warn-soft: #fbf0d6;
+  --bad: #d0503a;
+  --bad-soft: #fbe3de;
+  --info: #3d7dd6;
+  --info-soft: #e3edfb;
+
+  /* Channels. */
+  --ch-email: #3b82f6;
+  --ch-telegram: #26a5e4;
+  --ch-discord: #5865f2;
+
+  /* Shape. */
+  --r-xs: 4px;
+  --r-sm: 8px;
+  --r-md: 12px;
+  --r-lg: 18px;
+  --r-pill: 999px;
+
+  --shadow-sm: 0 1px 2px rgba(40, 30, 20, 0.06), 0 1px 1px rgba(40, 30, 20, 0.04);
+  --shadow-md: 0 6px 18px rgba(40, 30, 20, 0.09), 0 2px 6px rgba(40, 30, 20, 0.05);
+  --shadow-lg: 0 24px 60px rgba(40, 30, 20, 0.18), 0 8px 24px rgba(40, 30, 20, 0.10);
+
+  --header-h: 58px;
+  --micro-h: 42px;
+  --live-h: 232px;
+  --live-collapsed: 40px;
+
+  --ease: cubic-bezier(0.22, 1, 0.36, 1);
+  --ease-pop: cubic-bezier(0.34, 1.56, 0.64, 1);
+  --dur: 180ms;
+  --dur-slow: 340ms;
+
+  color-scheme: light;
+}
+
+[data-theme="dark"] {
+  --bg: #15120e;
+  --bg-1: #1d1913;
+  --bg-2: #26211a;
+  --bg-inset: #100d0a;
+  --fg: #f5f0e8;
+  --fg-1: #cfc6b8;
+  --fg-2: #9c9284;
+  --fg-3: #6d6355;
+  --line: #322b21;
+  --line-2: #443a2c;
+
+  --accent: #f0975a;
+  --accent-2: #ffb877;
+  --accent-soft: #3a2a1a;
+  --accent-fg: #1c150e;
+
+  --ok: #5cba7f;
+  --ok-soft: #1e2f24;
+  --warn: #e0ab4a;
+  --warn-soft: #33290f;
+  --bad: #ef7a63;
+  --bad-soft: #37201b;
+  --info: #74a9ef;
+  --info-soft: #182636;
+
+  --ch-email: #74a9ef;
+  --ch-telegram: #59c0ef;
+  --ch-discord: #8f97f7;
+
+  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.4);
+  --shadow-md: 0 8px 22px rgba(0, 0, 0, 0.5);
+  --shadow-lg: 0 28px 70px rgba(0, 0, 0, 0.62), 0 8px 24px rgba(0, 0, 0, 0.4);
+
+  color-scheme: dark;
+}
+
+@media (prefers-color-scheme: dark) {
+  [data-theme="system"] {
+    --bg: #15120e;
+    --bg-1: #1d1913;
+    --bg-2: #26211a;
+    --bg-inset: #100d0a;
+    --fg: #f5f0e8;
+    --fg-1: #cfc6b8;
+    --fg-2: #9c9284;
+    --fg-3: #6d6355;
+    --line: #322b21;
+    --line-2: #443a2c;
+    --accent: #f0975a;
+    --accent-2: #ffb877;
+    --accent-soft: #3a2a1a;
+    --accent-fg: #1c150e;
+    --ok: #5cba7f;
+    --ok-soft: #1e2f24;
+    --warn: #e0ab4a;
+    --warn-soft: #33290f;
+    --bad: #ef7a63;
+    --bad-soft: #37201b;
+    --info: #74a9ef;
+    --info-soft: #182636;
+    --ch-email: #74a9ef;
+    --ch-telegram: #59c0ef;
+    --ch-discord: #8f97f7;
+    --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.4);
+    --shadow-md: 0 8px 22px rgba(0, 0, 0, 0.5);
+    --shadow-lg: 0 28px 70px rgba(0, 0, 0, 0.62), 0 8px 24px rgba(0, 0, 0, 0.4);
+    color-scheme: dark;
+  }
+}
