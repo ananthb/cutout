@@ -147,7 +147,11 @@ async fn state(env: &Env, operator: &str) -> Result<Response> {
     }))
 }
 
-fn rule_json(rule: &Rule, issues: &[validation::Issue], stats_data: Option<&stats::Stats7d>) -> Value {
+fn rule_json(
+    rule: &Rule,
+    issues: &[validation::Issue],
+    stats_data: Option<&stats::Stats7d>,
+) -> Value {
     let action = serde_json::to_value(&rule.action).unwrap_or(json!({ "type": "drop" }));
     let rule_stats = stats_data.and_then(|s| s.by_rule.get(&rule.id));
     let issues_json: Vec<Value> = issues
@@ -189,7 +193,10 @@ fn action_from_form(form: &Value) -> std::result::Result<Action, String> {
 }
 
 fn field(form: &Value, key: &str) -> String {
-    form.get(key).and_then(|v| v.as_str()).unwrap_or("").to_string()
+    form.get(key)
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .to_string()
 }
 
 fn rules_version_from_form(form: &Value) -> u64 {
@@ -429,7 +436,9 @@ async fn retry_pending(env: &Env, id: &str) -> Result<Response> {
             .await?;
     }
     let queue = env.queue("RETRIES")?;
-    queue.send(&crate::types::RetryMsg { id: id.to_string() }).await?;
+    queue
+        .send(&crate::types::RetryMsg { id: id.to_string() })
+        .await?;
     json_ok(&json!({ "ok": true }))
 }
 

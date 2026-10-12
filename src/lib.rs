@@ -42,6 +42,7 @@
 use wasm_bindgen::prelude::*;
 use worker::*;
 
+mod api;
 mod bots;
 mod db;
 mod dlq;
@@ -58,7 +59,6 @@ mod shell;
 mod stats;
 mod types;
 mod validation;
-mod api;
 
 // --- Email event handler via wasm_bindgen ---
 
