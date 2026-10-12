@@ -54,7 +54,7 @@ pub fn html() -> String {
         .collect();
 
     format!(
-        r#"<!doctype html>
+        r##"<!doctype html>
 <html lang="en">
 <head>
 <meta charset="utf-8">
@@ -70,7 +70,7 @@ pub fn html() -> String {
 <body>
 </body>
 </html>
-"#,
+"##,
         stylesheets = stylesheets,
         scripts = scripts
     )
