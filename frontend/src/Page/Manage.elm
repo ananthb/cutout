@@ -1803,7 +1803,7 @@ editorModal model =
                             [ destinationsField model editor enabled
                             , Ui.toggle
                                 { id = "rule-store-forward"
-                                , label = "Store & Forward — keep a copy of the message"
+                                , label = "Store & Forward (keep a copy of the message)"
                                 , checked = editor.storeForward
                                 , onCheck = EditorStore
                                 }
@@ -1948,15 +1948,12 @@ modifierToggles : Editor -> Html Msg
 modifierToggles editor =
     case editor.destKind of
         "email" ->
-            label [ class "dest-mod-toggle" ]
-                [ input
-                    [ type_ "checkbox"
-                    , A.checked editor.destProxy
-                    , onInput (\_ -> EditorDestProxy (not editor.destProxy))
-                    ]
-                    []
-                , text "Proxy mode (rewrite Reply-To through the worker)"
-                ]
+            Ui.toggle
+                { id = "dest-proxy"
+                , label = "Proxy mode (rewrite Reply-To through the worker)"
+                , checked = editor.destProxy
+                , onCheck = EditorDestProxy
+                }
 
         "telegram" ->
             authToggle editor
