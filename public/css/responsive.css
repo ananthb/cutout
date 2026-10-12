@@ -1,0 +1,173 @@
+/* Breakpoints. The workbench shows one pane at a time on narrow screens: the
+ * pipeline until a rule is selected, then the inspector full-width.
+ */
+
+@media (max-width: 980px) {
+  .workbench {
+    grid-template-columns: 1fr;
+  }
+
+  .workbench.no-selection .inspector-pane {
+    display: none;
+  }
+
+  .workbench.has-selection .pipeline-pane {
+    display: none;
+  }
+
+  .pipeline-pane {
+    border-right: 0;
+    overflow-y: auto;
+  }
+
+  .pipeline-list {
+    overflow: visible;
+  }
+
+  .inspector-back {
+    display: inline-flex;
+  }
+
+  .inspector-head {
+    flex-wrap: wrap;
+  }
+
+  .ih-actions {
+    margin-left: 0;
+  }
+
+  .stat-strip {
+    grid-template-columns: repeat(2, 1fr);
+  }
+
+  .brand-sub {
+    display: none;
+  }
+
+  .ticker {
+    display: none;
+  }
+}
+
+@media (max-width: 680px) {
+  .site-header {
+    padding: 0 12px;
+    gap: 10px;
+  }
+
+  .site-nav {
+    gap: 0;
+  }
+
+  .nav-link {
+    padding: 7px 9px;
+    font-size: 12.5px;
+  }
+
+  .operator {
+    display: none;
+  }
+
+  .microbar {
+    gap: 10px;
+    padding: 0 12px;
+  }
+
+  .ms-value {
+    font-size: 13px;
+  }
+
+  .pipeline-tester {
+    padding: 10px 12px;
+  }
+
+  .pipeline-list {
+    padding: 12px 12px 20px;
+  }
+
+  .inspector-body {
+    padding: 16px 14px 28px;
+  }
+
+  .inspector-head {
+    padding: 14px;
+  }
+
+  .ih-title {
+    font-size: 18px;
+  }
+
+  .live-filters {
+    display: none;
+  }
+
+  .live-row {
+    grid-template-columns: 64px 60px minmax(0, 1fr);
+    gap: 8px;
+    padding: 5px 0;
+    border-bottom: 1px dashed var(--line-2);
+  }
+
+  .live-row .lr-arrow,
+  .live-row .lr-to,
+  .live-row .lr-ch,
+  .live-row .lr-size {
+    display: none;
+  }
+
+  .lr-err {
+    margin-left: 0;
+  }
+
+  .message-row {
+    grid-template-columns: 92px minmax(0, 1fr) 18px;
+  }
+
+  .message-subj {
+    display: none;
+  }
+
+  .rc-tools {
+    opacity: 1;
+    transform: none;
+    pointer-events: auto;
+  }
+
+  .pending-page {
+    padding: 18px 12px 48px;
+  }
+
+  .pending-head {
+    flex-direction: column;
+  }
+
+  .pending-table {
+    font-size: 12px;
+    table-layout: fixed;
+  }
+
+  .pending-table th,
+  .pending-table td {
+    padding: 8px;
+    word-break: break-word;
+  }
+
+  .pending-table th:nth-child(3),
+  .pending-table td:nth-child(3) {
+    display: none;
+  }
+
+  .errcell {
+    max-width: none;
+    white-space: normal;
+    word-break: break-word;
+  }
+
+  .pr-actions {
+    flex-direction: column;
+  }
+
+  .modal {
+    border-radius: var(--r-md);
+  }
+}

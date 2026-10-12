@@ -6,6 +6,18 @@ compatibility_date = "2024-01-01"
 command = "./scripts/build-worker.sh"
 
 # ============================================================================
+# Static assets served directly by Cloudflare's edge and NOT by the Worker:
+# the Elm bundle (app.js), its initialiser (boot.js), the CSS modules and the
+# brand mark. A request matching a file here is answered from the edge, which
+# is why they can't carry a per-response header (see `public/_headers`).
+#
+# Anything not matching a file — /manage, /manage/pending, /api/*, /m/* — falls
+# through to the Worker.
+# ============================================================================
+[assets]
+directory = "./public"
+
+# ============================================================================
 # D1 database for routing config and pending dispatches.
 # Forks: replace `database_id` with your own from `wrangler d1 create`.
 # ============================================================================

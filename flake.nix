@@ -30,7 +30,11 @@
           src = ./.;
           filter = path: type:
             (craneLib.filterCargoSources path type)
-            || (builtins.match ".*assets/.*" path != null);
+            || (builtins.match ".*assets/.*" path != null)
+            # build.rs hashes the frontend bundle and stylesheets, so the
+            # crane builds need public/ (including the built app.js) present.
+            # Run `npm run build:frontend` first, as the deploy path does.
+            || (builtins.match ".*public/.*" path != null);
         };
 
         commonArgs = {
@@ -76,6 +80,18 @@
           fmt = craneLib.cargoFmt {
             inherit src;
           };
+
+          # elm-format is to Elm what rustfmt is to Rust: one canonical
+          # layout, no configuration. It runs offline, so it can live here;
+          # compiling the app cannot, because elm resolves its package
+          # registry from the network. `elm make --optimize` runs in CI.
+          elmFormat = pkgs.runCommand "elm-format-check"
+            {
+              nativeBuildInputs = [ pkgs.elmPackages.elm-format ];
+            } ''
+            elm-format --validate ${./frontend}/src
+            touch $out
+          '';
         };
 
         devShells.default = pkgs.mkShell {
@@ -85,14 +101,21 @@
             worker-build
             wasm-pack
             binaryen
+            # Frontend. Same 0.19.2 the `elm` npm dependency pins, which is
+            # what Cloudflare Workers Builds uses (no nix there). elm-format
+            # backs the flake check above.
+            elmPackages.elm
+            elmPackages.elm-format
+            # nodejs_22 ships npm, which `npm ci` needs locally.
             nodejs_22
           ];
           shellHook = ''
             ${pre-commit-check.shellHook}
             echo "Cutout dev environment"
-            echo "  wrangler dev        - Start local dev server"
-            echo "  wrangler deploy     - Deploy to Cloudflare"
-            echo "  nix flake check     - Run CI checks"
+            echo "  npm run build:frontend - Compile the Elm app to public/app.js"
+            echo "  wrangler dev           - Start local dev server"
+            echo "  wrangler deploy        - Deploy to Cloudflare"
+            echo "  nix flake check        - Run CI checks"
           '';
         };
       }

@@ -43,29 +43,37 @@ To wire up your fork:
 - **Permanent Archival**: an `X-Original-From` header is injected into all forwarded mail so you never lose the sender's identity even if KV mappings expire
 - **Multi-destination forwards**: one rule can forward to any mix of email / Telegram / Discord targets
 - **Bot-relay replies**: reply directly from Telegram or Discord chat; Cutout routes it back to the original sender via email
-- **HTMX Management UI**: clean, responsive web interface for managing rules, gated by Cloudflare Access
+- **Elm management app**: a single-page frontend for managing rules, gated by Cloudflare Access; the pipeline animates which rule a test address would fire
+- **JSON API**: the frontend talks to `/api/*` and nothing else
 - **Safety first**: automatic loop detection; kinds whose secrets aren't set are hidden from the UI and rejected by the validator
-- **Live tester**: each rule's inspector includes an interactive tester that evaluates a recipient address against this rule plus the full ruleset, highlighting which rule actually fires
+- **Live tester**: the workbench tester evaluates a recipient address against the full ruleset on every keystroke, highlighting which rule actually fires
 - **Multi-domain**: one worker serves any number of zones; rules use the domain glob to differentiate
 
 ## Architecture
 
 - [Cloudflare Workers](https://workers.cloudflare.com/): Rust compiled to WebAssembly
+- [Elm](https://elm-lang.org/): the management SPA, compiled to `public/app.js`
 - [Cloudflare Email Routing](https://developers.cloudflare.com/email-routing/): inbound MX + catch-all -> worker, plus `EmailMessage.forward()` for the Native Forward path
 - [Cloudflare Email Service](https://developers.cloudflare.com/email-service/): used for reverse-alias replies, Proxy mode forwarding, and fanning out beyond the first destination
 - [Cloudflare KV](https://developers.cloudflare.com/kv/): rule list, reverse-alias mappings, and per-message bot reply contexts
-- [Cloudflare Access](https://developers.cloudflare.com/cloudflare-one/applications/): protects `/manage`
+- [Cloudflare Access](https://developers.cloudflare.com/cloudflare-one/applications/): protects `/manage` and `/api`
 - [botrelay-rs](https://github.com/ananthb/botrelay-rs): shared crate providing the Telegram + Discord bot clients and reply-context primitives
 
 ## Development
 
 ```bash
-nix develop        # enter dev shell with all tools (Nix-only; CI does not use Nix)
-cargo test         # run tests
-cargo clippy       # lint
-wrangler dev       # local dev server
-nix flake check    # run all CI checks (tests, clippy, fmt, pre-commit)
+nix develop              # enter dev shell with all tools (Nix-only; CI does not use Nix)
+npm ci                   # install elm + wrangler
+npm run build:frontend   # compile the Elm app to public/app.js
+cargo test               # run tests
+cargo clippy             # lint
+wrangler dev             # local dev server
+nix flake check          # run all CI checks (tests, clippy, fmt, elm-format, pre-commit)
 ```
+
+`build.rs` hashes `public/app.js` and the CSS modules into the shell's integrity
+attributes, so the frontend has to be built before the crate will compile —
+`npm run build:frontend` (or `scripts/build-worker.sh`, which does it for you).
 
 Nix is for local convenience only — Cloudflare Builds installs the same toolchain via rustup, which reads the channel from [`rust-toolchain.toml`](rust-toolchain.toml).
 

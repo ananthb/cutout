@@ -1,20 +1,30 @@
 #!/usr/bin/env bash
-# wrangler [build].command — runs `worker-build --release`, making sure
-# the worker-build on PATH is new enough for the `worker` pin first.
+# wrangler [build].command — builds both halves of the app:
+#   1. the Elm frontend into public/app.js
+#   2. the Rust worker into wasm, via worker-build
 #
-# Cloudflare Workers Builds runs `npx wrangler versions upload`
-# directly; it never goes through `npm run deploy`, so the
-# `cargo install worker-build` in package.json does not apply there.
-# Whatever worker-build the builder has is what runs, and worker-build
-# refuses a crate whose `worker` pin is older than itself:
+# The frontend is built first: `build.rs` hashes public/app.js and the CSS
+# modules into the shell's Subresource Integrity attributes, so the crate
+# cannot compile until the bundle exists. Building the wasm first would just
+# move the failure one step later.
+#
+# Wraps `worker-build --release`, making sure the worker-build on PATH is new
+# enough for the `worker` pin. Cloudflare Workers Builds runs
+# `npx wrangler versions upload` directly; it never goes through
+# `npm run deploy`, so the `cargo install worker-build` there does not apply.
+# worker-build refuses a crate whose `worker` pin is older than itself:
 #
 #   Unsupported version worker@0.7.4, expected at least worker@0.8.6
 #
-# Bootstrapping inside the [build] command makes the version explicit
-# wherever the build is invoked from. Deliberately checks the version
-# rather than mere presence: a builder carrying a stale worker-build
-# would otherwise be silently accepted and fail at the refusal above.
+# Bootstrapping inside the [build] command makes the version explicit wherever
+# the build is invoked from. Deliberately checks the version rather than mere
+# presence: a builder carrying a stale worker-build would otherwise be
+# silently accepted and fail at the refusal above.
 set -euo pipefail
+
+cd "$(dirname "$0")/.."
+
+./scripts/build-frontend.sh
 
 # Must track the `worker` major in Cargo.toml, and the pin in
 # package.json's deploy script.

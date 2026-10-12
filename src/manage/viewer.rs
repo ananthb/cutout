@@ -30,17 +30,37 @@ pub fn verify_signed_id(key: &str, id: &str, token: &str) -> bool {
     expected.as_bytes().ct_eq(token.as_bytes()).into()
 }
 
-/// Header + body sections for a stored email, ready to embed. Produced by
-/// [`build_rendered`] and consumed by both the standalone page ([`render`])
-/// and the manage inspector's inline expand fragment.
+/// Header + body parts for a stored email. Produced by [`build_rendered`] and
+/// consumed by the standalone page ([`render`]), which assembles them into
+/// markup, and by the JSON API, which ships the sanitized HTML/text to the
+/// frontend for the inline inspector.
 pub struct RenderedEmail {
     pub subject: String,
     pub from: String,
     pub to: String,
-    /// Either an empty string or a fully escaped `<div class="row">…Date…</div>`.
-    pub date_line: String,
-    /// Either a sandboxed iframe, a `<pre>`, or an empty-state paragraph.
-    pub body_section: String,
+    /// The `created_at` timestamp, when known.
+    pub date: Option<String>,
+    /// Sanitized HTML body, hosted by the frontend in a sandboxed iframe.
+    pub body_html: Option<String>,
+    /// Plain-text body, used when there is no HTML part.
+    pub body_text: Option<String>,
+}
+
+impl RenderedEmail {
+    /// The body rendered for a standalone page: a sandboxed iframe for HTML, a
+    /// `<pre>` for text, or an empty-state paragraph.
+    pub fn body_section(&self) -> String {
+        if let Some(html) = &self.body_html {
+            format!(
+                "<iframe class=\"email-body\" sandbox=\"allow-popups allow-popups-to-escape-sandbox\" srcdoc=\"{}\"></iframe>",
+                srcdoc_attr_escape(html)
+            )
+        } else if let Some(text) = &self.body_text {
+            format!("<pre class=\"email-text\">{}</pre>", html_escape(text))
+        } else {
+            "<p class=\"empty\">No renderable body.</p>".to_string()
+        }
+    }
 }
 
 /// Fetch + parse + sanitize a stored email. Returns `None` when the row or
@@ -73,34 +93,14 @@ pub async fn build_rendered(env: &Env, id: &str) -> Result<Option<RenderedEmail>
         .as_ref()
         .map(|p| p.subject.clone())
         .unwrap_or_else(|| meta.subject.clone());
-    let date_line = meta
-        .created_at
-        .as_deref()
-        .map(|ts| {
-            format!(
-                "<div class=\"row\"><span class=\"k\">Date</span><span>{}</span></div>",
-                html_escape(ts)
-            )
-        })
-        .unwrap_or_default();
-
-    let body_section = if !body_html.is_empty() {
-        format!(
-            "<iframe class=\"email-body\" sandbox=\"allow-popups allow-popups-to-escape-sandbox\" srcdoc=\"{}\"></iframe>",
-            srcdoc_attr_escape(&body_html)
-        )
-    } else if let Some(text) = body_text {
-        format!("<pre class=\"email-text\">{}</pre>", html_escape(&text))
-    } else {
-        "<p class=\"empty\">No renderable body.</p>".to_string()
-    };
 
     Ok(Some(RenderedEmail {
         subject,
         from,
         to: meta.recipient,
-        date_line,
-        body_section,
+        date: meta.created_at,
+        body_html: (!body_html.is_empty()).then_some(body_html),
+        body_text,
     }))
 }
 
@@ -112,6 +112,17 @@ pub async fn render(env: &Env, id: &str) -> Result<Response> {
         Some(r) => r,
         None => return Response::error("Not Found", 404),
     };
+
+    let date_line = rendered
+        .date
+        .as_deref()
+        .map(|ts| {
+            format!(
+                "<div class=\"row\"><span class=\"k\">Date</span><span>{}</span></div>",
+                html_escape(ts)
+            )
+        })
+        .unwrap_or_default();
 
     let page = format!(
         r#"<!DOCTYPE html>
@@ -150,8 +161,8 @@ pub async fn render(env: &Env, id: &str) -> Result<Response> {
         subject_html = html_escape(&rendered.subject),
         from_html = html_escape(&rendered.from),
         to_html = html_escape(&rendered.to),
-        date_line = rendered.date_line,
-        body_section = rendered.body_section,
+        date_line = date_line,
+        body_section = rendered.body_section(),
     );
 
     let mut resp = Response::from_html(page)?;
