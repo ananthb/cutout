@@ -2,50 +2,51 @@ module Icons exposing (..)
 
 {-| Inline SVG icons.
 
-Built with `Html.node "svg"` rather than `elm/svg` so the app keeps its
-dependency list small; the few attributes that matter (`viewBox`, `stroke`,
-`stroke-width`) are set with `attribute`. Icons inherit `currentColor`, so a
-hover or a state class recolours them for free.
+These use `elm/svg` rather than `Html.node "svg"`. That distinction matters:
+`Html.node` creates elements in the _HTML_ namespace, so an `<svg>` built that
+way is an unknown HTML element whose `<path>`/`<rect>` children never render —
+the icons silently vanish. `Svg.svg` builds them in the SVG namespace.
+
+Icons inherit `currentColor`, so a hover or a state class recolours them for
+free.
 
 -}
 
-import Html exposing (Html)
-import Html.Attributes exposing (attribute, class)
+import Svg exposing (Svg, path, rect, svg)
+import Svg.Attributes as SA
 
 
-stroke : String -> List (Html msg) -> Html msg
+stroke : String -> List (Svg msg) -> Svg msg
 stroke viewBox children =
-    Html.node "svg"
-        [ attribute "viewBox" viewBox
-        , attribute "width" "1em"
-        , attribute "height" "1em"
-        , attribute "fill" "none"
-        , attribute "stroke" "currentColor"
-        , attribute "stroke-width" "1.8"
-        , attribute "stroke-linecap" "round"
-        , attribute "stroke-linejoin" "round"
-        , attribute "aria-hidden" "true"
-        , class "icon"
+    svg
+        [ SA.viewBox viewBox
+        , SA.width "1em"
+        , SA.height "1em"
+        , SA.fill "none"
+        , SA.stroke "currentColor"
+        , SA.strokeWidth "1.8"
+        , SA.strokeLinecap "round"
+        , SA.strokeLinejoin "round"
+        , SA.class "icon"
         ]
         children
 
 
-fill : String -> List (Html msg) -> Html msg
+fill : String -> List (Svg msg) -> Svg msg
 fill viewBox children =
-    Html.node "svg"
-        [ attribute "viewBox" viewBox
-        , attribute "width" "1em"
-        , attribute "height" "1em"
-        , attribute "fill" "currentColor"
-        , attribute "aria-hidden" "true"
-        , class "icon"
+    svg
+        [ SA.viewBox viewBox
+        , SA.width "1em"
+        , SA.height "1em"
+        , SA.fill "currentColor"
+        , SA.class "icon"
         ]
         children
 
 
-path : String -> Html msg
-path d =
-    Html.node "path" [ attribute "d" d ] []
+p : String -> Svg msg
+p d =
+    path [ SA.d d ] []
 
 
 
@@ -55,43 +56,42 @@ path d =
 {-| The Cutout mark: an outlined square overlapping a filled one, the overlap
 "cut out". Inherits colour so it works on any surface.
 -}
-logo : Html msg
+logo : Svg msg
 logo =
-    Html.node "svg"
-        [ attribute "viewBox" "0 0 22 22"
-        , attribute "width" "1em"
-        , attribute "height" "1em"
-        , attribute "aria-hidden" "true"
-        , class "icon icon-logo"
+    svg
+        [ SA.viewBox "0 0 22 22"
+        , SA.width "1em"
+        , SA.height "1em"
+        , SA.class "icon icon-logo"
         ]
-        [ Html.node "rect"
-            [ attribute "x" "1.5"
-            , attribute "y" "1.5"
-            , attribute "width" "13"
-            , attribute "height" "13"
-            , attribute "rx" "2.5"
-            , attribute "fill" "none"
-            , attribute "stroke" "currentColor"
-            , attribute "stroke-width" "1.7"
+        [ rect
+            [ SA.x "1.5"
+            , SA.y "1.5"
+            , SA.width "13"
+            , SA.height "13"
+            , SA.rx "2.5"
+            , SA.fill "none"
+            , SA.stroke "currentColor"
+            , SA.strokeWidth "1.7"
             ]
             []
-        , Html.node "rect"
-            [ attribute "x" "7.5"
-            , attribute "y" "7.5"
-            , attribute "width" "13"
-            , attribute "height" "13"
-            , attribute "rx" "2.5"
-            , attribute "fill" "currentColor"
+        , rect
+            [ SA.x "7.5"
+            , SA.y "7.5"
+            , SA.width "13"
+            , SA.height "13"
+            , SA.rx "2.5"
+            , SA.fill "currentColor"
             ]
             []
-        , Html.node "rect"
-            [ attribute "x" "7.5"
-            , attribute "y" "7.5"
-            , attribute "width" "7"
-            , attribute "height" "7"
-            , attribute "fill" "var(--bg-1)"
-            , attribute "stroke" "currentColor"
-            , attribute "stroke-width" "1.7"
+        , rect
+            [ SA.x "7.5"
+            , SA.y "7.5"
+            , SA.width "7"
+            , SA.height "7"
+            , SA.fill "var(--bg-1)"
+            , SA.stroke "currentColor"
+            , SA.strokeWidth "1.7"
             ]
             []
         ]
@@ -101,187 +101,187 @@ logo =
 -- CHANNELS
 
 
-mail : Html msg
+mail : Svg msg
 mail =
     stroke "0 0 16 16"
-        [ Html.node "rect"
-            [ attribute "x" "2"
-            , attribute "y" "3.5"
-            , attribute "width" "12"
-            , attribute "height" "9"
-            , attribute "rx" "1.5"
+        [ rect
+            [ SA.x "2"
+            , SA.y "3.5"
+            , SA.width "12"
+            , SA.height "9"
+            , SA.rx "1.5"
             ]
             []
-        , path "M2.5 4.5l5.5 4 5.5-4"
+        , p "M2.5 4.5l5.5 4 5.5-4"
         ]
 
 
-telegram : Html msg
+telegram : Svg msg
 telegram =
     fill "0 0 16 16"
-        [ path "M14.4 2.3 1.7 7.2c-.9.3-.8 1.5.1 1.7l3 .8 1.2 3.7c.2.6.9.7 1.3.3l1.7-1.5 3.3 2.4c.6.4 1.4 0 1.5-.7l2-9.7c.2-.9-.7-1.5-1.4-1.2zm-2.3 3-5.3 4.7-.2 2.5-1-2.9 6.5-4.3z" ]
+        [ p "M14.4 2.3 1.7 7.2c-.9.3-.8 1.5.1 1.7l3 .8 1.2 3.7c.2.6.9.7 1.3.3l1.7-1.5 3.3 2.4c.6.4 1.4 0 1.5-.7l2-9.7c.2-.9-.7-1.5-1.4-1.2zm-2.3 3-5.3 4.7-.2 2.5-1-2.9 6.5-4.3z" ]
 
 
-discord : Html msg
+discord : Svg msg
 discord =
     fill "0 0 16 16"
-        [ path "M13 3.5a11 11 0 0 0-2.7-.8l-.2.5a9.7 9.7 0 0 0-4.2 0l-.2-.5a11 11 0 0 0-2.7.8C1 7 1 9.5 1 12c0 0 1.4 1 3.4 1.4l.5-.9a6 6 0 0 1-1.1-.5l.3-.2a8 8 0 0 0 7.8 0l.3.2a6 6 0 0 1-1.1.5l.5.9c2-.4 3.4-1.4 3.4-1.4 0-2.5 0-5-2-8.5zM6 10c-.6 0-1.1-.6-1.1-1.3 0-.7.5-1.3 1.1-1.3.7 0 1.2.6 1.1 1.3 0 .7-.5 1.3-1.1 1.3zm4 0c-.6 0-1.1-.6-1.1-1.3 0-.7.5-1.3 1.1-1.3.7 0 1.2.6 1.1 1.3 0 .7-.5 1.3-1.1 1.3z" ]
+        [ p "M13 3.5a11 11 0 0 0-2.7-.8l-.2.5a9.7 9.7 0 0 0-4.2 0l-.2-.5a11 11 0 0 0-2.7.8C1 7 1 9.5 1 12c0 0 1.4 1 3.4 1.4l.5-.9a6 6 0 0 1-1.1-.5l.3-.2a8 8 0 0 0 7.8 0l.3.2a6 6 0 0 1-1.1.5l.5.9c2-.4 3.4-1.4 3.4-1.4 0-2.5 0-5-2-8.5zM6 10c-.6 0-1.1-.6-1.1-1.3 0-.7.5-1.3 1.1-1.3.7 0 1.2.6 1.1 1.3 0 .7-.5 1.3-1.1 1.3zm4 0c-.6 0-1.1-.6-1.1-1.3 0-.7.5-1.3 1.1-1.3.7 0 1.2.6 1.1 1.3 0 .7-.5 1.3-1.1 1.3z" ]
 
 
 
 -- ACTIONS
 
 
-plus : Html msg
+plus : Svg msg
 plus =
-    stroke "0 0 16 16" [ path "M8 3v10M3 8h10" ]
+    stroke "0 0 16 16" [ p "M8 3v10M3 8h10" ]
 
 
-arrowUp : Html msg
+arrowUp : Svg msg
 arrowUp =
-    stroke "0 0 16 16" [ path "M8 13V3M4 7l4-4 4 4" ]
+    stroke "0 0 16 16" [ p "M8 13V3M4 7l4-4 4 4" ]
 
 
-arrowDown : Html msg
+arrowDown : Svg msg
 arrowDown =
-    stroke "0 0 16 16" [ path "M8 3v10M4 9l4 4 4-4" ]
+    stroke "0 0 16 16" [ p "M8 3v10M4 9l4 4 4-4" ]
 
 
-trash : Html msg
+trash : Svg msg
 trash =
     stroke "0 0 16 16"
-        [ path "M2.5 4.5h11M5.5 4.5V3.2a1 1 0 0 1 1-1h3a1 1 0 0 1 1 1v1.3M4 4.5l.6 8.2a1 1 0 0 0 1 .9h4.8a1 1 0 0 0 1-.9l.6-8.2" ]
+        [ p "M2.5 4.5h11M5.5 4.5V3.2a1 1 0 0 1 1-1h3a1 1 0 0 1 1 1v1.3M4 4.5l.6 8.2a1 1 0 0 0 1 .9h4.8a1 1 0 0 0 1-.9l.6-8.2" ]
 
 
-pencil : Html msg
+pencil : Svg msg
 pencil =
-    stroke "0 0 16 16" [ path "M11 2.5l2.5 2.5-8 8L2.5 14l1-3 7.5-8.5z" ]
+    stroke "0 0 16 16" [ p "M11 2.5l2.5 2.5-8 8L2.5 14l1-3 7.5-8.5z" ]
 
 
-close : Html msg
+close : Svg msg
 close =
-    stroke "0 0 16 16" [ path "M3.5 3.5l9 9M12.5 3.5l-9 9" ]
+    stroke "0 0 16 16" [ p "M3.5 3.5l9 9M12.5 3.5l-9 9" ]
 
 
-chevronRight : Html msg
+chevronRight : Svg msg
 chevronRight =
-    stroke "0 0 16 16" [ path "M6 3.5l5 4.5-5 4.5" ]
+    stroke "0 0 16 16" [ p "M6 3.5l5 4.5-5 4.5" ]
 
 
-chevronDown : Html msg
+chevronDown : Svg msg
 chevronDown =
-    stroke "0 0 16 16" [ path "M3.5 6l4.5 5 4.5-5" ]
+    stroke "0 0 16 16" [ p "M3.5 6l4.5 5 4.5-5" ]
 
 
-play : Html msg
+play : Svg msg
 play =
-    fill "0 0 16 16" [ path "M4 2.8v10.4l9-5.2z" ]
+    fill "0 0 16 16" [ p "M4 2.8v10.4l9-5.2z" ]
 
 
-pause : Html msg
+pause : Svg msg
 pause =
-    stroke "0 0 16 16" [ path "M5.5 3v10M10.5 3v10" ]
+    stroke "0 0 16 16" [ p "M5.5 3v10M10.5 3v10" ]
 
 
-external : Html msg
+external : Svg msg
 external =
-    stroke "0 0 16 16" [ path "M6.5 3.5H3.5v9h9v-3M9 3.5h4v4M13 3.5L7.5 9" ]
+    stroke "0 0 16 16" [ p "M6.5 3.5H3.5v9h9v-3M9 3.5h4v4M13 3.5L7.5 9" ]
 
 
-bolt : Html msg
+bolt : Svg msg
 bolt =
-    fill "0 0 16 16" [ path "M9 1 3 9h4l-1 6 6-8H8z" ]
+    fill "0 0 16 16" [ p "M9 1 3 9h4l-1 6 6-8H8z" ]
 
 
-check : Html msg
+check : Svg msg
 check =
-    stroke "0 0 16 16" [ path "M3.5 8.5l3 3 6-7" ]
+    stroke "0 0 16 16" [ p "M3.5 8.5l3 3 6-7" ]
 
 
-alert : Html msg
+alert : Svg msg
 alert =
-    stroke "0 0 16 16" [ path "M8 2.5l6 11H2zM8 6.5v3.5M8 12h.01" ]
+    stroke "0 0 16 16" [ p "M8 2.5l6 11H2zM8 6.5v3.5M8 12h.01" ]
 
 
-info : Html msg
+info : Svg msg
 info =
     stroke "0 0 16 16"
-        [ path "M8 14.5A6.5 6.5 0 1 0 8 1.5a6.5 6.5 0 0 0 0 13z"
-        , path "M8 7.5v4M8 4.8h.01"
+        [ p "M8 14.5A6.5 6.5 0 1 0 8 1.5a6.5 6.5 0 0 0 0 13z"
+        , p "M8 7.5v4M8 4.8h.01"
         ]
 
 
-clock : Html msg
+clock : Svg msg
 clock =
     stroke "0 0 16 16"
-        [ path "M8 14.5A6.5 6.5 0 1 0 8 1.5a6.5 6.5 0 0 0 0 13z"
-        , path "M8 4.5V8l2.5 1.5"
+        [ p "M8 14.5A6.5 6.5 0 1 0 8 1.5a6.5 6.5 0 0 0 0 13z"
+        , p "M8 4.5V8l2.5 1.5"
         ]
 
 
-activity : Html msg
+activity : Svg msg
 activity =
-    stroke "0 0 16 16" [ path "M1.5 8h3l2-5 3 10 2-5h3" ]
+    stroke "0 0 16 16" [ p "M1.5 8h3l2-5 3 10 2-5h3" ]
 
 
-inbox : Html msg
+inbox : Svg msg
 inbox =
     stroke "0 0 16 16"
-        [ path "M2 9.5l1.8-6h8.4L14 9.5V13a1 1 0 0 1-1 1H3a1 1 0 0 1-1-1z"
-        , path "M2 9.5h3.2l.8 1.6h4l.8-1.6H14"
+        [ p "M2 9.5l1.8-6h8.4L14 9.5V13a1 1 0 0 1-1 1H3a1 1 0 0 1-1-1z"
+        , p "M2 9.5h3.2l.8 1.6h4l.8-1.6H14"
         ]
 
 
-refresh : Html msg
+refresh : Svg msg
 refresh =
     stroke "0 0 16 16"
-        [ path "M13 8a5 5 0 1 1-1.5-3.6M13 2v3h-3" ]
+        [ p "M13 8a5 5 0 1 1-1.5-3.6M13 2v3h-3" ]
 
 
-send : Html msg
+send : Svg msg
 send =
-    stroke "0 0 16 16" [ path "M14 8a6 6 0 1 1-1.8-4.2M14 2v3.5h-3.5" ]
+    stroke "0 0 16 16" [ p "M14 8a6 6 0 1 1-1.8-4.2M14 2v3.5h-3.5" ]
 
 
-sun : Html msg
+sun : Svg msg
 sun =
     stroke "0 0 16 16"
-        [ path "M8 11a3 3 0 1 0 0-6 3 3 0 0 0 0 6z"
-        , path "M8 1v1.5M8 13.5V15M15 8h-1.5M2.5 8H1M12.9 3.1l-1 1M4.1 11.9l-1 1M12.9 12.9l-1-1M4.1 4.1l-1-1"
+        [ p "M8 11a3 3 0 1 0 0-6 3 3 0 0 0 0 6z"
+        , p "M8 1v1.5M8 13.5V15M15 8h-1.5M2.5 8H1M12.9 3.1l-1 1M4.1 11.9l-1 1M12.9 12.9l-1-1M4.1 4.1l-1-1"
         ]
 
 
-moon : Html msg
+moon : Svg msg
 moon =
-    stroke "0 0 16 16" [ path "M13.5 9.5A5.5 5.5 0 0 1 6.5 2.5 5.5 5.5 0 1 0 13.5 9.5z" ]
+    stroke "0 0 16 16" [ p "M13.5 9.5A5.5 5.5 0 0 1 6.5 2.5 5.5 5.5 0 1 0 13.5 9.5z" ]
 
 
-monitor : Html msg
+monitor : Svg msg
 monitor =
     stroke "0 0 16 16"
-        [ Html.node "rect"
-            [ attribute "x" "2"
-            , attribute "y" "3"
-            , attribute "width" "12"
-            , attribute "height" "8"
-            , attribute "rx" "1.2"
+        [ rect
+            [ SA.x "2"
+            , SA.y "3"
+            , SA.width "12"
+            , SA.height "8"
+            , SA.rx "1.2"
             ]
             []
-        , path "M6 14h4"
+        , p "M6 14h4"
         ]
 
 
-search : Html msg
+search : Svg msg
 search =
     stroke "0 0 16 16"
-        [ path "M7 12a5 5 0 1 0 0-10 5 5 0 0 0 0 10zM13.5 13.5l-3-3" ]
+        [ p "M7 12a5 5 0 1 0 0-10 5 5 0 0 0 0 10zM13.5 13.5l-3-3" ]
 
 
-shield : Html msg
+shield : Svg msg
 shield =
-    stroke "0 0 16 16" [ path "M8 1.5l5 1.5v4c0 3-2 6-5 7.5C5 13 3 10 3 7V3z" ]
+    stroke "0 0 16 16" [ p "M8 1.5l5 1.5v4c0 3-2 6-5 7.5C5 13 3 10 3 7V3z" ]
 
 
-zap : Html msg
+zap : Svg msg
 zap =
-    stroke "0 0 16 16" [ path "M8.5 1.5L3 9h4l-1.5 5.5L12 7H8z" ]
+    stroke "0 0 16 16" [ p "M8.5 1.5L3 9h4l-1.5 5.5L12 7H8z" ]

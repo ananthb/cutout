@@ -1122,6 +1122,12 @@
   gap: 10px;
 }
 
+.forward-fields {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
 .dest-chips {
   display: flex;
   flex-wrap: wrap;
@@ -1174,6 +1180,23 @@
   font-size: 9px;
   font-weight: 700;
   text-transform: uppercase;
+}
+
+.dest-chip-remove {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  border-radius: var(--r-xs);
+  color: inherit;
+  opacity: 0.55;
+  transition: opacity var(--dur), background var(--dur);
+}
+
+.dest-chip-remove:hover {
+  opacity: 1;
+  background: color-mix(in oklab, currentColor 20%, transparent);
 }
 
 .dest-add {
