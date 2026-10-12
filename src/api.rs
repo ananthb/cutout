@@ -33,6 +33,10 @@ use crate::validation;
 /// "load more" behaviour: a full page means there may be more.
 const RULE_MESSAGES_PAGE_SIZE: u32 = 25;
 
+/// Page size for the `/inbox` list, matching the per-rule list so "load more"
+/// behaves identically on both surfaces.
+const INBOX_PAGE_SIZE: u32 = 25;
+
 // ---------------------------------------------------------------------------
 // Responses
 // ---------------------------------------------------------------------------
@@ -95,6 +99,9 @@ pub async fn handle(mut req: Request, env: Env, path: &str, method: Method) -> R
 
         (Method::Get, ["messages", id]) => message(&env, id).await,
 
+        (Method::Get, ["inbox"]) => inbox(req, &env, &operator).await,
+        (Method::Get, ["inbox", "messages", id]) => inbox_message(&env, &operator, id).await,
+
         (Method::Get, ["telegram-chats"]) => telegram_chats(&env).await,
 
         _ => json_error(404, "not_found", "No such endpoint."),
@@ -124,6 +131,7 @@ async fn ensure_catch_all(kv_store: &worker::kv::KvStore) -> Result<kv::RuleSet>
             domain_pattern: "*".into(),
             action: Action::Drop,
             label: "Catch-all".into(),
+            inbox_readers: Vec::new(),
         });
         kv::save_rule_set_force(kv_store, &set.rules, set.version).await?;
     }
@@ -185,6 +193,8 @@ fn rule_json(
         "domain_pattern": rule.domain_pattern,
         "is_catch_all": rule.is_catch_all(),
         "action": action,
+        "inbox_readers": rule.inbox_readers,
+        "readers": rule.effective_readers(),
         "issues": issues_json,
         "matches_7d": rule_stats.map(|r| r.matches),
         "last_match_s": rule_stats.and_then(|r| r.last_match_s),
@@ -220,6 +230,23 @@ fn rules_version_from_form(form: &Value) -> u64 {
             _ => None,
         })
         .unwrap_or(0)
+}
+
+/// Read a JSON array of strings from `form[key]`, trimming, lower-casing and
+/// de-duplicating. `None` when the key is absent (an older client), so callers
+/// can tell "no readers" apart from "this client doesn't know the field".
+fn opt_string_list(form: &Value, key: &str) -> Option<Vec<String>> {
+    let arr = form.get(key)?.as_array()?;
+    let mut out: Vec<String> = Vec::new();
+    for value in arr {
+        if let Some(s) = value.as_str() {
+            let s = s.trim().to_lowercase();
+            if !s.is_empty() && !out.contains(&s) {
+                out.push(s);
+            }
+        }
+    }
+    Some(out)
 }
 
 fn conflict(current_version: u64) -> Result<Response> {
@@ -260,6 +287,7 @@ async fn create_rule(req: &mut Request, env: &Env, operator: &str) -> Result<Res
         domain_pattern: field(&form, "domain_pattern"),
         action,
         label: field(&form, "label").trim().to_string(),
+        inbox_readers: opt_string_list(&form, "inbox_readers").unwrap_or_default(),
     };
 
     // Insert before the catch-all, so the pinned rule stays last.
@@ -304,6 +332,11 @@ async fn update_rule(
     existing.local_pattern = field(&form, "local_pattern");
     existing.domain_pattern = field(&form, "domain_pattern");
     existing.action = action;
+    // Preserve existing readers when the client doesn't send the field at all
+    // (an older bundle), rather than silently clearing them.
+    if let Some(readers) = opt_string_list(&form, "inbox_readers") {
+        existing.inbox_readers = readers;
+    }
 
     let enabled = EnabledChannels::from_env(env);
     let report = validation::validate(&set.rules, &enabled);
@@ -548,18 +581,116 @@ async fn message(env: &Env, id: &str) -> Result<Response> {
     let Some(rendered) = viewer::build_rendered(env, id).await? else {
         return json_error(404, "not_found", "No stored email with that id.");
     };
+    json_ok(&rendered_json(rendered))
+}
+
+fn rendered_json(rendered: viewer::RenderedEmail) -> Value {
     let body = match (rendered.body_html, rendered.body_text) {
         (Some(html), _) => json!({ "kind": "html", "html": html }),
         (None, Some(text)) => json!({ "kind": "text", "text": text }),
         _ => json!({ "kind": "none" }),
     };
-    json_ok(&json!({
+    json!({
         "subject": rendered.subject,
         "from": rendered.from,
         "to": rendered.to,
         "date": rendered.date,
         "body": body,
+    })
+}
+
+// ---------------------------------------------------------------------------
+// Inbox: stored mail readable by the signed-in Access identity
+// ---------------------------------------------------------------------------
+
+/// Stored emails the signed-in person is allowed to read. A person reads a
+/// rule's stored mail when they're in that rule's effective reader set: its
+/// email destinations (implicit recipients) plus any extra `inbox_readers`.
+/// The rule config lives in KV, so this loads it, resolves the allowed rule
+/// ids, then pages D1.
+async fn inbox(req: Request, env: &Env, operator: &str) -> Result<Response> {
+    let kv_store = env.kv("KV")?;
+    let set = kv::get_rule_set(&kv_store).await?;
+
+    let allowed: Vec<&Rule> = set.rules.iter().filter(|r| r.is_reader(operator)).collect();
+    let rule_ids: Vec<String> = allowed.iter().map(|r| r.id.clone()).collect();
+    let labels: std::collections::HashMap<&str, String> = allowed
+        .iter()
+        .map(|r| (r.id.as_str(), r.display_label()))
+        .collect();
+
+    let before = req.url().ok().and_then(|u| {
+        u.query_pairs()
+            .find(|(k, _)| k == "before")
+            .map(|(_, v)| v.into_owned())
+            .filter(|s| !s.is_empty())
+    });
+
+    let database = env.d1("DB")?;
+    let items = db::list_messages_for_rules(
+        &database,
+        &rule_ids,
+        INBOX_PAGE_SIZE,
+        before.as_deref(),
+    )
+    .await?;
+    let has_more = items.len() as u32 == INBOX_PAGE_SIZE;
+    let next_before = items.last().and_then(|m| m.created_at.clone());
+    let messages: Vec<Value> = items
+        .iter()
+        .map(|m| {
+            let rule_label = m
+                .rule_id
+                .as_deref()
+                .and_then(|id| labels.get(id))
+                .cloned();
+            json!({
+                "id": m.id,
+                "sender": m.sender,
+                "subject": m.subject,
+                "rule_id": m.rule_id,
+                "rule_label": rule_label,
+                "created_at": m.created_at,
+            })
+        })
+        .collect();
+
+    json_ok(&json!({
+        "operator": operator,
+        "messages": messages,
+        "has_more": has_more,
+        "next_before": next_before,
     }))
+}
+
+/// Fetch one inbox email. Unlike the operator-facing [`message`], this checks
+/// the signed-in person is in the reader set of the email's rule; a non-reader
+/// gets a 403 rather than someone else's mail.
+async fn inbox_message(env: &Env, operator: &str, id: &str) -> Result<Response> {
+    let database = env.d1("DB")?;
+    let Some(meta) = db::get_message_meta(&database, id).await? else {
+        return json_error(404, "not_found", "No stored email with that id.");
+    };
+    let Some(rule_id) = meta.rule_id.as_deref() else {
+        return json_error(
+            403,
+            "forbidden",
+            "That email isn't attached to a rule, so it has no readers.",
+        );
+    };
+
+    let kv_store = env.kv("KV")?;
+    let set = kv::get_rule_set(&kv_store).await?;
+    let rule = set.rules.iter().find(|r| r.id == rule_id);
+    let allowed = rule.is_some_and(|r| r.is_reader(operator));
+    if !allowed {
+        return json_error(403, "forbidden", "You aren't a reader for this email.");
+    }
+
+    let Some(rendered) = viewer::build_rendered(env, id).await? else {
+        return json_error(404, "not_found", "No stored email with that id.");
+    };
+    json_ok(&rendered_json(rendered))
 }
 
 async fn telegram_chats(env: &Env) -> Result<Response> {

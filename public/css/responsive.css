@@ -127,6 +127,15 @@
     display: none;
   }
 
+  .inbox-row {
+    grid-template-columns: 92px minmax(0, 1fr) 18px;
+  }
+
+  .inbox-rule,
+  .inbox-subj {
+    display: none;
+  }
+
   .rc-tools {
     opacity: 1;
     transform: none;
@@ -134,6 +143,10 @@
   }
 
   .pending-page {
+    padding: 18px 12px 48px;
+  }
+
+  .inbox-page {
     padding: 18px 12px 48px;
   }
 

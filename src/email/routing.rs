@@ -106,6 +106,7 @@ mod tests {
             domain_pattern: domain.into(),
             action: Action::Drop,
             label: format!("{local}@{domain}"),
+            inbox_readers: Vec::new(),
         }
     }
 

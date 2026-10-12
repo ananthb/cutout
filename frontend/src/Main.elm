@@ -19,6 +19,7 @@ import Html exposing (Html, a, button, div, main_, span, text)
 import Html.Attributes exposing (class, classList, href)
 import Html.Events exposing (onClick)
 import Icons
+import Page.Inbox as Inbox
 import Page.Manage as Manage
 import Page.Pending as Pending
 import Ports exposing (Theme(..))
@@ -47,6 +48,7 @@ type alias Model =
     , boot : Api.Data Api.Snapshot
     , manage : Maybe Manage.Model
     , pending : Maybe Pending.Model
+    , inbox : Maybe Inbox.Model
     , theme : Theme
     }
 
@@ -59,6 +61,7 @@ init _ url key =
       , boot = Loading
       , manage = Nothing
       , pending = Nothing
+      , inbox = Nothing
       , theme = System
       }
     , Api.getBootstrap GotBootstrap
@@ -75,6 +78,7 @@ type Msg
     | GotBootstrap (Api.Data Api.Snapshot)
     | ManageMsg Manage.Msg
     | PendingMsg Pending.Msg
+    | InboxMsg Inbox.Msg
     | SetTheme Theme
     | GotTheme String
     | Retry
@@ -117,6 +121,18 @@ update msg model =
                             Pending.update sub pending
                     in
                     ( { model | pending = Just updated }, Cmd.map PendingMsg cmd )
+
+                Nothing ->
+                    ( model, Cmd.none )
+
+        InboxMsg sub ->
+            case model.inbox of
+                Just inbox ->
+                    let
+                        ( updated, cmd ) =
+                            Inbox.update sub inbox
+                    in
+                    ( { model | inbox = Just updated }, Cmd.map InboxMsg cmd )
 
                 Nothing ->
                     ( model, Cmd.none )
@@ -166,6 +182,18 @@ ensurePage model =
                             Pending.init
                     in
                     ( { model | pending = Just pending }, Cmd.map PendingMsg cmd )
+
+        Route.Inbox ->
+            case model.inbox of
+                Just _ ->
+                    ( model, Cmd.none )
+
+                Nothing ->
+                    let
+                        ( inbox, cmd ) =
+                            Inbox.init
+                    in
+                    ( { model | inbox = Just inbox }, Cmd.map InboxMsg cmd )
 
         Route.NotFound ->
             ( model, Cmd.none )
@@ -243,6 +271,12 @@ subscriptions model =
 
             Nothing ->
                 Sub.none
+        , case model.inbox of
+            Just inbox ->
+                Sub.map InboxMsg (Inbox.subscriptions inbox)
+
+            Nothing ->
+                Sub.none
         ]
 
 
@@ -269,6 +303,9 @@ title route =
         Route.Pending ->
             "Pending dispatches — Cutout"
 
+        Route.Inbox ->
+            "Inbox — Cutout"
+
         Route.NotFound ->
             "Not found — Cutout"
 
@@ -289,6 +326,7 @@ header model =
         , Html.nav [ class "site-nav" ]
             [ navLink model.route Route.Manage "Rules"
             , navLink model.route Route.Pending "Pending"
+            , navLink model.route Route.Inbox "Inbox"
             ]
         , div [ class "site-header-right" ]
             [ button
@@ -320,6 +358,24 @@ navLink current target label_ =
 
 content : Model -> Html Msg
 content model =
+    case model.route of
+        -- The inbox is the reader-facing surface: it renders from its own
+        -- request rather than the operator bootstrap, so a reader whose
+        -- Access policy doesn't cover `/api/bootstrap` still gets their mail.
+        Route.Inbox ->
+            case model.inbox of
+                Just inbox ->
+                    Html.map InboxMsg (Inbox.view inbox)
+
+                Nothing ->
+                    fullLoader
+
+        _ ->
+            contentForBoot model
+
+
+contentForBoot : Model -> Html Msg
+contentForBoot model =
     case model.boot of
         Loading ->
             fullLoader
@@ -359,6 +415,9 @@ content model =
 
                         Nothing ->
                             fullLoader
+
+                Route.Inbox ->
+                    fullLoader
 
                 Route.NotFound ->
                     div [ class "centered-screen" ]

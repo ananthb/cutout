@@ -285,3 +285,11 @@ shield =
 zap : Svg msg
 zap =
     stroke "0 0 16 16" [ p "M8.5 1.5L3 9h4l-1.5 5.5L12 7H8z" ]
+
+
+lock : Svg msg
+lock =
+    stroke "0 0 16 16"
+        [ rect [ SA.x "3.5", SA.y "7", SA.width "9", SA.height "6.5", SA.rx "1.2" ] []
+        , p "M5.5 7V5a2.5 2.5 0 0 1 5 0v2"
+        ]

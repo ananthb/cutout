@@ -283,6 +283,7 @@ pub struct MessageMeta {
     pub recipient: String,
     pub subject: String,
     pub r2_key: String,
+    pub rule_id: Option<String>,
     pub created_at: Option<String>,
 }
 
@@ -292,6 +293,7 @@ struct MessageMetaRow {
     recipient: String,
     subject: String,
     r2_key: String,
+    rule_id: Option<String>,
     created_at: Option<String>,
 }
 
@@ -300,7 +302,7 @@ struct MessageMetaRow {
 pub async fn get_message_meta(db: &D1Database, id: &str) -> Result<Option<MessageMeta>> {
     let row = db
         .prepare(
-            "SELECT sender, recipient, subject, r2_key, created_at \
+            "SELECT sender, recipient, subject, r2_key, rule_id, created_at \
              FROM messages WHERE id = ?",
         )
         .bind(&[id.into()])?
@@ -311,8 +313,72 @@ pub async fn get_message_meta(db: &D1Database, id: &str) -> Result<Option<Messag
         recipient: r.recipient,
         subject: r.subject,
         r2_key: r.r2_key,
+        rule_id: r.rule_id,
         created_at: r.created_at,
     }))
+}
+
+/// A `messages` row for the `/inbox` list: enough to render a row and to
+/// resolve which rule it belongs to (and therefore its reader set).
+#[derive(Clone, Debug)]
+pub struct InboxItem {
+    pub id: String,
+    pub sender: String,
+    pub subject: String,
+    pub rule_id: Option<String>,
+    pub created_at: Option<String>,
+}
+
+#[derive(Deserialize)]
+struct InboxRow {
+    id: String,
+    sender: String,
+    subject: String,
+    rule_id: Option<String>,
+    created_at: Option<String>,
+}
+
+/// List stored messages belonging to any of `rule_ids`, newest first, with
+/// cursor-based pagination on `created_at` (mirrors
+/// [`list_messages_for_rule`]). An empty `rule_ids` yields no rows rather
+/// than an unbounded scan.
+pub async fn list_messages_for_rules(
+    db: &D1Database,
+    rule_ids: &[String],
+    limit: u32,
+    before: Option<&str>,
+) -> Result<Vec<InboxItem>> {
+    if rule_ids.is_empty() {
+        return Ok(Vec::new());
+    }
+    let placeholders: Vec<String> = (1..=rule_ids.len()).map(|i| format!("?{i}")).collect();
+    let before_idx = rule_ids.len() + 1;
+    let limit_idx = rule_ids.len() + 2;
+    let sql = format!(
+        "SELECT id, sender, subject, rule_id, created_at \
+         FROM messages \
+         WHERE rule_id IN ({}) AND (?{before_idx} IS NULL OR created_at < ?{before_idx}) \
+         ORDER BY created_at DESC \
+         LIMIT ?{limit_idx}",
+        placeholders.join(", ")
+    );
+
+    let mut binds: Vec<JsValue> = rule_ids.iter().map(|s| JsValue::from(s.as_str())).collect();
+    binds.push(js_opt(before));
+    binds.push((limit as f64).into());
+
+    let result = db.prepare(&sql).bind(&binds)?.all().await?;
+    let rows: Vec<InboxRow> = result.results()?;
+    Ok(rows
+        .into_iter()
+        .map(|r| InboxItem {
+            id: r.id,
+            sender: r.sender,
+            subject: r.subject,
+            rule_id: r.rule_id,
+            created_at: r.created_at,
+        })
+        .collect())
 }
 
 #[derive(Deserialize)]

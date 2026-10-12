@@ -8,6 +8,8 @@ module Api exposing
     , Enabled
     , Event
     , EventsPayload
+    , InboxItem
+    , InboxPayload
     , Issue
     , MessageItem
     , MessagesPayload
@@ -25,9 +27,12 @@ module Api exposing
     , destinationsOf
     , discardAllPending
     , discardPending
+    , emailRecipients
     , errorMessage
     , getBootstrap
     , getEvents
+    , getInbox
+    , getInboxMessage
     , getMessage
     , getPending
     , getPendingCount
@@ -102,6 +107,7 @@ type alias Rule =
     , domainPattern : String
     , isCatchAll : Bool
     , action : Action
+    , inboxReaders : List String
     , issues : List Issue
     , matches7d : Maybe Int
     , lastMatchS : Maybe Int
@@ -201,6 +207,26 @@ type Body
 type alias TelegramChat =
     { chatId : String
     , label : String
+    }
+
+
+{-| One stored email in the `/inbox` list. `ruleLabel` names the rule that
+stored it so the reader can tell which alias it came through.
+-}
+type alias InboxItem =
+    { id : String
+    , sender : String
+    , subject : String
+    , ruleId : Maybe String
+    , ruleLabel : Maybe String
+    , createdAt : Maybe String
+    }
+
+
+type alias InboxPayload =
+    { messages : List InboxItem
+    , hasMore : Bool
+    , nextBefore : Maybe String
     }
 
 
@@ -359,6 +385,7 @@ type alias NewRule =
     , localPattern : String
     , domainPattern : String
     , action : Action
+    , inboxReaders : List String
     , rulesVersion : Int
     }
 
@@ -380,6 +407,7 @@ ruleBody r =
         , ( "local_pattern", E.string r.localPattern )
         , ( "domain_pattern", E.string r.domainPattern )
         , ( "action", encodeAction r.action )
+        , ( "inbox_readers", E.list E.string r.inboxReaders )
         , ( "rules_version", E.int r.rulesVersion )
         ]
 
@@ -467,6 +495,31 @@ getMessage id =
     get ("/api/messages/" ++ id) renderedDecoder
 
 
+{-| Stored emails the signed-in Access identity can read, across every rule
+whose reader set contains them. Cursor-paginated on `before`.
+-}
+getInbox : { before : Maybe String } -> (Data InboxPayload -> msg) -> Cmd msg
+getInbox args =
+    let
+        path =
+            case args.before of
+                Just before ->
+                    "/api/inbox?before=" ++ urlEncode before
+
+                Nothing ->
+                    "/api/inbox"
+    in
+    get path inboxDecoder
+
+
+{-| One inbox email, rendered. The server rejects it with 403 unless the
+signed-in person is a reader of the rule that stored it.
+-}
+getInboxMessage : String -> (Data RenderedMessage -> msg) -> Cmd msg
+getInboxMessage id =
+    get ("/api/inbox/messages/" ++ id) renderedDecoder
+
+
 getTelegramChats : (Data (List TelegramChat) -> msg) -> Cmd msg
 getTelegramChats =
     get "/api/telegram-chats" (D.field "chats" (D.list telegramChatDecoder))
@@ -528,7 +581,7 @@ ruleDecoder : Decoder Rule
 ruleDecoder =
     D.map8
         (\id label displayLabel localPattern domainPattern isCatchAll action issues ->
-            \matches7d lastMatchS ->
+            \matches7d lastMatchS inboxReaders ->
                 { id = id
                 , label = label
                 , displayLabel = displayLabel
@@ -536,6 +589,7 @@ ruleDecoder =
                 , domainPattern = domainPattern
                 , isCatchAll = isCatchAll
                 , action = action
+                , inboxReaders = inboxReaders
                 , issues = issues
                 , matches7d = matches7d
                 , lastMatchS = lastMatchS
@@ -551,9 +605,10 @@ ruleDecoder =
         (D.field "issues" (D.list issueDecoder))
         |> D.andThen
             (\build ->
-                D.map2 build
+                D.map3 build
                     (D.field "matches_7d" (D.nullable D.int))
                     (D.field "last_match_s" (D.nullable D.int))
+                    (D.field "inbox_readers" (D.oneOf [ D.list D.string, D.succeed [] ]))
             )
 
 
@@ -688,6 +743,25 @@ messagesDecoder : Decoder MessagesPayload
 messagesDecoder =
     D.map3 MessagesPayload
         (D.field "messages" (D.list messageItemDecoder))
+        (D.field "has_more" D.bool)
+        (D.field "next_before" (D.nullable D.string))
+
+
+inboxItemDecoder : Decoder InboxItem
+inboxItemDecoder =
+    D.map6 InboxItem
+        (D.field "id" D.string)
+        (D.field "sender" D.string)
+        (D.field "subject" D.string)
+        (D.field "rule_id" (D.nullable D.string))
+        (D.field "rule_label" (D.nullable D.string))
+        (D.field "created_at" (D.nullable D.string))
+
+
+inboxDecoder : Decoder InboxPayload
+inboxDecoder =
+    D.map3 InboxPayload
+        (D.field "messages" (D.list inboxItemDecoder))
         (D.field "has_more" D.bool)
         (D.field "next_before" (D.nullable D.string))
 
@@ -849,6 +923,38 @@ isForwardStore action =
 
         _ ->
             False
+
+
+{-| The email addresses a rule forwards to. These are the rule's implicit
+inbox readers: every one can read the mail the rule stores. Lower-cased and
+de-duplicated to match the server's reader comparison.
+-}
+emailRecipients : Action -> List String
+emailRecipients action =
+    destinationsOf action
+        |> List.filterMap
+            (\d ->
+                case d of
+                    Email { address } ->
+                        Just (String.toLower (String.trim address))
+
+                    _ ->
+                        Nothing
+            )
+        |> dedupe
+
+
+dedupe : List String -> List String
+dedupe =
+    List.foldl
+        (\x acc ->
+            if List.member x acc then
+                acc
+
+            else
+                acc ++ [ x ]
+        )
+        []
 
 
 channels : List Destination -> String

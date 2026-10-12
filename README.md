@@ -44,6 +44,7 @@ To wire up your fork:
 - **Multi-destination forwards**: one rule can forward to any mix of email / Telegram / Discord targets
 - **Bot-relay replies**: reply directly from Telegram or Discord chat; Cutout routes it back to the original sender via email
 - **Elm management app**: a single-page frontend for managing rules, gated by Cloudflare Access; the pipeline animates which rule a test address would fire
+- **Reader inbox**: `/inbox` lists the stored mail the signed-in Access identity may read; a rule's email destinations are implicit readers and the operator can grant more per rule
 - **JSON API**: the frontend talks to `/api/*` and nothing else
 - **Safety first**: automatic loop detection; kinds whose secrets aren't set are hidden from the UI and rejected by the validator
 - **Live tester**: the workbench tester evaluates a recipient address against the full ruleset on every keystroke, highlighting which rule actually fires
@@ -56,7 +57,7 @@ To wire up your fork:
 - [Cloudflare Email Routing](https://developers.cloudflare.com/email-routing/): inbound MX + catch-all -> worker, plus `EmailMessage.forward()` for the Native Forward path
 - [Cloudflare Email Service](https://developers.cloudflare.com/email-service/): used for reverse-alias replies, Proxy mode forwarding, and fanning out beyond the first destination
 - [Cloudflare KV](https://developers.cloudflare.com/kv/): rule list, reverse-alias mappings, and per-message bot reply contexts
-- [Cloudflare Access](https://developers.cloudflare.com/cloudflare-one/applications/): protects `/manage` and `/api`
+- [Cloudflare Access](https://developers.cloudflare.com/cloudflare-one/applications/): protects `/manage`, `/inbox` and `/api`
 - [botrelay-rs](https://github.com/ananthb/botrelay-rs): shared crate providing the Telegram + Discord bot clients and reply-context primitives
 
 ## Development

@@ -1275,3 +1275,177 @@
   font-size: 11.5px;
   animation: shake 320ms var(--ease);
 }
+
+/* ---- inbox readers (rule editor) --------------------------------------- */
+
+.readers-field {
+  display: flex;
+  flex-direction: column;
+  gap: 9px;
+  margin-top: 4px;
+  padding-top: 14px;
+  border-top: 1px solid var(--line);
+}
+
+.readers-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.reader-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  padding: 4px 6px 4px 10px;
+  border: 1px solid var(--line);
+  border-radius: var(--r-pill);
+  background: var(--bg-1);
+  font-family: var(--font-mono);
+  font-size: 11.5px;
+  color: var(--fg-1);
+}
+
+.reader-chip.is-locked {
+  padding-right: 10px;
+  border-style: dashed;
+  color: var(--fg-2);
+}
+
+.reader-chip-kind {
+  font-size: 9.5px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--fg-3);
+}
+
+.reader-chip-value {
+  max-width: 240px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.reader-chip-lock {
+  display: inline-flex;
+  color: var(--fg-3);
+}
+
+.reader-chip-remove {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 2px;
+  border-radius: 50%;
+  color: var(--fg-3);
+  transition: color var(--dur), background var(--dur);
+}
+
+.reader-chip-remove:hover {
+  color: var(--bad);
+  background: var(--bg-2);
+}
+
+/* ---- inbox page --------------------------------------------------------- */
+
+.inbox-page {
+  max-width: 920px;
+  margin: 0 auto;
+  padding: 28px 20px 60px;
+}
+
+.inbox-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  margin-bottom: 20px;
+}
+
+.inbox-head h1 {
+  margin: 0 0 6px;
+  font-size: 22px;
+}
+
+.inbox-lede {
+  max-width: 620px;
+  margin: 0;
+  color: var(--fg-2);
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.inbox-count {
+  flex-shrink: 0;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--fg-3);
+}
+
+.inbox-list-wrap {
+  border: 1px solid var(--line);
+  border-radius: var(--r-md);
+  background: var(--bg-1);
+  overflow: hidden;
+}
+
+.inbox-list {
+  display: flex;
+  flex-direction: column;
+}
+
+.inbox-row {
+  display: grid;
+  grid-template-columns: 118px 150px minmax(0, 1fr) minmax(0, 1.4fr) 22px;
+  gap: 12px;
+  align-items: center;
+  width: 100%;
+  padding: 10px 16px;
+  text-align: left;
+  color: var(--fg-1);
+  transition: background var(--dur);
+}
+
+.inbox-row:hover {
+  background: var(--bg-2);
+}
+
+.inbox-ts {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--fg-2);
+  white-space: nowrap;
+}
+
+.inbox-rule {
+  font-size: 11.5px;
+  color: var(--accent);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.inbox-from {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.inbox-subj {
+  color: var(--fg-2);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.inbox-caret {
+  display: inline-flex;
+  justify-content: center;
+  color: var(--fg-3);
+  transition: transform var(--dur) var(--ease-pop);
+}
+
+.inbox-caret.is-open {
+  transform: rotate(90deg);
+  color: var(--accent);
+}
