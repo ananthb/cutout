@@ -109,6 +109,13 @@ pub fn validate(rules: &[Rule], enabled: &EnabledChannels) -> Report {
                             "discord destination requires DISCORD_BOT_TOKEN + DISCORD_APP_ID + DISCORD_PUBLIC_KEY secrets".into(),
                         ));
                     }
+                    Destination::Email { address, .. }
+                        if !crate::types::valid_email_address(address) =>
+                    {
+                        report.issues[i].push(Issue::Error(format!(
+                            "email destination '{address}' looks invalid"
+                        )));
+                    }
                     _ => {}
                 }
             }
@@ -335,8 +342,8 @@ mod tests {
     #[test]
     fn duplicate_patterns_error_on_second_occurrence() {
         let rules = vec![
-            rule("a", "shop", "example.com", forward("a@x")),
-            rule("b", "SHOP", "Example.com", forward("b@x")),
+            rule("a", "shop", "example.com", forward("a@x.com")),
+            rule("b", "SHOP", "Example.com", forward("b@x.com")),
         ];
         let report = validate(&rules, &all_enabled());
         assert!(report.has_errors());
@@ -349,7 +356,7 @@ mod tests {
     fn unreachable_warned_not_errored() {
         let rules = vec![
             rule("catch", "*", "*", Action::Drop),
-            rule("specific", "shop", "example.com", forward("x@y")),
+            rule("specific", "shop", "example.com", forward("x@y.com")),
         ];
         let report = validate(&rules, &all_enabled());
         assert!(
@@ -364,8 +371,8 @@ mod tests {
     #[test]
     fn unreachable_via_partial_subsumption() {
         let rules = vec![
-            rule("first", "shop*", "*", forward("x@y")),
-            rule("second", "shop-foo", "example.com", forward("y@z")),
+            rule("first", "shop*", "*", forward("x@y.com")),
+            rule("second", "shop-foo", "example.com", forward("y@z.com")),
         ];
         let report = validate(&rules, &all_enabled());
         assert!(!report.has_errors());
@@ -378,7 +385,7 @@ mod tests {
     #[test]
     fn not_unreachable_when_earlier_is_narrower() {
         let rules = vec![
-            rule("first", "shop", "example.com", forward("x@y")),
+            rule("first", "shop", "example.com", forward("x@y.com")),
             rule("catch-all", "*", "*", Action::Drop),
         ];
         let report = validate(&rules, &all_enabled());
@@ -469,5 +476,21 @@ mod tests {
         };
         let report = validate(&rules, &disabled);
         assert!(!report.has_errors());
+    }
+
+    #[test]
+    fn malformed_email_destination_is_error() {
+        // Structured destinations come straight from the API without going
+        // through `parse_line`, so validation is the only gate before a bad
+        // address reaches Cloudflare's sending API.
+        let rules = vec![rule(
+            "a",
+            "shop",
+            "x.com",
+            forward("arulpriya93@gmail.com="),
+        )];
+        let report = validate(&rules, &all_enabled());
+        assert!(report.has_errors());
+        assert!(report.first_error().unwrap().1.contains("looks invalid"));
     }
 }
