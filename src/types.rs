@@ -92,6 +92,46 @@ fn format_channels(destinations: &[Destination]) -> String {
     parts.join(" + ")
 }
 
+/// A pragmatic email-address check: exactly one `@`, a non-empty local part
+/// with no whitespace, and a dotted domain whose labels are alphanumeric or
+/// hyphenated and whose TLD is alphabetic.
+///
+/// Deliberately stricter than RFC 5322 — it exists to catch typos (a stray
+/// `=`, a missing dot) before they reach Cloudflare's sending API, which
+/// otherwise fails the send with an opaque "Invalid email domain" only after
+/// the message has been accepted and queued.
+pub fn valid_email_address(addr: &str) -> bool {
+    if addr.is_empty() || addr.len() > 254 || addr.chars().any(char::is_whitespace) {
+        return false;
+    }
+    let mut parts = addr.split('@');
+    let (local, domain) = match (parts.next(), parts.next(), parts.next()) {
+        (Some(local), Some(domain), None) => (local, domain),
+        _ => return false,
+    };
+    if local.is_empty()
+        || local.len() > 64
+        || !local
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || "!#$%&'*+-/=?^_`{|}~.".contains(c))
+    {
+        return false;
+    }
+    let labels: Vec<&str> = domain.split('.').collect();
+    if labels.len() < 2 {
+        return false;
+    }
+    labels.iter().all(|label| {
+        !label.is_empty()
+            && label.len() <= 63
+            && !label.starts_with('-')
+            && !label.ends_with('-')
+            && label.chars().all(|c| c.is_ascii_alphanumeric() || c == '-')
+    }) && labels
+        .last()
+        .is_some_and(|tld| tld.len() >= 2 && tld.chars().all(|c| c.is_ascii_alphabetic()))
+}
+
 #[derive(Serialize, Clone, Debug)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum Action {
@@ -270,8 +310,8 @@ impl Destination {
                     Some((v, m)) if !m.trim().is_empty() => (v.trim().to_string(), m.trim()),
                     _ => (rest.to_string(), ""),
                 };
-                if !value.contains('@') || value.starts_with('@') || value.ends_with('@') {
-                    return Err("email address must contain '@'");
+                if !valid_email_address(&value) {
+                    return Err("email address looks invalid (expected name@example.com)");
                 }
                 let proxy = match modifier.to_lowercase().as_str() {
                     "" => false,
@@ -798,5 +838,26 @@ mod tests {
     fn drop_action_serializes() {
         let j = serde_json::to_value(&Action::Drop).unwrap();
         assert_eq!(j, serde_json::json!({"type": "drop"}));
+    }
+
+    #[test]
+    fn accepts_valid_email_addresses() {
+        assert!(valid_email_address("a@b.com"));
+        assert!(valid_email_address("first.last+tag@sub.example.co.uk"));
+        assert!(valid_email_address("Foo@Bar.com"));
+    }
+
+    #[test]
+    fn rejects_malformed_email_addresses() {
+        // A trailing `=` (the reported case) must not reach the sending API.
+        assert!(!valid_email_address("arulpriya93@gmail.com="));
+        assert!(!valid_email_address("a@b"));
+        assert!(!valid_email_address("a b@c.com"));
+        assert!(!valid_email_address("a@@c.com"));
+        assert!(!valid_email_address("@c.com"));
+        assert!(!valid_email_address("a@.com"));
+        assert!(!valid_email_address("a@c."));
+        assert!(!valid_email_address("a@c.c"));
+        assert!(!valid_email_address(""));
     }
 }

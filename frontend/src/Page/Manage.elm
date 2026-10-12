@@ -633,16 +633,11 @@ parseDestination enabled editor =
                 v =
                     String.toLower raw
             in
-            if
-                String.isEmpty v
-                    || not (String.contains "@" v)
-                    || String.startsWith "@" v
-                    || String.endsWith "@" v
-            then
-                Err "Enter an email address like you@example.com"
+            if validEmail v then
+                Ok (Api.Email { address = v, proxy = editor.destProxy })
 
             else
-                Ok (Api.Email { address = v, proxy = editor.destProxy })
+                Err "Enter an email address like you@example.com"
 
         "telegram" ->
             if not enabled.telegram then
@@ -679,6 +674,42 @@ isInteger s =
                 s
     in
     not (String.isEmpty body) && String.all Char.isDigit body
+
+
+validEmail : String -> Bool
+validEmail addr =
+    case String.split "@" addr of
+        [ local, domain ] ->
+            not (String.isEmpty local)
+                && String.all isLocalChar local
+                && not (String.isEmpty domain)
+                && String.contains "." domain
+                && not (String.startsWith "-" domain)
+                && not (String.endsWith "-" domain)
+                && not (String.startsWith "." domain)
+                && not (String.endsWith "." domain)
+                && not (String.contains ".." domain)
+                && String.all isDomainChar domain
+                && (case List.reverse (String.split "." domain) of
+                        tld :: _ ->
+                            String.length tld >= 2 && String.all Char.isAlpha tld
+
+                        [] ->
+                            False
+                   )
+
+        _ ->
+            False
+
+
+isLocalChar : Char -> Bool
+isLocalChar c =
+    Char.isAlphaNum c || String.contains (String.fromChar c) "!#$%&'*+-/=?^_`{|}~."
+
+
+isDomainChar : Char -> Bool
+isDomainChar c =
+    Char.isAlphaNum c || c == '-' || c == '.'
 
 
 editorFrom : Api.Rule -> Editor
