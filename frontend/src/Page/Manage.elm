@@ -14,6 +14,7 @@ request.
 -}
 
 import Api
+import Browser.Dom as Dom
 import Browser.Navigation as Nav
 import Format
 import Glob
@@ -21,9 +22,11 @@ import Html exposing (Html, a, aside, button, div, h1, h3, header, iframe, input
 import Html.Attributes as A exposing (attribute, class, classList, href, placeholder, title, type_, value)
 import Html.Events as E exposing (onClick, onInput)
 import Icons
+import Json.Decode as D
 import Ports
 import RemoteData exposing (RemoteData(..))
 import Route
+import Task
 import Time
 import Ui exposing (ButtonVariant(..))
 
@@ -76,6 +79,7 @@ type alias Editor =
     , actionType : String
     , destinations : List Api.Destination
     , persist : Bool
+    , storeForward : Bool
     , destKind : String
     , destValue : String
     , destProxy : Bool
@@ -100,6 +104,7 @@ emptyEditor =
     , actionType = "forward"
     , destinations = []
     , persist = False
+    , storeForward = False
     , destKind = "email"
     , destValue = ""
     , destProxy = False
@@ -172,8 +177,11 @@ type Msg
     | EditorLabel String
     | EditorLocal String
     | EditorDomain String
+    | EditorAt
+    | FocusResult (Result Dom.Error ())
     | EditorActionType String
     | EditorPersist Bool
+    | EditorStore Bool
     | EditorDestKind String
     | EditorDestValue String
     | EditorDestProxy Bool
@@ -330,11 +338,21 @@ update msg model =
         EditorDomain v ->
             ( mapEditor (\e -> { e | domain = v }) model, Cmd.none )
 
+        EditorAt ->
+            -- Typing `@` in the local part jumps to the domain field.
+            ( model, Dom.focus "rule-domain" |> Task.attempt FocusResult )
+
+        FocusResult _ ->
+            ( model, Cmd.none )
+
         EditorActionType v ->
             ( mapEditor (\e -> { e | actionType = v }) model, Cmd.none )
 
         EditorPersist v ->
             ( mapEditor (\e -> { e | persist = v }) model, Cmd.none )
+
+        EditorStore v ->
+            ( mapEditor (\e -> { e | storeForward = v }) model, Cmd.none )
 
         EditorDestKind v ->
             ( mapEditor (\e -> { e | destKind = v, destValue = "", destError = "" }) model, Cmd.none )
@@ -596,7 +614,11 @@ editorAction editor =
             Api.Drop
 
         _ ->
-            Api.Forward editor.destinations
+            if editor.storeForward then
+                Api.ForwardStore editor.destinations
+
+            else
+                Api.Forward editor.destinations
 
 
 parseDestination : Api.Enabled -> Editor -> Result String Api.Destination
@@ -662,25 +684,29 @@ isInteger s =
 editorFrom : Api.Rule -> Editor
 editorFrom rule =
     let
-        ( actionType, destinations, persist ) =
+        fields =
             case rule.action of
                 Api.Forward dests ->
-                    ( "forward", dests, False )
+                    { actionType = "forward", destinations = dests, persist = False, storeForward = False }
+
+                Api.ForwardStore dests ->
+                    { actionType = "forward", destinations = dests, persist = False, storeForward = True }
 
                 Api.Store store ->
-                    ( "store", [], store.persist )
+                    { actionType = "store", destinations = [], persist = store.persist, storeForward = False }
 
                 Api.Drop ->
-                    ( "drop", [], False )
+                    { actionType = "drop", destinations = [], persist = False, storeForward = False }
     in
     { emptyEditor
         | id = Just rule.id
         , label = rule.label
         , local = rule.localPattern
         , domain = rule.domainPattern
-        , actionType = actionType
-        , destinations = destinations
-        , persist = persist
+        , actionType = fields.actionType
+        , destinations = fields.destinations
+        , persist = fields.persist
+        , storeForward = fields.storeForward
     }
 
 
@@ -820,7 +846,13 @@ pipelinePane model =
         , div [ class "pipeline-tester" ] [ testerCard model rules ]
         , div [ class "pipeline-list" ]
             ([ div [ class "pipeline-node" ] [ span [ class "node-dot" ] [], text "INBOUND · email routing" ] ]
-                ++ List.indexedMap (pipelineCard model) rules
+                ++ List.concatMap
+                    (\card ->
+                        [ div [ class "pipeline-connector" ] []
+                        , card
+                        ]
+                    )
+                    (List.indexedMap (pipelineCard model) rules)
                 ++ [ div [ class "pipeline-connector" ] []
                    , div [ class "pipeline-node" ] [ span [ class "node-dot node-dot-end" ] [], text "END · all rules evaluated" ]
                    ]
@@ -858,14 +890,14 @@ pipelineCard model index rule =
                 "rc-order rc-catch"
 
             else
-                case rule.action of
-                    Api.Forward _ ->
+                case Api.actionKind rule.action of
+                    Api.ForwardKind ->
                         "rc-order rc-fwd"
 
-                    Api.Store _ ->
+                    Api.StoreKind ->
                         "rc-order rc-store"
 
-                    Api.Drop ->
+                    Api.DropKind ->
                         "rc-order rc-drop"
     in
     div
@@ -881,12 +913,12 @@ pipelineCard model index rule =
             , type_ "button"
             , onClick (SelectRule (Just rule.id))
             ]
-            [ div [ class orderClass ] [ span [] [ text (pad2 (index + 1)) ] ]
-            , div [ class "rc-body" ]
-                [ div [ class "rc-row1" ]
+            [ span [ class orderClass ] [ text (pad2 (index + 1)) ]
+            , span [ class "rc-body" ]
+                [ span [ class "rc-row1" ]
                     [ span [ class "rc-label" ] [ text rule.displayLabel ]
                     ]
-                , div [ class "rc-row2" ]
+                , span [ class "rc-row2" ]
                     [ span [ class "rc-pattern" ] (patternPieces rule.localPattern rule.domainPattern)
                     , span [ class "rc-action" ] [ text (Api.actionSummary rule.action) ]
                     ]
@@ -1101,18 +1133,26 @@ inspectorHead : Model -> Api.Rule -> Html Msg
 inspectorHead model rule =
     let
         actionTag =
-            case rule.action of
-                Api.Forward _ ->
+            case Api.actionKind rule.action of
+                Api.ForwardKind ->
+                    let
+                        name =
+                            if Api.isForwardStore rule.action then
+                                "store & forward"
+
+                            else
+                                "forward"
+                    in
                     if anyProxy rule.action then
-                        Ui.chip { label = "forward · proxy", variant = "proxy", dot = False }
+                        Ui.chip { label = name ++ " · proxy", variant = "proxy", dot = False }
 
                     else
-                        Ui.chip { label = "forward", variant = "info", dot = False }
+                        Ui.chip { label = name, variant = "info", dot = False }
 
-                Api.Store _ ->
+                Api.StoreKind ->
                     Ui.chip { label = "store", variant = "info", dot = False }
 
-                Api.Drop ->
+                Api.DropKind ->
                     if rule.isCatchAll then
                         Ui.chip { label = "drop · catch-all", variant = "warn", dot = False }
 
@@ -1155,31 +1195,21 @@ inspectorHead model rule =
 
 anyProxy : Api.Action -> Bool
 anyProxy action =
-    case action of
-        Api.Forward destinations ->
-            List.any
-                (\d ->
-                    case d of
-                        Api.Email { proxy } ->
-                            proxy
+    List.any
+        (\d ->
+            case d of
+                Api.Email { proxy } ->
+                    proxy
 
-                        _ ->
-                            False
-                )
-                destinations
-
-        _ ->
-            False
+                _ ->
+                    False
+        )
+        (Api.destinationsOf action)
 
 
 destinationCount : Api.Action -> Int
 destinationCount action =
-    case action of
-        Api.Forward destinations ->
-            List.length destinations
-
-        _ ->
-            0
+    List.length (Api.destinationsOf action)
 
 
 statStrip : Model -> Api.Rule -> Html Msg
@@ -1209,11 +1239,11 @@ statStrip model rule =
                     "—"
 
         channels =
-            case rule.action of
-                Api.Forward destinations ->
+            case Api.actionKind rule.action of
+                Api.ForwardKind ->
                     let
                         ( e, t, d ) =
-                            channelCounts destinations
+                            channelCounts (Api.destinationsOf rule.action)
                     in
                     String.join " · "
                         (List.filterMap identity
@@ -1281,8 +1311,12 @@ issuesCard rule =
 
 destinationsCard : Api.Rule -> Html Msg
 destinationsCard rule =
-    case rule.action of
-        Api.Forward destinations ->
+    case Api.actionKind rule.action of
+        Api.ForwardKind ->
+            let
+                destinations =
+                    Api.destinationsOf rule.action
+            in
             Ui.card
                 [ div [ class "card-head" ]
                     [ h3 [] [ text ("Destinations (" ++ String.fromInt (List.length destinations) ++ ")") ] ]
@@ -1362,6 +1396,9 @@ actionCard : Api.Rule -> Html Msg
 actionCard rule =
     case rule.action of
         Api.Forward _ ->
+            text ""
+
+        Api.ForwardStore _ ->
             text ""
 
         Api.Store { persist } ->
@@ -1702,7 +1739,10 @@ editorModal model =
         ( Just editor, Just enabled ) ->
             Ui.modal
                 { title =
-                    if editor.id == Nothing then
+                    if editor.actionType == "forward" && editor.storeForward then
+                        "Store & Forward"
+
+                    else if editor.id == Nothing then
                         "New rule"
 
                     else
@@ -1728,7 +1768,15 @@ editorModal model =
                         , disabled = []
                         }
                     , if editor.actionType == "forward" then
-                        destinationsField model editor enabled
+                        div [ class "forward-fields" ]
+                            [ destinationsField model editor enabled
+                            , Ui.toggle
+                                { id = "rule-store-forward"
+                                , label = "Store & Forward — keep a copy of the message"
+                                , checked = editor.storeForward
+                                , onCheck = EditorStore
+                                }
+                            ]
 
                       else if editor.actionType == "store" then
                         Ui.toggle
@@ -1768,17 +1816,30 @@ patternField editor =
         [ Html.label [] [ text "Pattern" ]
         , div [ class "pat-input" ]
             [ input
-                [ type_ "text"
+                [ A.id "rule-local"
+                , type_ "text"
                 , value editor.local
                 , placeholder "*"
                 , onInput EditorLocal
+                , E.preventDefaultOn "keydown"
+                    (D.field "key" D.string
+                        |> D.andThen
+                            (\key ->
+                                if key == "@" then
+                                    D.succeed ( EditorAt, True )
+
+                                else
+                                    D.fail "not the at key"
+                            )
+                    )
                 , A.autocomplete False
                 , A.spellcheck False
                 ]
                 []
             , span [ class "pat-at" ] [ text "@" ]
             , input
-                [ type_ "text"
+                [ A.id "rule-domain"
+                , type_ "text"
                 , value editor.domain
                 , placeholder "*"
                 , onInput EditorDomain
@@ -1815,7 +1876,7 @@ destinationsField _ editor enabled =
             text ""
 
           else
-            div [ class "dest-chips" ] (List.map destChip editor.destinations)
+            div [ class "dest-chips" ] (List.indexedMap destChip editor.destinations)
         , div [ class "dest-add" ]
             [ Ui.segmented
                 { name = "dest-kind"
@@ -1902,8 +1963,8 @@ chatSuggestion chat =
         ]
 
 
-destChip : Api.Destination -> Html Msg
-destChip destination =
+destChip : Int -> Api.Destination -> Html Msg
+destChip index destination =
     let
         ( kind, labelText, modText ) =
             case destination of
@@ -1941,6 +2002,14 @@ destChip destination =
         [ span [ class "dest-chip-kind" ] [ text kind ]
         , span [ class "dest-chip-value" ] [ text labelText ]
         , span [ class "dest-chip-mods" ] (List.map (\m -> span [ class "dest-chip-mod" ] [ text m ]) modText)
+        , button
+            [ class "dest-chip-remove"
+            , type_ "button"
+            , attribute "aria-label" ("Remove " ++ labelText)
+            , A.title "Remove"
+            , onClick (EditorRemoveDest index)
+            ]
+            [ Icons.close ]
         ]
 
 
@@ -1979,7 +2048,10 @@ editorAutoLabel editor =
                     "store"
 
                 _ ->
-                    if List.isEmpty editor.destinations then
+                    if editor.storeForward then
+                        "store & forward"
+
+                    else if List.isEmpty editor.destinations then
                         "forward (no destinations)"
 
                     else

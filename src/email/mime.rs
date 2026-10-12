@@ -38,6 +38,12 @@ pub fn parse_email(raw: &[u8]) -> Option<ParsedEmail> {
     })
 }
 
+/// Cap on a single `cid:` part that will be inlined as a `data:` URI. Base64
+/// inflates by ~33%, so this bounds the size of the HTML we build (and later
+/// sanitize and ship to the browser) — an oversized inline image falls back to
+/// a broken image rather than blowing the Worker's memory/CPU budget.
+const MAX_INLINE_PART_BYTES: usize = 1024 * 1024;
+
 /// Parse raw MIME bytes and return the HTML body with `cid:` image
 /// references rewritten to inline `data:` URIs. Returns `None` when the
 /// message has no `text/html` part (text-only emails are handled by the
@@ -62,7 +68,7 @@ pub fn inlined_html(raw: &[u8]) -> Option<String> {
             continue;
         }
         let bytes = part.contents();
-        if bytes.is_empty() {
+        if bytes.is_empty() || bytes.len() > MAX_INLINE_PART_BYTES {
             continue;
         }
         let mime_type = part

@@ -33,7 +33,7 @@
 
 .brand {
   display: flex;
-  align-items: baseline;
+  align-items: center;
   gap: 8px;
   min-width: 0;
 }
@@ -45,7 +45,8 @@
 .brand-mark {
   font-size: 24px;
   color: var(--accent);
-  align-self: center;
+  display: inline-flex;
+  align-items: center;
   animation: spin-in 700ms var(--ease-pop) both;
 }
 
@@ -62,6 +63,8 @@
   color: var(--fg-3);
   text-transform: uppercase;
   letter-spacing: 0.08em;
+  align-self: flex-end;
+  padding-bottom: 2px;
 }
 
 .site-nav {
@@ -725,6 +728,8 @@ textarea:focus,
 
 .icon {
   display: inline-block;
+  width: 1em;
+  height: 1em;
   vertical-align: -0.14em;
   flex-shrink: 0;
 }

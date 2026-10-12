@@ -89,7 +89,9 @@ pub fn validate(rules: &[Rule], enabled: &EnabledChannels) -> Report {
 
         // Forward action must have destinations; each destination's channel
         // must be enabled.
-        if let Action::Forward { destinations } = &rule.action {
+        if let Action::Forward { destinations } | Action::ForwardStore { destinations } =
+            &rule.action
+        {
             if destinations.is_empty() {
                 report.issues[i].push(Issue::Error(
                     "Forward action needs at least one destination".into(),

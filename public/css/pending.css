@@ -17,6 +17,13 @@
   gap: 20px;
 }
 
+.pending-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
+}
+
 .pending-head h1 {
   font-size: 22px;
   font-weight: 650;

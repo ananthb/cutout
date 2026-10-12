@@ -149,10 +149,14 @@ async fn execute_action(
             Ok(EmailResult::Drop)
         }
 
-        Action::Forward { destinations } => {
+        Action::Forward { destinations } | Action::ForwardStore { destinations } => {
             if destinations.is_empty() {
                 return Ok(EmailResult::Drop);
             }
+
+            // Store & Forward persists a copy of the message in addition to
+            // forwarding it.
+            let persist = matches!(action, Action::ForwardStore { .. });
 
             // Generate one reverse alias per inbound message: shared across
             // all destinations. Save to D1 for durable mapping.
@@ -168,15 +172,15 @@ async fn execute_action(
             let parsed = mime::parse_email(raw_bytes);
 
             // Persist raw bytes + metadata when at least one destination is a
-            // chat channel: the bot post embeds a "View full email" link to
-            // /m/{id}, so the body has to live somewhere durable.
+            // chat channel (the bot post embeds a "View full email" link to
+            // /m/{id}) or when Store & Forward was asked for.
             let has_chat_destination = destinations.iter().any(|d| {
                 matches!(
                     d,
                     Destination::Telegram { .. } | Destination::Discord { .. }
                 )
             });
-            let stored_message_id = if has_chat_destination {
+            let stored_message_id = if has_chat_destination || persist {
                 let id = uuid::Uuid::new_v4().to_string();
                 let key = r2::message_key(&id);
                 r2::put(env, &key, raw_bytes).await?;

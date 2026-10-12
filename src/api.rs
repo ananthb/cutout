@@ -72,13 +72,18 @@ pub async fn handle(mut req: Request, env: Env, path: &str, method: Method) -> R
     let rest = path.strip_prefix("/api").unwrap_or("");
     let parts: Vec<&str> = rest.split('/').filter(|s| !s.is_empty()).collect();
 
-    match (method, parts.as_slice()) {
+    // Every arm answers `Result<Response>`; an internal failure (a D1/R2 error,
+    // a decoder mismatch) becomes a JSON 500 the frontend can render, rather
+    // than a bare Cloudflare error page with no detail.
+    let result: Result<Response> = match (method, parts.as_slice()) {
         (Method::Get, ["bootstrap"]) => state(&env, &operator).await,
 
         (Method::Get, ["events"]) => list_events(req, &env).await,
 
         (Method::Get, ["pending"]) => list_pending(&env).await,
         (Method::Get, ["pending", "count"]) => pending_count(&env).await,
+        (Method::Post, ["pending", "retry-all"]) => retry_all_pending(&env).await,
+        (Method::Post, ["pending", "discard-all"]) => discard_all_pending(&env).await,
         (Method::Post, ["pending", id, "retry"]) => retry_pending(&env, id).await,
         (Method::Post, ["pending", id, "discard"]) => discard_pending(&env, id).await,
 
@@ -93,6 +98,14 @@ pub async fn handle(mut req: Request, env: Env, path: &str, method: Method) -> R
         (Method::Get, ["telegram-chats"]) => telegram_chats(&env).await,
 
         _ => json_error(404, "not_found", "No such endpoint."),
+    };
+
+    match result {
+        Ok(resp) => Ok(resp),
+        Err(e) => {
+            console_log!("api {path} failed: {e}");
+            json_error(500, "internal", &format!("{e}"))
+        }
     }
 }
 
@@ -450,6 +463,47 @@ async fn discard_pending(env: &Env, id: &str) -> Result<Response> {
     db::delete_pending(&database, id).await?;
     crate::r2::delete(env, &pending.r2_key).await.ok();
     json_ok(&json!({ "ok": true }))
+}
+
+/// Re-queue every pending row at once. Dead-lettered rows get a clean second
+/// life (flag cleared, attempts reset) exactly as the single-row retry does.
+async fn retry_all_pending(env: &Env) -> Result<Response> {
+    let database = env.d1("DB")?;
+    let rows = db::list_pending(&database, 500).await?;
+    let queue = env.queue("RETRIES")?;
+    let mut count = 0u32;
+    for row in &rows {
+        if row.dead_lettered {
+            database
+                .prepare(
+                    "UPDATE pending_dispatches \
+                     SET dead_lettered = 0, attempts = 0, updated_at = CURRENT_TIMESTAMP \
+                     WHERE id = ?",
+                )
+                .bind(&[row.id.clone().into()])?
+                .run()
+                .await?;
+        }
+        queue
+            .send(&crate::types::RetryMsg { id: row.id.clone() })
+            .await?;
+        count += 1;
+    }
+    json_ok(&json!({ "ok": true, "count": count }))
+}
+
+/// Delete every pending row (and its stored body). Terminal — there is no
+/// undo, so the frontend confirms first.
+async fn discard_all_pending(env: &Env) -> Result<Response> {
+    let database = env.d1("DB")?;
+    let rows = db::list_pending(&database, 500).await?;
+    let mut count = 0u32;
+    for row in &rows {
+        db::delete_pending(&database, &row.id).await?;
+        crate::r2::delete(env, &row.r2_key).await.ok();
+        count += 1;
+    }
+    json_ok(&json!({ "ok": true, "count": count }))
 }
 
 // ---------------------------------------------------------------------------

@@ -43,6 +43,14 @@ pub async fn send_outbound(env: &Env, outbound: &OutboundEmail) -> Result<()> {
     if !outbound.headers.is_empty() {
         let headers = js_sys::Object::new();
         for (name, value) in &outbound.headers {
+            // Email Service allowlists custom headers (platform-controlled
+            // ones like Content-Type are rejected) and rejects the *whole*
+            // send if any header is disallowed. Drop and log rather than
+            // letting one bad header take down the message.
+            if !is_allowed_header(name) {
+                console_log!("send_outbound: dropping disallowed header {name:?}");
+                continue;
+            }
             set_str(&headers, name, value)?;
         }
         js_sys::Reflect::set(&obj, &"headers".into(), &headers.into())
@@ -54,6 +62,45 @@ pub async fn send_outbound(env: &Env, outbound: &OutboundEmail) -> Result<()> {
         .await
         .map_err(|e| Error::from(format!("send_email failed: {}", describe_js_error(&e))))?;
     Ok(())
+}
+
+/// The custom headers Cloudflare Email Service accepts. Anything else — and
+/// anything corresponding to a first-class API field (`From`, `To`, `Subject`,
+/// `Reply-To`, …) — is rejected with `E_HEADER_NOT_ALLOWED`, failing the whole
+/// send. See <https://developers.cloudflare.com/email-service/reference/headers/>.
+fn is_allowed_header(name: &str) -> bool {
+    let lower = name.to_ascii_lowercase();
+    if lower.starts_with("x-") {
+        return true;
+    }
+    matches!(
+        lower.as_str(),
+        "in-reply-to"
+            | "references"
+            | "thread-index"
+            | "thread-topic"
+            | "list-unsubscribe"
+            | "list-unsubscribe-post"
+            | "list-id"
+            | "list-archive"
+            | "list-help"
+            | "list-owner"
+            | "list-post"
+            | "list-subscribe"
+            | "precedence"
+            | "auto-submitted"
+            | "content-language"
+            | "keywords"
+            | "comments"
+            | "importance"
+            | "priority"
+            | "sensitivity"
+            | "organization"
+            | "require-recipient-valid-since"
+            | "expires"
+            | "reply-by"
+            | "archived-at"
+    )
 }
 
 fn set_str(obj: &js_sys::Object, key: &str, value: &str) -> Result<()> {
@@ -95,13 +142,17 @@ pub fn describe_js_error(e: &JsValue) -> String {
     parts.join(" | ")
 }
 
-/// Build and send an RFC 3464 multipart/report DSN telling the original
-/// sender that the message we accepted couldn't be delivered. Used by the
-/// DLQ consumer when a `pending_dispatches` row is dead-lettered.
+/// Build and send a DSN telling the original sender that the message we
+/// accepted couldn't be delivered. Used by the DLQ consumer when a
+/// `pending_dispatches` row is dead-lettered.
 ///
 /// `recipient_alias` is the alias the sender originally addressed (e.g.
 /// `test@kedi.dev`); the DSN's `From` is `mailer-daemon@<alias-domain>` so
 /// the bounce passes SPF/DKIM for the cutout-controlled domain.
+///
+/// The body is plain text: Cloudflare's `send_email` owns `Content-Type`
+/// (it is platform-controlled and a custom one fails the whole send), so an
+/// RFC 3464 `multipart/report` can't be assembled through the structured API.
 pub async fn send_dsn(
     env: &Env,
     sender: &str,
@@ -117,37 +168,15 @@ pub async fn send_dsn(
     let subject = "Mail delivery failed: returning message to sender".to_string();
     let original_subject = subject_of_original.unwrap_or("(no subject)");
 
-    let human = format!(
-        "This is the mail delivery system at {domain}.\r\n\
-         \r\n\
-         Your message addressed to <{recipient_alias}> could not be delivered \
-         to its final destination after multiple retries. The original message \
-         is preserved by the operator for inspection.\r\n\
-         \r\n\
-         Original subject: {original_subject}\r\n\
-         Failure reason  : {error_text}\r\n",
-    );
-
-    let delivery_status = format!(
-        "Reporting-MTA: dns; {domain}\r\n\
-         \r\n\
-         Final-Recipient: rfc822; {recipient_alias}\r\n\
-         Action: failed\r\n\
-         Status: 5.0.0\r\n\
-         Diagnostic-Code: smtp; {error_text}\r\n",
-    );
-
-    let boundary = format!("cutout-dsn-{}", uuid::Uuid::new_v4().simple());
     let body = format!(
-        "--{boundary}\r\n\
-         Content-Type: text/plain; charset=us-ascii\r\n\
-         \r\n\
-         {human}\r\n\
-         --{boundary}\r\n\
-         Content-Type: message/delivery-status\r\n\
-         \r\n\
-         {delivery_status}\r\n\
-         --{boundary}--\r\n",
+        "This is the mail delivery system at {domain}.\n\
+         \n\
+         Your message addressed to <{recipient_alias}> could not be delivered to its \
+         final destination after multiple retries. The original message is preserved \
+         by the operator for inspection.\n\
+         \n\
+         Original subject: {original_subject}\n\
+         Failure reason  : {error_text}\n",
     );
 
     let outbound = OutboundEmail {
@@ -159,10 +188,6 @@ pub async fn send_dsn(
         reply_to: None,
         headers: vec![
             ("Auto-Submitted".to_string(), "auto-replied".to_string()),
-            (
-                "Content-Type".to_string(),
-                format!("multipart/report; report-type=delivery-status; boundary=\"{boundary}\""),
-            ),
             ("X-Cutout-Forwarded".to_string(), "1".to_string()),
         ],
     };

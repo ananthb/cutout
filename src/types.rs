@@ -46,7 +46,14 @@ impl Rule {
                 let suffix = match action {
                     Action::Drop => "drop".to_string(),
                     Action::Store { .. } => "store".to_string(),
-                    Action::Forward { destinations, .. } => {
+                    Action::ForwardStore { destinations } => {
+                        if destinations.is_empty() {
+                            "store & forward (no destinations)".to_string()
+                        } else {
+                            format!("{} · stored", format_channels(destinations))
+                        }
+                    }
+                    Action::Forward { destinations } => {
                         if destinations.is_empty() {
                             "forward (no destinations)".to_string()
                         } else {
@@ -91,6 +98,9 @@ pub enum Action {
     /// Forward inbound mail to one or more destinations (mixed-channel).
     /// Reply-to rewriting is per-destination (see [`Destination::Email::proxy`]).
     Forward { destinations: Vec<Destination> },
+    /// Forward *and* persist a copy of the message (Store & Forward), so it
+    /// shows up in the rule's stored-email list and the viewer.
+    ForwardStore { destinations: Vec<Destination> },
     /// Silently drop.
     Drop,
     /// Store message for later retrieval.
@@ -112,6 +122,9 @@ enum ActionWire {
         destinations: Vec<Destination>,
         #[serde(default)]
         replace_reply_to: bool,
+    },
+    ForwardStore {
+        destinations: Vec<Destination>,
     },
     Drop,
     Store {
@@ -136,6 +149,7 @@ impl<'de> Deserialize<'de> for Action {
                 }
                 Action::Forward { destinations }
             }
+            ActionWire::ForwardStore { destinations } => Action::ForwardStore { destinations },
             ActionWire::Drop => Action::Drop,
             ActionWire::Store { persist } => Action::Store { persist },
         })

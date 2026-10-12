@@ -1,5 +1,6 @@
 module Api exposing
     ( Action(..)
+    , ActionKind(..)
     , ApiError(..)
     , Body(..)
     , Data
@@ -17,9 +18,12 @@ module Api exposing
     , Snapshot
     , TelegramChat
     , TopSender
+    , actionKind
     , actionSummary
     , createRule
     , deleteRule
+    , destinationsOf
+    , discardAllPending
     , discardPending
     , errorMessage
     , getBootstrap
@@ -29,8 +33,10 @@ module Api exposing
     , getPendingCount
     , getRuleMessages
     , getTelegramChats
+    , isForwardStore
     , isUnauthenticated
     , reorderRule
+    , retryAllPending
     , retryPending
     , updateRule
     )
@@ -65,6 +71,7 @@ import RemoteData exposing (RemoteData)
 
 type Action
     = Forward (List Destination)
+    | ForwardStore (List Destination)
     | Store { persist : Bool }
     | Drop
 
@@ -428,6 +435,16 @@ discardPending id =
     post ("/api/pending/" ++ id ++ "/discard") (E.object []) (D.field "ok" D.bool)
 
 
+retryAllPending : (Data Int -> msg) -> Cmd msg
+retryAllPending =
+    post "/api/pending/retry-all" (E.object []) (D.field "count" D.int)
+
+
+discardAllPending : (Data Int -> msg) -> Cmd msg
+discardAllPending =
+    post "/api/pending/discard-all" (E.object []) (D.field "count" D.int)
+
+
 getRuleMessages : { ruleId : String, before : Maybe String } -> (Data MessagesPayload -> msg) -> Cmd msg
 getRuleMessages args =
     let
@@ -555,6 +572,9 @@ actionDecoder =
                 case t of
                     "forward" ->
                         D.map Forward (D.field "destinations" (D.list destinationDecoder))
+
+                    "forward_store" ->
+                        D.map ForwardStore (D.field "destinations" (D.list destinationDecoder))
 
                     "store" ->
                         D.map (\p -> Store { persist = p })
@@ -719,6 +739,12 @@ encodeAction action =
                 , ( "destinations", E.list encodeDestination destinations )
                 ]
 
+        ForwardStore destinations ->
+            E.object
+                [ ( "type", E.string "forward_store" )
+                , ( "destinations", E.list encodeDestination destinations )
+                ]
+
         Store { persist } ->
             E.object
                 [ ( "type", E.string "store" )
@@ -764,28 +790,84 @@ actionSummary : Action -> String
 actionSummary action =
     case action of
         Forward destinations ->
-            if List.isEmpty destinations then
-                "forward · no destinations"
+            "forward · " ++ channels destinations
 
-            else
-                let
-                    ( emails, telegrams, discords ) =
-                        counts destinations
-                in
-                "forward · "
-                    ++ String.join " + "
-                        (List.filterMap identity
-                            [ plural emails "email"
-                            , plural telegrams "telegram"
-                            , plural discords "discord"
-                            ]
-                        )
+        ForwardStore destinations ->
+            "store & forward · " ++ channels destinations
 
         Store _ ->
             "store"
 
         Drop ->
             "drop"
+
+
+{-| Coarse action class. `Forward` and `ForwardStore` are the same class; use
+[`isForwardStore`] to tell them apart. Elm has no or-patterns, so this is how
+shared handling stays in one place.
+-}
+type ActionKind
+    = ForwardKind
+    | StoreKind
+    | DropKind
+
+
+actionKind : Action -> ActionKind
+actionKind action =
+    case action of
+        Forward _ ->
+            ForwardKind
+
+        ForwardStore _ ->
+            ForwardKind
+
+        Store _ ->
+            StoreKind
+
+        Drop ->
+            DropKind
+
+
+destinationsOf : Action -> List Destination
+destinationsOf action =
+    case action of
+        Forward destinations ->
+            destinations
+
+        ForwardStore destinations ->
+            destinations
+
+        _ ->
+            []
+
+
+isForwardStore : Action -> Bool
+isForwardStore action =
+    case action of
+        ForwardStore _ ->
+            True
+
+        _ ->
+            False
+
+
+channels : List Destination -> String
+channels destinations =
+    if List.isEmpty destinations then
+        "no destinations"
+
+    else
+        let
+            ( emails, telegrams, discords ) =
+                counts destinations
+        in
+        String.join " + "
+            (List.filterMap identity
+                [ plural emails "email"
+                , plural telegrams "telegram"
+                , plural discords "discord"
+                ]
+            )
 
 
 counts : List Destination -> ( Int, Int, Int )
