@@ -10,6 +10,10 @@ A 401 from any request means the Cloudflare Access session is gone. The app says
 so and offers a reload rather than showing a raw error, because "signed out" is
 a state, not a failure.
 
+A 401 from `/api/bootstrap` specifically means the signed-in person has no
+operator access: the app drops the Rules and Pending links and sends every route
+to the inbox, which is the only surface they can use.
+
 -}
 
 import Api
@@ -153,50 +157,70 @@ navigating away and back does not drop the workbench's loaded state.
 -}
 ensurePage : Model -> ( Model, Cmd Msg )
 ensurePage model =
-    case model.route of
-        Route.Manage ->
-            case model.manage of
-                Just _ ->
-                    ( model, Cmd.none )
+    -- No operator access means the inbox is the whole app: any other route
+    -- lands there.
+    if manageDenied model && model.route /= Route.Inbox then
+        ( model, Nav.replaceUrl model.key (Route.toPath Route.Inbox) )
 
-                Nothing ->
-                    case model.boot of
-                        Success snap ->
-                            let
-                                ( manage, cmd ) =
-                                    Manage.init model.key snap
-                            in
-                            ( { model | manage = Just manage }, Cmd.map ManageMsg cmd )
+    else
+        case model.route of
+            Route.Manage ->
+                case model.manage of
+                    Just _ ->
+                        ( model, Cmd.none )
 
-                        _ ->
-                            ( model, Cmd.none )
+                    Nothing ->
+                        case model.boot of
+                            Success snap ->
+                                let
+                                    ( manage, cmd ) =
+                                        Manage.init model.key snap
+                                in
+                                ( { model | manage = Just manage }, Cmd.map ManageMsg cmd )
 
-        Route.Pending ->
-            case model.pending of
-                Just _ ->
-                    ( model, Cmd.none )
+                            _ ->
+                                ( model, Cmd.none )
 
-                Nothing ->
-                    let
-                        ( pending, cmd ) =
-                            Pending.init
-                    in
-                    ( { model | pending = Just pending }, Cmd.map PendingMsg cmd )
+            Route.Pending ->
+                case model.pending of
+                    Just _ ->
+                        ( model, Cmd.none )
 
-        Route.Inbox ->
-            case model.inbox of
-                Just _ ->
-                    ( model, Cmd.none )
+                    Nothing ->
+                        let
+                            ( pending, cmd ) =
+                                Pending.init
+                        in
+                        ( { model | pending = Just pending }, Cmd.map PendingMsg cmd )
 
-                Nothing ->
-                    let
-                        ( inbox, cmd ) =
-                            Inbox.init
-                    in
-                    ( { model | inbox = Just inbox }, Cmd.map InboxMsg cmd )
+            Route.Inbox ->
+                case model.inbox of
+                    Just _ ->
+                        ( model, Cmd.none )
 
-        Route.NotFound ->
-            ( model, Cmd.none )
+                    Nothing ->
+                        let
+                            ( inbox, cmd ) =
+                                Inbox.init
+                        in
+                        ( { model | inbox = Just inbox }, Cmd.map InboxMsg cmd )
+
+            Route.NotFound ->
+                ( model, Cmd.none )
+
+
+{-| True once the bootstrap has answered 401: the person is signed in to
+Cloudflare Access but has no operator access. A different failure (a 500, a
+network error) is a real error, not a permissions decision.
+-}
+manageDenied : Model -> Bool
+manageDenied model =
+    case model.boot of
+        Failure Api.Unauthenticated ->
+            True
+
+        _ ->
+            False
 
 
 themeFromString : String -> Theme
@@ -318,16 +342,30 @@ operator model =
 header : Model -> Html Msg
 header model =
     Html.header [ class "site-header" ]
-        [ a [ class "brand", href "/manage" ]
+        [ a
+            [ class "brand"
+            , href
+                (if manageDenied model then
+                    Route.toPath Route.Inbox
+
+                 else
+                    Route.toPath Route.Manage
+                )
+            ]
             [ span [ class "brand-mark" ] [ Icons.logo ]
             , span [ class "brand-name" ] [ text "Cutout" ]
             , span [ class "brand-sub" ] [ text "routing pipeline" ]
             ]
         , Html.nav [ class "site-nav" ]
-            [ navLink model.route Route.Manage "Rules"
-            , navLink model.route Route.Pending "Pending"
-            , navLink model.route Route.Inbox "Inbox"
-            ]
+            (if manageDenied model then
+                [ navLink model.route Route.Inbox "Inbox" ]
+
+             else
+                [ navLink model.route Route.Manage "Rules"
+                , navLink model.route Route.Pending "Pending"
+                , navLink model.route Route.Inbox "Inbox"
+                ]
+            )
         , div [ class "site-header-right" ]
             [ button
                 [ class "theme-toggle"
@@ -371,7 +409,13 @@ content model =
                     fullLoader
 
         _ ->
-            contentForBoot model
+            -- A reader is being redirected to the inbox; hold the loader so the
+            -- operator pages never flash.
+            if manageDenied model then
+                fullLoader
+
+            else
+                contentForBoot model
 
 
 contentForBoot : Model -> Html Msg
