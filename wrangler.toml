@@ -34,20 +34,25 @@ database_id = "2d32c0f5-f9c1-4b47-a275-c5a896d272b5"
 binding = "KV"
 
 # ============================================================================
-# Outbound email binding. Two backends share the same `EMAIL` binding name
-# and JS API:
-#   - Email Routing (default): only delivers to addresses verified as
-#     Email Routing destinations on this account. Free.
-#   - Email Service "Email Sending" (uncomment `remote = true`): delivers to
-#     any recipient. Requires the sending domain onboarded to Email Service
-#     and a paid Workers plan; billed per message.
-# Switching only affects proxy-mode forwards, reverse-alias replies, and
-# the queue retry/DLQ path — non-proxy synchronous forwards use
-# `EmailMessage.forward()` and are unaffected.
+# Outbound email. Cloudflare has two ways to send, chosen at runtime by the
+# `OUTBOUND_EMAIL_BACKEND` variable (see the variables list at the bottom):
+#
+#   routing (default)  Cloudflare Email Routing. Free. Delivers only to
+#                      destination addresses verified in the dashboard
+#                      (Email > Email Routing > Destination Addresses). The
+#                      first non-proxy email destination uses native
+#                      `EmailMessage.forward()`, which preserves the original
+#                      message; the rest go through `send_email`.
+#
+#   service            Cloudflare Email Service "Email Sending". Paid. Any
+#                      recipient. Every email destination goes through
+#                      `send_email`. The sending domain must be onboarded to
+#                      Email Service (Workers Paid plan; billed per message).
+#
+# The binding is the same either way; only the send path changes.
 # ============================================================================
 [[send_email]]
 name = "EMAIL"
-# remote = true
 
 # ============================================================================
 # R2 bucket for raw email bytes: pending retries (`pending/<id>`) and
@@ -113,6 +118,10 @@ invocation_logs = true
 #   PUBLIC_BASE_URL   Public origin used for inbox links in Telegram/Discord
 #                     posts (e.g. "https://cutout.example.com"). Empty
 #                     suppresses the link.
+#   OUTBOUND_EMAIL_BACKEND
+#                     "routing" (default) for free Email Routing, verified
+#                     destinations only, or "service" for paid Email Service,
+#                     any recipient. Unset means "routing".
 #
 # Secrets (Settings → Secrets):
 #   CF_API_TOKEN      Cloudflare API token. "Account Analytics: Read" enables

@@ -20,6 +20,43 @@ extern "C" {
     fn send(this: &SendEmailBinding, message: &JsValue) -> js_sys::Promise;
 }
 
+/// Which outbound backend to use, read from `OUTBOUND_EMAIL_BACKEND`.
+///
+/// Cloudflare has two ways to send: Email Routing (free, but only to
+/// destination addresses verified in the dashboard) and Email Service (paid,
+/// any recipient, needs the sending domain onboarded). The binding is the
+/// same; this only decides how the message is sent.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum OutboundBackend {
+    /// Free. Verified destinations only. The first non-proxy email
+    /// destination uses native `EmailMessage.forward()`, which preserves the
+    /// original message; the rest go through `send_email`.
+    Routing,
+    /// Paid. Any recipient. Every email destination goes through
+    /// `send_email`, so nothing is limited to a verified address.
+    Service,
+}
+
+impl OutboundBackend {
+    pub fn from_env(env: &Env) -> Self {
+        match env
+            .var("OUTBOUND_EMAIL_BACKEND")
+            .ok()
+            .map(|v| v.to_string().trim().to_ascii_lowercase())
+            .as_deref()
+        {
+            Some("service" | "email_service") => OutboundBackend::Service,
+            _ => OutboundBackend::Routing,
+        }
+    }
+
+    /// Whether the first non-proxy email destination should use native
+    /// `EmailMessage.forward()`. Only the free Email Routing path does.
+    pub fn uses_native_forward(self) -> bool {
+        matches!(self, OutboundBackend::Routing)
+    }
+}
+
 /// Send a single outbound email through the EMAIL binding.
 pub async fn send_outbound(env: &Env, outbound: &OutboundEmail) -> Result<()> {
     let env_js: JsValue = env.clone().into();
@@ -58,10 +95,35 @@ pub async fn send_outbound(env: &Env, outbound: &OutboundEmail) -> Result<()> {
     }
 
     let promise = send_email.send(&obj.into());
-    wasm_bindgen_futures::JsFuture::from(promise)
-        .await
-        .map_err(|e| Error::from(format!("send_email failed: {}", describe_js_error(&e))))?;
+    wasm_bindgen_futures::JsFuture::from(promise).await.map_err(|e| {
+        let detail = describe_js_error(&e);
+        if is_unverified_recipient(&detail) {
+            // The free Email Routing backend only delivers to addresses
+            // verified in the dashboard. Make that obvious in the logs and
+            // point at the fix, because the raw error says nothing about it.
+            console_log!(
+                "send_outbound: {} is not a verified Email Routing destination. \
+                 Verify it under Email Routing > Destination Addresses, or onboard the \
+                 sending domain to Email Service (paid) and set OUTBOUND_EMAIL_BACKEND=service. \
+                 See https://developers.cloudflare.com/email-service/",
+                outbound.to
+            );
+            Error::from(format!(
+                "{} is not a verified address. Verify it, or switch to Email Service \
+                 (https://developers.cloudflare.com/email-service/)",
+                outbound.to
+            ))
+        } else {
+            Error::from(format!("send_email failed: {detail}"))
+        }
+    })?;
     Ok(())
+}
+
+/// True when the runtime rejected the recipient for not being a verified
+/// Email Routing destination address.
+fn is_unverified_recipient(detail: &str) -> bool {
+    detail.to_ascii_lowercase().contains("not a verified address")
 }
 
 /// The custom headers Cloudflare Email Service accepts. Anything else — and

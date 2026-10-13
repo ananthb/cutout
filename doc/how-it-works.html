@@ -62,6 +62,7 @@
     <p>Uses Email Service structured send. Reconstructs the message so <code>Reply-To</code> always works, but strips PGP / signed MIME and attachments.</p>
   </div>
 </div>
+<p>Which backend sends them is set by <code>OUTBOUND_EMAIL_BACKEND</code>. <code>routing</code> (default) is free but only delivers to addresses verified under <strong>Email Routing &rsaquo; Destination Addresses</strong>. <code>service</code> is paid <a href="https://developers.cloudflare.com/email-service/">Email Service</a> and reaches any address.</p>
 <p>Telegram destinations use <code>sendMessage</code>; Discord destinations use <code>createMessage</code> with a Reply button. Bot reply context is keyed by <code>tg:&lt;chat_id&gt;:&lt;message_id&gt;</code> or <code>dc:&lt;channel_id&gt;:&lt;message_id&gt;</code> in D1.</p>
 
 <h2>Replies</h2>
@@ -73,8 +74,8 @@
 
 <h2>Components</h2>
 <ul>
-  <li><strong>Cloudflare Email Routing</strong>: inbound catch-all to worker, Native-mode <code>forward()</code>, and destination-address verification.</li>
-  <li><strong>Cloudflare Email Service</strong>: outbound replies, Proxy-mode forwarding, and fan-out beyond the first destination.</li>
+  <li><strong>Cloudflare Email Routing</strong>: inbound catch-all to worker, Native-mode <code>forward()</code>, and destination-address verification (the free <code>routing</code> backend).</li>
+  <li><strong>Cloudflare Email Service</strong>: outbound replies, Proxy-mode forwarding, and fan-out beyond the first destination; also the paid <code>service</code> backend, which reaches any recipient.</li>
   <li><strong>Cloudflare D1</strong>: durable storage for reverse-alias mappings and bot reply contexts. Entries don't expire, so old threads stay replyable.</li>
   <li><strong>Cloudflare KV</strong>: routing rule list, managed via <code>/manage</code>.</li>
   <li><strong>Cloudflare Access</strong>: guards <code>/manage</code> and <code>/inbox</code>. <code>/health</code>, <code>/telegram/webhook</code>, and <code>/discord/interactions</code> are public; the bot endpoints authenticate via secret token and Ed25519 signature.</li>
