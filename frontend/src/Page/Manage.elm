@@ -185,6 +185,7 @@ type Msg
     | EditorDestKind String
     | EditorDestValue String
     | EditorDestProxy Bool
+    | EditorToggleDestProxy Int
     | EditorAddDest
     | EditorRemoveDest Int
     | EditorReaderValue String
@@ -360,6 +361,9 @@ update msg model =
 
         EditorDestProxy v ->
             ( mapEditor (\e -> { e | destProxy = v }) model, Cmd.none )
+
+        EditorToggleDestProxy index ->
+            ( mapEditor (\e -> { e | destinations = toggleProxyAt index e.destinations }) model, Cmd.none )
 
         EditorAddDest ->
             case model.editor of
@@ -609,6 +613,27 @@ removeAt index items =
     List.indexedMap Tuple.pair items
         |> List.filter (\( i, _ ) -> i /= index)
         |> List.map Tuple.second
+
+
+{-| Flip the proxy flag on the email destination at `index`, leaving the rest
+untouched.
+-}
+toggleProxyAt : Int -> List Api.Destination -> List Api.Destination
+toggleProxyAt index destinations =
+    List.indexedMap
+        (\i d ->
+            if i == index then
+                case d of
+                    Api.Email email ->
+                        Api.Email { email | proxy = not email.proxy }
+
+                    other ->
+                        other
+
+            else
+                d
+        )
+        destinations
 
 
 isConflict : Api.ApiError -> Bool
@@ -2059,12 +2084,20 @@ modifierToggles : Editor -> Html Msg
 modifierToggles editor =
     case editor.destKind of
         "email" ->
-            Ui.toggle
-                { id = "dest-proxy"
-                , label = "Proxy mode (rewrite Reply-To through the worker)"
-                , checked = editor.destProxy
-                , onCheck = EditorDestProxy
-                }
+            div [ class "dest-mod-toggles" ]
+                [ Ui.toggle
+                    { id = "dest-store"
+                    , label = "Store a copy"
+                    , checked = editor.storeForward
+                    , onCheck = EditorStore
+                    }
+                , Ui.toggle
+                    { id = "dest-proxy"
+                    , label = "Proxy mode (rewrite Reply-To through the worker)"
+                    , checked = editor.destProxy
+                    , onCheck = EditorDestProxy
+                    }
+                ]
 
         _ ->
             text ""
@@ -2090,13 +2123,7 @@ destChip stores index destination =
                 Api.Email { address, proxy } ->
                     ( "email"
                     , address
-                    , storeToggle stores
-                        :: (if proxy then
-                                [ plainBadge "proxy" ]
-
-                            else
-                                []
-                           )
+                    , [ storeToggle stores, proxyToggle index proxy ]
                     )
 
                 Api.Telegram { chatId } ->
@@ -2197,6 +2224,44 @@ storeToggle on =
           else
             text ""
         , text "store"
+        ]
+
+
+{-| The Proxy control on an email destination. Proxy is per destination, so the
+pill toggles this one by index; the builder's checkbox sets it for the next
+destination added.
+-}
+proxyToggle : Int -> Bool -> Html Msg
+proxyToggle index on =
+    button
+        [ classList
+            [ ( "dest-chip-mod", True )
+            , ( "is-proxy", True )
+            , ( "is-toggle", True )
+            , ( if on then
+                    "is-on"
+
+                else
+                    "is-off"
+              , True
+              )
+            ]
+        , type_ "button"
+        , A.title
+            (if on then
+                "Proxying replies. Click to stop."
+
+             else
+                "Proxy replies through the worker"
+            )
+        , onClick (EditorToggleDestProxy index)
+        ]
+        [ if on then
+            Icons.check
+
+          else
+            text ""
+        , text "proxy"
         ]
 
 
