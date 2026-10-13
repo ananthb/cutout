@@ -147,9 +147,7 @@ inboxHead model =
         [ div []
             [ h1 [] [ text "Inbox" ]
             , p [ class "inbox-lede" ]
-                [ text
-                    "Every stored email you're allowed to read, across all rules. A rule's email destinations always read its mail; the operator can grant others in Rules."
-                ]
+                [ text "Every stored email you can read." ]
             ]
         , if String.isEmpty count then
             text ""
@@ -165,7 +163,7 @@ inboxList model payload =
         Ui.emptyState
             { icon = Icons.mail
             , title = "Nothing here yet"
-            , body = "Stored emails addressed to you will appear here once a rule stores them."
+            , body = "Stored email you can read will appear here."
             , action = Nothing
             }
 
@@ -278,8 +276,8 @@ accessState =
     div [ class "centered-screen" ]
         [ Ui.emptyState
             { icon = Icons.shield
-            , title = "Cloudflare Access required"
-            , body = "Your session has expired or you aren't signed in. Reload to authenticate."
+            , title = "Access required"
+            , body = "Session expired. Reload to sign in."
             , action = Just (Html.a [ class "btn btn-primary", A.href "/inbox" ] [ text "Reload" ])
             }
         ]

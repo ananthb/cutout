@@ -664,11 +664,7 @@ async fn inbox_message(env: &Env, operator: &str, id: &str) -> Result<Response> 
         return json_error(404, "not_found", "No stored email with that id.");
     };
     let Some(rule_id) = meta.rule_id.as_deref() else {
-        return json_error(
-            403,
-            "forbidden",
-            "That email isn't attached to a rule, so it has no readers.",
-        );
+        return json_error(403, "forbidden", "That email has no rule.");
     };
 
     let kv_store = env.kv("KV")?;
@@ -676,7 +672,7 @@ async fn inbox_message(env: &Env, operator: &str, id: &str) -> Result<Response> 
     let rule = set.rules.iter().find(|r| r.id == rule_id);
     let allowed = rule.is_some_and(|r| r.is_reader(operator));
     if !allowed {
-        return json_error(403, "forbidden", "You aren't a reader for this email.");
+        return json_error(403, "forbidden", "You can't read this email.");
     }
 
     let Some(rendered) = viewer::build_rendered(env, id).await? else {

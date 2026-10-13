@@ -950,7 +950,7 @@ pipelinePane model =
         , div [ class "pipeline-list" ]
             ([ div
                 [ class "pipeline-node"
-                , A.title "Inbound mail enters the worker here. The green dot marks the start of the pipeline, not a health state; rules below are evaluated top to bottom."
+                , A.title "Inbound mail enters here. Green marks the pipeline start, not a status."
                 ]
                 [ span [ class "node-dot" ] [], text "INBOUND · email routing" ]
              ]
@@ -964,7 +964,7 @@ pipelinePane model =
                 ++ [ div [ class "pipeline-connector" ] []
                    , div
                         [ class "pipeline-node"
-                        , A.title "Every rule has been evaluated. Mail that matched nothing is handled by the pinned catch-all at the end."
+                        , A.title "All rules evaluated. The catch-all handles the rest."
                         ]
                         [ span [ class "node-dot node-dot-end" ] [], text "END · all rules evaluated" ]
                    ]
@@ -1115,7 +1115,7 @@ testerCard model rules =
             , input
                 [ class "tester-input"
                 , type_ "text"
-                , placeholder "shop@yourdomain.example or a destination"
+                , placeholder "address or destination"
                 , value model.tester
                 , onInput SetTester
                 , A.autocomplete False
@@ -1164,9 +1164,9 @@ testerCard model rules =
                     _ ->
                         text ""
                  , div [ class "tester-row" ]
-                    [ span [ class "tester-label" ] [ text "Delivers to" ]
+                    [ span [ class "tester-label" ] [ text "Used by" ]
                     , if List.isEmpty delivering then
-                        Ui.chip { label = "no rule delivers here", variant = "muted", dot = False }
+                        Ui.chip { label = "no rule uses it", variant = "muted", dot = False }
 
                       else
                         div [ class "tester-links" ] (List.map deliveringLink delivering)
@@ -2055,7 +2055,7 @@ readersField editor =
           else
             p [ class "dest-error" ] [ text editor.readerError ]
         , p [ class "hint" ]
-            [ text "Email destinations always read this rule's stored mail. Add anyone else who should see it in their inbox." ]
+            [ text "Email destinations always read this rule. Add more." ]
         ]
 
 
@@ -2066,7 +2066,7 @@ implicitReaderChip address =
         , span [ class "reader-chip-value" ] [ text address ]
         , span
             [ class "reader-chip-lock"
-            , A.title "Every email destination is always a reader"
+            , A.title "Always a reader"
             ]
             [ Icons.lock ]
         ]
@@ -2258,10 +2258,10 @@ storeBadge locked =
             ]
         , A.title
             (if locked then
-                "Always stored — the viewer link needs a copy"
+                "Always stored"
 
              else
-                "A copy of the message is stored"
+                "Stored"
             )
         ]
         [ if locked then
@@ -2296,10 +2296,10 @@ storeToggle on =
         , type_ "button"
         , A.title
             (if on then
-                "Keeping a copy — click to stop storing"
+                "Storing. Click to stop."
 
              else
-                "Store a copy of the message"
+                "Store a copy"
             )
         , onClick (EditorStore (not on))
         ]
