@@ -63,8 +63,8 @@
 <h2><span class="step-num">03</span> Set runtime variables and secrets</h2>
 <p>Under <strong>Workers &rsaquo; cutout &rsaquo; Settings &rsaquo; Variables and Secrets</strong>, add:</p>
 <ul>
-  <li><strong>Variables (plain text):</strong> <code>CF_ACCESS_TEAM</code> (your Access team domain) and <code>CF_ACCESS_AUD</code> (AUD tag of the Access app guarding <code>/manage</code>; set up in step 8). Optional: <code>CF_ACCOUNT_ID</code> (enables Analytics Engine SQL API and Browser Rendering REST API features) and <code>PUBLIC_BASE_URL</code> (origin used in viewer links posted to Telegram/Discord; empty suppresses the link).</li>
-  <li><strong>Secrets:</strong> <code>CF_API_TOKEN</code> &mdash; optional, with <em>Account Analytics: Read</em> for stats panels and/or <em>Browser Rendering: Edit</em> for in-chat screenshots; both off if absent. <code>VIEWER_HMAC_KEY</code> &mdash; required only if at least one chat destination uses <code>link_auth = token</code>; generate with <code>openssl rand -hex 32</code>.</li>
+  <li><strong>Variables (plain text):</strong> <code>CF_ACCESS_TEAM</code> (your Access team domain) and <code>CF_ACCESS_AUD</code> (AUD tag of the Access app guarding <code>/manage</code> and <code>/inbox</code>; set up in step 8). Optional: <code>CF_ACCOUNT_ID</code> (enables Analytics Engine SQL API and Browser Rendering REST API features) and <code>PUBLIC_BASE_URL</code> (origin used in inbox links posted to Telegram/Discord; empty suppresses the link).</li>
+  <li><strong>Secrets:</strong> <code>CF_API_TOKEN</code> &mdash; optional, with <em>Account Analytics: Read</em> for stats panels and/or <em>Browser Rendering: Edit</em> for in-chat screenshots; both off if absent.</li>
 </ul>
 <p>The full reference is at the bottom of <a href="https://github.com/ananthb/cutout/blob/main/wrangler.toml">wrangler.toml</a>.</p>
 

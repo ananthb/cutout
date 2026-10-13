@@ -173,7 +173,7 @@ async fn execute_action(
 
             // Persist raw bytes + metadata when at least one destination is a
             // chat channel (the bot post embeds a "View full email" link to
-            // /m/{id}) or when Store & Forward was asked for.
+            // /inbox/{id}) or when Store & Forward was asked for.
             let has_chat_destination = destinations.iter().any(|d| {
                 matches!(
                     d,
@@ -223,7 +223,7 @@ async fn execute_action(
                         }
                         email_count += 1;
                     }
-                    Destination::Telegram { chat_id, link_auth } => {
+                    Destination::Telegram { chat_id } => {
                         dispatch.bot_forwards.push(BotForward {
                             channel: BotChannel::Telegram {
                                 chat_id: chat_id.clone(),
@@ -240,15 +240,11 @@ async fn execute_action(
                                 .unwrap_or_default(),
                             message_id: stored_message_id.clone().unwrap_or_default(),
                             html: inlined_html.clone(),
-                            link_auth: *link_auth,
                             inbound_message_id: parsed.as_ref().and_then(|p| p.message_id.clone()),
                             inbound_references: parsed.as_ref().and_then(|p| p.references.clone()),
                         });
                     }
-                    Destination::Discord {
-                        channel_id,
-                        link_auth,
-                    } => {
+                    Destination::Discord { channel_id } => {
                         dispatch.bot_forwards.push(BotForward {
                             channel: BotChannel::Discord {
                                 channel_id: channel_id.clone(),
@@ -265,7 +261,6 @@ async fn execute_action(
                                 .unwrap_or_default(),
                             message_id: stored_message_id.clone().unwrap_or_default(),
                             html: inlined_html.clone(),
-                            link_auth: *link_auth,
                             inbound_message_id: parsed.as_ref().and_then(|p| p.message_id.clone()),
                             inbound_references: parsed.as_ref().and_then(|p| p.references.clone()),
                         });

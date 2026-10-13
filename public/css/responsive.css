@@ -127,15 +127,6 @@
     display: none;
   }
 
-  .inbox-row {
-    grid-template-columns: 92px minmax(0, 1fr) 18px;
-  }
-
-  .inbox-rule,
-  .inbox-subj {
-    display: none;
-  }
-
   .rc-tools {
     opacity: 1;
     transform: none;
@@ -147,7 +138,13 @@
   }
 
   .inbox-page {
-    padding: 18px 12px 48px;
+    grid-template-columns: 1fr;
+    grid-template-rows: minmax(0, 42%) minmax(0, 1fr);
+  }
+
+  .inbox-list-pane {
+    border-right: 0;
+    border-bottom: 1px solid var(--line);
   }
 
   .pending-head {

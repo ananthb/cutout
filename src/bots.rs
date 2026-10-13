@@ -11,9 +11,8 @@ use botrelay::telegram::{SendMessage, SendPhoto, TelegramBot};
 
 use crate::db;
 use crate::email::send;
-use crate::manage::viewer;
 use crate::screenshot;
-use crate::types::{BotChannel, BotForward, OutboundEmail, ViewerAuth};
+use crate::types::{BotChannel, BotForward, OutboundEmail};
 
 /// Which chat destinations are currently available, based on whether the
 /// relevant bot secrets are present.
@@ -55,7 +54,7 @@ fn discord_bot(env: &Env) -> Option<DiscordBot> {
 /// When the forward carries an HTML body and Browser Rendering is
 /// configured, the post includes a screenshot of the email; otherwise it
 /// falls back to text only. Either way the body ends with a link to the
-/// stored email's viewer URL (when one is available).
+/// stored email in the inbox (when one is available).
 pub async fn dispatch(env: &Env, forward: &BotForward) -> Result<()> {
     let database = env.d1("DB")?;
     let ctx = ReplyContext {
@@ -192,8 +191,9 @@ fn render_body(forward: &BotForward, viewer_url: Option<&str>, max: usize) -> St
     format!("{header}\n\n{snippet}{link_line}")
 }
 
-/// Resolve the viewer URL for a forward, or `None` when one can't be built
-/// (no stored message id, or token mode requested but no signing key).
+/// Resolve the inbox URL for a forward, or `None` when one can't be built (no
+/// stored message id or no public base URL). The link opens the message in the
+/// reader's inbox; reading only ever happens there.
 fn build_viewer_url(env: &Env, forward: &BotForward) -> Option<String> {
     if forward.message_id.is_empty() {
         return None;
@@ -207,14 +207,7 @@ fn build_viewer_url(env: &Env, forward: &BotForward) -> Option<String> {
     if base.is_empty() {
         return None;
     }
-    match forward.link_auth {
-        ViewerAuth::Access => Some(format!("{base}/manage/m/{}", forward.message_id)),
-        ViewerAuth::Token => {
-            let key = env.secret("VIEWER_HMAC_KEY").ok()?.to_string();
-            let token = viewer::sign_id(&key, &forward.message_id);
-            Some(format!("{base}/m/{}?t={token}", forward.message_id))
-        }
-    }
+    Some(format!("{base}/inbox/{}", forward.message_id))
 }
 
 /// Best-effort screenshot. Returns `None` (and logs) on any failure so the
@@ -475,7 +468,6 @@ mod tests {
             text: huge,
             message_id: String::new(),
             html: None,
-            link_auth: Default::default(),
             inbound_message_id: None,
             inbound_references: None,
         };
@@ -496,7 +488,6 @@ mod tests {
             text: "Body".into(),
             message_id: String::new(),
             html: None,
-            link_auth: Default::default(),
             inbound_message_id: None,
             inbound_references: None,
         };
@@ -518,7 +509,6 @@ mod tests {
             text: "Body".into(),
             message_id: "abc".into(),
             html: None,
-            link_auth: Default::default(),
             inbound_message_id: None,
             inbound_references: None,
         };
@@ -539,7 +529,6 @@ mod tests {
             text: huge,
             message_id: "abc".into(),
             html: None,
-            link_auth: Default::default(),
             inbound_message_id: None,
             inbound_references: None,
         };

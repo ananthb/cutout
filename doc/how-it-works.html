@@ -77,7 +77,7 @@
   <li><strong>Cloudflare Email Service</strong>: outbound replies, Proxy-mode forwarding, and fan-out beyond the first destination.</li>
   <li><strong>Cloudflare D1</strong>: durable storage for reverse-alias mappings and bot reply contexts. Entries don't expire, so old threads stay replyable.</li>
   <li><strong>Cloudflare KV</strong>: routing rule list, managed via <code>/manage</code>.</li>
-  <li><strong>Cloudflare Access</strong>: guards <code>/manage</code>. <code>/health</code>, <code>/telegram/webhook</code>, and <code>/discord/interactions</code> are public; the bot endpoints authenticate via secret token and Ed25519 signature.</li>
+  <li><strong>Cloudflare Access</strong>: guards <code>/manage</code> and <code>/inbox</code>. <code>/health</code>, <code>/telegram/webhook</code>, and <code>/discord/interactions</code> are public; the bot endpoints authenticate via secret token and Ed25519 signature.</li>
   <li><a href="https://github.com/ananthb/botrelay-rs"><strong>botrelay-rs</strong></a>: shared Rust crate for the Telegram and Discord bot clients, used across sibling projects.</li>
 </ul>
 

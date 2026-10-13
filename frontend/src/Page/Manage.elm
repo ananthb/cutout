@@ -18,7 +18,7 @@ import Browser.Dom as Dom
 import Browser.Navigation as Nav
 import Format
 import Glob
-import Html exposing (Html, a, aside, button, div, h1, h3, header, iframe, input, label, p, pre, section, span, text)
+import Html exposing (Html, a, aside, button, div, h1, h3, header, input, label, p, section, span, text)
 import Html.Attributes as A exposing (attribute, class, classList, href, placeholder, title, type_, value)
 import Html.Events as E exposing (onClick, onInput)
 import Icons
@@ -42,8 +42,6 @@ type alias Model =
     , editor : Maybe Editor
     , live : Live
     , messages : Messages
-    , expanded : Maybe String
-    , viewing : Api.Data Api.RenderedMessage
     , notice : Maybe ( Ui.Banner, String )
     , busy : Bool
     , zone : Int
@@ -83,7 +81,6 @@ type alias Editor =
     , destKind : String
     , destValue : String
     , destProxy : Bool
-    , destAuth : String
     , destError : String
     , readers : List String
     , readerValue : String
@@ -111,7 +108,6 @@ emptyEditor =
     , destKind = "email"
     , destValue = ""
     , destProxy = False
-    , destAuth = "access"
     , destError = ""
     , readers = []
     , readerValue = ""
@@ -136,8 +132,6 @@ init _ snapshot =
             , loaded = False
             }
       , messages = emptyMessages
-      , expanded = Nothing
-      , viewing = NotAsked
       , notice = Nothing
       , busy = False
       , zone = 0
@@ -191,7 +185,6 @@ type Msg
     | EditorDestKind String
     | EditorDestValue String
     | EditorDestProxy Bool
-    | EditorDestAuth String
     | EditorAddDest
     | EditorRemoveDest Int
     | EditorReaderValue String
@@ -203,8 +196,6 @@ type Msg
     | AskDelete String
     | CancelDelete
     | ConfirmDelete
-    | ToggleMessage String
-    | GotMessage (Api.Data Api.RenderedMessage)
     | LoadMoreMessages
     | GotMoreMessages (Api.Data Api.MessagesPayload)
     | GotMessages (Api.Data Api.MessagesPayload)
@@ -292,14 +283,12 @@ update msg model =
 
         SelectRule target ->
             if target == model.selected then
-                ( { model | selected = Nothing, messages = emptyMessages, expanded = Nothing, viewing = NotAsked }, Cmd.none )
+                ( { model | selected = Nothing, messages = emptyMessages }, Cmd.none )
 
             else
                 ( { model
                     | selected = target
                     , messages = { emptyMessages | loading = target /= Nothing }
-                    , expanded = Nothing
-                    , viewing = NotAsked
                     , notice = Nothing
                   }
                 , case target of
@@ -371,9 +360,6 @@ update msg model =
 
         EditorDestProxy v ->
             ( mapEditor (\e -> { e | destProxy = v }) model, Cmd.none )
-
-        EditorDestAuth v ->
-            ( mapEditor (\e -> { e | destAuth = v }) model, Cmd.none )
 
         EditorAddDest ->
             case model.editor of
@@ -541,18 +527,6 @@ update msg model =
                 _ ->
                     ( { model | deleteTarget = Nothing }, Cmd.none )
 
-        ToggleMessage id ->
-            if model.expanded == Just id then
-                ( { model | expanded = Nothing, viewing = NotAsked }, Cmd.none )
-
-            else
-                ( { model | expanded = Just id, viewing = Loading }
-                , Api.getMessage id GotMessage
-                )
-
-        GotMessage result ->
-            ( { model | viewing = result }, Cmd.none )
-
         LoadMoreMessages ->
             case ( model.selected, model.messages ) of
                 ( Just ruleId, messages ) ->
@@ -715,7 +689,7 @@ parseDestination enabled editor =
                 Err "Telegram isn't configured on this deployment"
 
             else if isInteger raw then
-                Ok (Api.Telegram { chatId = raw, linkAuth = editor.destAuth })
+                Ok (Api.Telegram { chatId = raw })
 
             else
                 Err "A Telegram chat id is an integer, like -1001234567890"
@@ -725,7 +699,7 @@ parseDestination enabled editor =
                 Err "Discord isn't configured on this deployment"
 
             else if isInteger raw then
-                Ok (Api.Discord { channelId = raw, linkAuth = editor.destAuth })
+                Ok (Api.Discord { channelId = raw })
 
             else
                 Err "A Discord channel id is a positive integer"
@@ -1528,16 +1502,16 @@ destinationCard stores destination =
                            )
                     )
 
-                Api.Telegram { chatId, linkAuth } ->
+                Api.Telegram { chatId } ->
                     ( "telegram"
                     , chatId
-                    , storeBadge True :: linkAuthBadge linkAuth
+                    , [ storeBadge True ]
                     )
 
-                Api.Discord { channelId, linkAuth } ->
+                Api.Discord { channelId } ->
                     ( "discord"
                     , channelId
-                    , storeBadge True :: linkAuthBadge linkAuth
+                    , [ storeBadge True ]
                     )
 
         icon =
@@ -1627,7 +1601,7 @@ messagesCard model rule =
                 ]
 
           else
-            div [ class "message-list" ] (List.map (messageRow model) messages.items)
+            div [ class "message-list" ] (List.map messageRow messages.items)
         , if messages.hasMore then
             div [ class "load-more" ]
                 [ Ui.button
@@ -1653,86 +1627,20 @@ countLabel messages =
         String.fromInt (List.length messages.items)
 
 
-messageRow : Model -> Api.MessageItem -> Html Msg
-messageRow model item =
-    let
-        isOpen =
-            model.expanded == Just item.id
-    in
-    div [ classList [ ( "message", True ), ( "is-open", isOpen ) ] ]
-        [ button
-            [ class "message-row"
-            , type_ "button"
-            , onClick (ToggleMessage item.id)
-            ]
-            [ span [ class "message-ts" ]
-                [ text (item.createdAt |> Maybe.map Format.dateShort |> Maybe.withDefault "—") ]
-            , span [ class "message-from" ] [ text item.sender ]
-            , span [ class "message-subj" ] [ text item.subject ]
-            , span [ classList [ ( "message-caret", True ), ( "is-open", isOpen ) ] ] [ Icons.chevronRight ]
-            ]
-        , if isOpen then
-            div [ class "message-body" ] [ messageBody model item.id ]
-
-          else
-            text ""
+{-| One stored email, as a single line. Reading happens in the inbox, so the
+row is a link to `/inbox/{id}` rather than an inline viewer.
+-}
+messageRow : Api.MessageItem -> Html Msg
+messageRow item =
+    a
+        [ class "message-row"
+        , href ("/inbox/" ++ item.id)
         ]
-
-
-messageBody : Model -> String -> Html Msg
-messageBody model messageId =
-    case model.viewing of
-        Loading ->
-            Ui.spinner
-
-        Failure err ->
-            Ui.banner Ui.Error (Api.errorMessage err)
-
-        Success rendered ->
-            div []
-                [ div [ class "embed-header" ]
-                    [ embedRow "From" rendered.from
-                    , embedRow "To" rendered.to
-                    , case rendered.date of
-                        Just d ->
-                            embedRow "Date" d
-
-                        Nothing ->
-                            text ""
-                    , embedRow "Subject" rendered.subject
-                    ]
-                , case rendered.body of
-                    Api.HtmlBody html ->
-                        iframe
-                            [ class "email-body"
-                            , attribute "sandbox" "allow-popups allow-popups-to-escape-sandbox"
-                            , attribute "srcdoc" html
-                            ]
-                            []
-
-                    Api.TextBody txt ->
-                        pre [ class "email-text" ] [ text txt ]
-
-                    Api.NoBody ->
-                        p [ class "empty-inline" ] [ text "No renderable body." ]
-                , div [ class "embed-footer" ]
-                    [ Ui.link
-                        { label = "Open in new tab"
-                        , url = "/manage/m/" ++ messageId
-                        , newTab = True
-                        }
-                    ]
-                ]
-
-        _ ->
-            Ui.spinner
-
-
-embedRow : String -> String -> Html Msg
-embedRow k v =
-    div [ class "embed-row" ]
-        [ span [ class "embed-k" ] [ text k ]
-        , span [ class "embed-v" ] [ text v ]
+        [ span [ class "message-ts" ]
+            [ text (item.createdAt |> Maybe.map Format.dateShort |> Maybe.withDefault "—") ]
+        , span [ class "message-from" ] [ text item.sender ]
+        , span [ class "message-subj" ] [ text item.subject ]
+        , span [ class "message-caret" ] [ Icons.chevronRight ]
         ]
 
 
@@ -2158,28 +2066,8 @@ modifierToggles editor =
                 , onCheck = EditorDestProxy
                 }
 
-        "telegram" ->
-            authToggle editor
-
-        "discord" ->
-            authToggle editor
-
         _ ->
             text ""
-
-
-authToggle : Editor -> Html Msg
-authToggle editor =
-    div [ class "dest-auth" ]
-        [ span [ class "dest-auth-label" ] [ text "Viewer link" ]
-        , Ui.segmented
-            { name = "dest-auth"
-            , options = [ ( "access", "Access" ), ( "token", "Token" ) ]
-            , selected = editor.destAuth
-            , onSelect = EditorDestAuth
-            , disabled = []
-            }
-        ]
 
 
 chatSuggestion : Api.TelegramChat -> Html Msg
@@ -2211,16 +2099,16 @@ destChip stores index destination =
                            )
                     )
 
-                Api.Telegram { chatId, linkAuth } ->
+                Api.Telegram { chatId } ->
                     ( "telegram"
                     , chatId
-                    , storeBadge True :: linkAuthBadge linkAuth
+                    , [ storeBadge True ]
                     )
 
-                Api.Discord { channelId, linkAuth } ->
+                Api.Discord { channelId } ->
                     ( "discord"
                     , channelId
-                    , storeBadge True :: linkAuthBadge linkAuth
+                    , [ storeBadge True ]
                     )
     in
     span [ classList [ ( "dest-chip", True ), ( kind, True ) ] ]
@@ -2310,15 +2198,6 @@ storeToggle on =
             text ""
         , text "store"
         ]
-
-
-linkAuthBadge : String -> List (Html msg)
-linkAuthBadge linkAuth =
-    if linkAuth == "token" then
-        [ plainBadge "token" ]
-
-    else
-        []
 
 
 plainBadge : String -> Html msg

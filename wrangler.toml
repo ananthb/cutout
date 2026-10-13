@@ -11,8 +11,8 @@ command = "./scripts/build-worker.sh"
 # brand mark. A request matching a file here is answered from the edge, which
 # is why they can't carry a per-response header (see `public/_headers`).
 #
-# Anything not matching a file — /manage, /manage/pending, /inbox, /api/*,
-# /m/* — falls through to the Worker.
+# Anything not matching a file — /manage, /manage/pending, /inbox, /api/* —
+# falls through to the Worker.
 # ============================================================================
 [assets]
 directory = "./public"
@@ -110,7 +110,7 @@ invocation_logs = true
 #   CF_ACCESS_AUD     Application Audience (AUD) tag from Access app
 #   CF_ACCOUNT_ID     Cloudflare account ID (for Analytics Engine SQL API
 #                     and Browser Rendering REST calls). Empty disables both.
-#   PUBLIC_BASE_URL   Public origin used for viewer links in Telegram/Discord
+#   PUBLIC_BASE_URL   Public origin used for inbox links in Telegram/Discord
 #                     posts (e.g. "https://cutout.example.com"). Empty
 #                     suppresses the link.
 #
@@ -119,7 +119,3 @@ invocation_logs = true
 #                     dashboard stats; "Browser Rendering: Edit" enables the
 #                     in-chat screenshot for Telegram/Discord. Same token
 #                     covers both. Empty disables both.
-#   VIEWER_HMAC_KEY   Random 32+ bytes; signs public viewer URLs used by
-#                     destinations configured with `link_auth = token`.
-#                     Required only when at least one chat destination uses
-#                     token link auth.
