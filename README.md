@@ -31,7 +31,15 @@ Cloudflare offers two outbound backends and Cutout picks one with the `OUTBOUND_
 | `routing` (default) | Email Routing | free | only addresses verified under Email Routing → Destination Addresses |
 | `service` | Email Service | paid (Workers Paid plan, per message) | anyone |
 
-`routing` is the default and needs no setup beyond verifying destinations. `service` needs the sending domain onboarded to Email Service; it sends every email destination through `send_email` (so attachments and signed MIME are dropped), while `routing` sends the first non-proxy email destination with native `EmailMessage.forward()` and the rest through `send_email`. Set `OUTBOUND_EMAIL_BACKEND` in the dashboard under **Workers → cutout → Settings → Variables and Secrets**; leaving it unset means `routing`.
+`routing` is the default and needs no setup beyond verifying destinations. `service` needs the sending domain onboarded to Email Service; it sends every email destination through `send_email` (so attachments and signed MIME are dropped), while `routing` sends the first non-proxy email destination with native `EmailMessage.forward()` and the rest through `send_email`.
+
+The variable isn't in `wrangler.toml`, so the code default is `routing` and a fork is free out of the box. Setting it in the dashboard alone won't stick: `wrangler deploy` rewrites the Worker's variables from `wrangler.toml`, so the next build drops it. To keep your own instance on `service` without changing the shared file, set the Worker's **Deploy command** under **Settings → Builds** to:
+
+```
+npm run deploy -- --var OUTBOUND_EMAIL_BACKEND:service
+```
+
+`--var` sets the variable on every deploy (it overrides `wrangler.toml`), so it survives redeploys and only applies to that Worker.
 
 ## Getting Started
 

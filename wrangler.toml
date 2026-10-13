@@ -121,7 +121,11 @@ invocation_logs = true
 #   OUTBOUND_EMAIL_BACKEND
 #                     "routing" (default, free, verified destinations only) or
 #                     "service" (paid Email Service, any recipient). Unset
-#                     means "routing".
+#                     means "routing". A dashboard-only value is dropped by
+#                     the next deploy, so keep an instance on "service" with
+#                     `wrangler deploy --var OUTBOUND_EMAIL_BACKEND:service`
+#                     (e.g. as the Builds deploy command) rather than setting
+#                     it in the dashboard.
 #
 # Secrets (Settings → Secrets):
 #   CF_API_TOKEN      Cloudflare API token. "Account Analytics: Read" enables
