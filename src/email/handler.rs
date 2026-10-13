@@ -201,13 +201,17 @@ async fn execute_action(
                 None
             };
 
+            // On the paid Email Service backend every email goes through
+            // `send_email`, so it isn't limited to verified destinations.
+            let use_native = send::OutboundBackend::from_env(env).uses_native_forward();
+
             let mut dispatch = Dispatch::default();
             let mut email_count = 0usize;
 
             for dest in destinations {
                 match dest {
                     Destination::Email { address, proxy } => {
-                        if !proxy && email_count == 0 {
+                        if use_native && !proxy && email_count == 0 {
                             dispatch.forward_email = Some(ForwardInstruction {
                                 destination: address.clone(),
                                 reply_to: reverse_addr.clone(),

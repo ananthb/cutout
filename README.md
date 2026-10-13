@@ -11,15 +11,27 @@ Transparent email alias proxy: similar to [SimpleLogin](https://simplelogin.io) 
 
 ## How it works
 
-1. You own one or more domains with **Cloudflare Email Routing** (inbound) and **Email Service** (outbound)
+1. You own one or more domains with **Cloudflare Email Routing** (inbound + outbound). Add **Cloudflare Email Service** if you want to send to addresses you have not verified.
 2. Someone emails `anything@yourdomain.com`
 3. Cutout worker is triggered, matches the recipient against your rules, and forwards the email to your real address
 4. For email destinations:
     - **Native mode** uses CF's native `EmailMessage.forward()`; original bytes (PGP, attachments) pass through untouched.
     - **Proxy mode** reconstructs the email via `send_email` to ensure `Reply-To` works reliably when replying via the same domain (strips signatures/attachments).
     Both modes inject an `X-Original-From` header for permanent archival in your inbox.
+    Which backend sends them is set by `OUTBOUND_EMAIL_BACKEND`: `routing` (default) is free but only delivers to destinations verified in the dashboard; `service` is paid and delivers to anyone. See [Sending](#sending).
 5. For Telegram/Discord destinations: the bot posts the content to the chat and stores a reply context in KV. Replies in the chat (Telegram's native reply, Discord's "Reply" button → modal) route back to the original sender via email
 6. Destinations depend on your secrets: Telegram and Discord only appear in the UI when their bot tokens are configured
+
+## Sending
+
+Cloudflare offers two outbound backends and Cutout picks one with the `OUTBOUND_EMAIL_BACKEND` variable:
+
+| Value | Backend | Cost | Recipients |
+|---|---|---|---|
+| `routing` (default) | Email Routing | free | only addresses verified under Email Routing → Destination Addresses |
+| `service` | Email Service | paid (Workers Paid plan, per message) | anyone |
+
+`service` needs the sending domain onboarded to Email Service. It sends every email destination through `send_email`; `routing` sends the first non-proxy email destination with native `EmailMessage.forward()` (higher fidelity) and the rest through `send_email`. Set it in `[vars]` in `wrangler.toml` (this repo uses `service`) or in the dashboard; leaving it unset means `routing`.
 
 ## Getting Started
 
@@ -40,6 +52,7 @@ To wire up your fork:
 
 - **Rule-based routing**: ordered glob patterns on local and domain parts, evaluated top-to-bottom, first match wins; a `*@*` Drop catch-all is always pinned at the end
 - **Dual-mode email forwarding**: choose between high-fidelity **Native mode** (preserves PGP/attachments) and reliable **Proxy mode** (ensures `Reply-To` routing works via your custom domain)
+- **Free or paid sending**: default to free Email Routing (verified destinations only), or switch to paid Email Service to send to any address
 - **Permanent Archival**: an `X-Original-From` header is injected into all forwarded mail so you never lose the sender's identity even if KV mappings expire
 - **Multi-destination forwards**: one rule can forward to any mix of email / Telegram / Discord targets
 - **Bot-relay replies**: reply directly from Telegram or Discord chat; Cutout routes it back to the original sender via email
@@ -55,7 +68,7 @@ To wire up your fork:
 - [Cloudflare Workers](https://workers.cloudflare.com/): Rust compiled to WebAssembly
 - [Elm](https://elm-lang.org/): the management SPA, compiled to `public/app.js`
 - [Cloudflare Email Routing](https://developers.cloudflare.com/email-routing/): inbound MX + catch-all -> worker, plus `EmailMessage.forward()` for the Native Forward path
-- [Cloudflare Email Service](https://developers.cloudflare.com/email-service/): used for reverse-alias replies, Proxy mode forwarding, and fanning out beyond the first destination
+- [Cloudflare Email Service](https://developers.cloudflare.com/email-service/): outbound `send_email`; free for verified destinations, or paid to send to anyone (`OUTBOUND_EMAIL_BACKEND=service`)
 - [Cloudflare KV](https://developers.cloudflare.com/kv/): rule list, reverse-alias mappings, and per-message bot reply contexts
 - [Cloudflare Access](https://developers.cloudflare.com/cloudflare-one/applications/): protects `/manage`, `/inbox` and `/api`
 - [botrelay-rs](https://github.com/ananthb/botrelay-rs): shared crate providing the Telegram + Discord bot clients and reply-context primitives

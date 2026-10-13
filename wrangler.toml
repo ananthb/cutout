@@ -34,20 +34,25 @@ database_id = "2d32c0f5-f9c1-4b47-a275-c5a896d272b5"
 binding = "KV"
 
 # ============================================================================
-# Outbound email binding. Two backends share the same `EMAIL` binding name
-# and JS API:
-#   - Email Routing (default): only delivers to addresses verified as
-#     Email Routing destinations on this account. Free.
-#   - Email Service "Email Sending" (uncomment `remote = true`): delivers to
-#     any recipient. Requires the sending domain onboarded to Email Service
-#     and a paid Workers plan; billed per message.
-# Switching only affects proxy-mode forwards, reverse-alias replies, and
-# the queue retry/DLQ path — non-proxy synchronous forwards use
-# `EmailMessage.forward()` and are unaffected.
+# Outbound email. Cloudflare has two ways to send, chosen at runtime by the
+# `OUTBOUND_EMAIL_BACKEND` variable (see the variables list at the bottom):
+#
+#   routing (default)  Cloudflare Email Routing. Free. Delivers only to
+#                      destination addresses verified in the dashboard
+#                      (Email > Email Routing > Destination Addresses). The
+#                      first non-proxy email destination uses native
+#                      `EmailMessage.forward()`, which preserves the original
+#                      message; the rest go through `send_email`.
+#
+#   service            Cloudflare Email Service "Email Sending". Paid. Any
+#                      recipient. Every email destination goes through
+#                      `send_email`. The sending domain must be onboarded to
+#                      Email Service (Workers Paid plan; billed per message).
+#
+# The binding is the same either way; only the send path changes.
 # ============================================================================
 [[send_email]]
 name = "EMAIL"
-# remote = true
 
 # ============================================================================
 # R2 bucket for raw email bytes: pending retries (`pending/<id>`) and
@@ -94,6 +99,11 @@ dataset = "cutout_events"
 [vars]
 ENVIRONMENT = "production"
 
+# Outbound backend. "routing" (free Email Routing, verified destinations only)
+# or "service" (paid Email Service, any recipient). This deployment sends to
+# anyone; set it to "routing" on a fork without Email Service onboarded.
+OUTBOUND_EMAIL_BACKEND = "service"
+
 [observability.logs]
 enabled = true
 invocation_logs = true
@@ -101,9 +111,11 @@ invocation_logs = true
 # ============================================================================
 # Per-deployment configuration
 # ============================================================================
-# All runtime vars and secrets are managed in the Cloudflare dashboard
+# Runtime vars and secrets are managed in the Cloudflare dashboard
 # (Workers → cutout → Settings → Variables and Secrets) so this file stays
-# portable for forks. Cloudflare Builds redeploys preserve them.
+# portable for forks. Cloudflare Builds redeploys preserve them. The one
+# exception is OUTBOUND_EMAIL_BACKEND, set under [vars] above because the
+# dashboard asks for it in code.
 #
 # Plain-text variables (Settings → Variables):
 #   CF_ACCESS_TEAM    Cloudflare Access team name (e.g. "myteam")
