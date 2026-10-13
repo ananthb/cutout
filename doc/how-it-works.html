@@ -66,7 +66,7 @@
 <p>Telegram destinations use <code>sendMessage</code>; Discord destinations use <code>createMessage</code> with a Reply button. Bot reply context is keyed by <code>tg:&lt;chat_id&gt;:&lt;message_id&gt;</code> or <code>dc:&lt;channel_id&gt;:&lt;message_id&gt;</code> in D1.</p>
 
 <h2>Replies</h2>
-<p>You reply from your real mailbox, or by replying to a bot message. Either way, the worker resolves the original sender from D1 and re-sends via Email Service's <code>send_email</code>, with the alias as <code>From</code> and the original sender as <code>To</code>.</p>
+<p>You reply from your real mailbox, or by replying to a bot message. Either way, the worker resolves the original sender from D1 and re-sends via <code>send_email</code>, with the alias as <code>From</code> and the original sender as <code>To</code>.</p>
 <ul>
   <li><strong>Email replies</strong> are addressed to <code>reply+&lt;uuid&gt;@yourdomain.com</code>; Email Routing fires the worker again.</li>
   <li><strong>Bot replies</strong> arrive as a Telegram webhook or Discord interaction event, both carrying the message ID used to look up the alias.</li>
