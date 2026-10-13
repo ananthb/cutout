@@ -67,6 +67,7 @@
   <li><strong>Secrets:</strong> <code>CF_API_TOKEN</code> &mdash; optional, with <em>Account Analytics: Read</em> for stats panels and/or <em>Browser Rendering: Edit</em> for in-chat screenshots; both off if absent.</li>
 </ul>
 <p><strong>Outbound email.</strong> <code>OUTBOUND_EMAIL_BACKEND</code> is optional and defaults to <code>routing</code>: free <a href="https://developers.cloudflare.com/email-routing/">Email Routing</a>, which only delivers to addresses you verify under <strong>Email &rsaquo; Email Routing &rsaquo; Destination Addresses</strong>. Set it to <code>service</code> to send through paid <a href="https://developers.cloudflare.com/email-service/">Email Service</a> instead, which reaches any address; onboard your sending domain to Email Service first (Workers Paid plan, billed per message).</p>
+<p>Do not set it only in the dashboard: <code>wrangler deploy</code> rewrites the Worker's variables from <code>wrangler.toml</code>, so the next build drops it. To keep an instance on <code>service</code> without editing the shared file, set the Worker's <strong>Deploy command</strong> under <strong>Settings &rsaquo; Builds</strong> to <code>npm run deploy -- --var OUTBOUND_EMAIL_BACKEND:service</code>. The <code>--var</code> flag sets it on every deploy and overrides <code>wrangler.toml</code>.</p>
 <p>The full reference is at the bottom of <a href="https://github.com/ananthb/cutout/blob/main/wrangler.toml">wrangler.toml</a>.</p>
 
 <h2><span class="step-num">04</span> Push to <code>main</code></h2>
