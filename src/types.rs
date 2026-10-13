@@ -328,9 +328,7 @@ impl Destination {
                 if !value.chars().all(|c| c.is_ascii_digit()) {
                     return Err("discord channel_id must be a positive integer");
                 }
-                Ok(Some(Destination::Discord {
-                    channel_id: value,
-                }))
+                Ok(Some(Destination::Discord { channel_id: value }))
             }
             other => Err(stringify_kind_err(other)),
         }
