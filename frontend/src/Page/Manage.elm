@@ -662,11 +662,34 @@ editorAction editor =
             Api.Drop
 
         _ ->
-            if editor.storeForward then
+            if editor.storeForward && hasEmailDestination editor then
                 Api.ForwardStore editor.destinations
 
             else
                 Api.Forward editor.destinations
+
+
+{-| Store & Forward is an email concept: chat destinations keep a copy of the
+message regardless, because the bot post links to the stored viewer. A rule
+whose only destinations are chat channels is therefore a plain Forward.
+-}
+hasEmailDestination : Editor -> Bool
+hasEmailDestination editor =
+    List.any
+        (\d ->
+            case d of
+                Api.Email _ ->
+                    True
+
+                _ ->
+                    False
+        )
+        editor.destinations
+
+
+storesRule : Editor -> Bool
+storesRule editor =
+    editor.actionType == "forward" && editor.storeForward && hasEmailDestination editor
 
 
 parseDestination : Api.Enabled -> Editor -> Result String Api.Destination
@@ -1404,46 +1427,45 @@ destinationsCard rule =
                     div [ class "empty-inline" ] [ text "No destinations yet — this forward does nothing until you add one." ]
 
                   else
-                    div [ class "dest-grid" ] (List.map destinationCard destinations)
+                    div [ class "dest-grid" ] (List.map (destinationCard (Api.isForwardStore rule.action)) destinations)
                 ]
 
         _ ->
             text ""
 
 
-destinationCard : Api.Destination -> Html Msg
-destinationCard destination =
+destinationCard : Bool -> Api.Destination -> Html Msg
+destinationCard stores destination =
     let
-        ( kind, value_, modifier ) =
+        ( kind, value_, badges ) =
             case destination of
                 Api.Email { address, proxy } ->
                     ( "email"
                     , address
-                    , if proxy then
-                        Just "proxy"
+                    , (if stores then
+                        [ storeBadge False ]
 
-                      else
-                        Nothing
+                       else
+                        []
+                      )
+                        ++ (if proxy then
+                                [ plainBadge "proxy" ]
+
+                            else
+                                []
+                           )
                     )
 
                 Api.Telegram { chatId, linkAuth } ->
                     ( "telegram"
                     , chatId
-                    , if linkAuth == "token" then
-                        Just "token"
-
-                      else
-                        Nothing
+                    , storeBadge True :: linkAuthBadge linkAuth
                     )
 
                 Api.Discord { channelId, linkAuth } ->
                     ( "discord"
                     , channelId
-                    , if linkAuth == "token" then
-                        Just "token"
-
-                      else
-                        Nothing
+                    , storeBadge True :: linkAuthBadge linkAuth
                     )
 
         icon =
@@ -1463,12 +1485,7 @@ destinationCard destination =
             [ span [ class "dest-kind" ] [ text kind ]
             , span [ class "dest-value" ] [ text value_ ]
             ]
-        , case modifier of
-            Just m ->
-                span [ class "dest-mod" ] [ text m ]
-
-            Nothing ->
-                text ""
+        , span [ class "dest-mods" ] badges
         ]
 
 
@@ -1819,7 +1836,7 @@ editorModal model =
         ( Just editor, Just enabled ) ->
             Ui.modal
                 { title =
-                    if editor.actionType == "forward" && editor.storeForward then
+                    if storesRule editor then
                         "Store & Forward"
 
                     else if editor.id == Nothing then
@@ -1850,12 +1867,16 @@ editorModal model =
                     , if editor.actionType == "forward" then
                         div [ class "forward-fields" ]
                             [ destinationsField model editor enabled
-                            , Ui.toggle
-                                { id = "rule-store-forward"
-                                , label = "Store & Forward (keep a copy of the message)"
-                                , checked = editor.storeForward
-                                , onCheck = EditorStore
-                                }
+                            , if hasEmailDestination editor then
+                                Ui.toggle
+                                    { id = "rule-store-forward"
+                                    , label = "Store & Forward (keep a copy for the email recipients)"
+                                    , checked = editor.storeForward
+                                    , onCheck = EditorStore
+                                    }
+
+                              else
+                                text ""
                             ]
 
                       else if editor.actionType == "store" then
@@ -2028,7 +2049,7 @@ destinationsField _ editor enabled =
             text ""
 
           else
-            div [ class "dest-chips" ] (List.indexedMap destChip editor.destinations)
+            div [ class "dest-chips" ] (List.indexedMap (destChip editor.storeForward) editor.destinations)
         , div [ class "dest-add" ]
             [ Ui.segmented
                 { name = "dest-kind"
@@ -2077,13 +2098,40 @@ modifierToggles editor =
                 }
 
         "telegram" ->
-            authToggle editor
+            div [ class "dest-mod-toggles" ]
+                [ lockedStoreToggle "dest-store-telegram" "Store (always on for Telegram)"
+                , authToggle editor
+                ]
 
         "discord" ->
-            authToggle editor
+            div [ class "dest-mod-toggles" ]
+                [ lockedStoreToggle "dest-store-discord" "Store (always on for Discord)"
+                , authToggle editor
+                ]
 
         _ ->
             text ""
+
+
+{-| A Store checkbox that is permanently on and disabled. Chat destinations
+always keep a copy of the message: the bot post links to the stored viewer, so
+there is nothing to switch off.
+-}
+lockedStoreToggle : String -> String -> Html Msg
+lockedStoreToggle id_ label_ =
+    div
+        [ class "field field-toggle is-locked"
+        , A.title "Chat destinations always keep a copy of the message"
+        ]
+        [ input
+            [ A.id id_
+            , type_ "checkbox"
+            , A.checked True
+            , A.disabled True
+            ]
+            []
+        , label [ A.for id_ ] [ text label_ ]
+        ]
 
 
 authToggle : Editor -> Html Msg
@@ -2112,45 +2160,44 @@ chatSuggestion chat =
         ]
 
 
-destChip : Int -> Api.Destination -> Html Msg
-destChip index destination =
+destChip : Bool -> Int -> Api.Destination -> Html Msg
+destChip stores index destination =
     let
-        ( kind, labelText, modText ) =
+        ( kind, labelText, badges ) =
             case destination of
                 Api.Email { address, proxy } ->
                     ( "email"
                     , address
-                    , if proxy then
-                        [ "proxy" ]
+                    , (if stores then
+                        [ storeBadge False ]
 
-                      else
+                       else
                         []
+                      )
+                        ++ (if proxy then
+                                [ plainBadge "proxy" ]
+
+                            else
+                                []
+                           )
                     )
 
                 Api.Telegram { chatId, linkAuth } ->
                     ( "telegram"
                     , chatId
-                    , if linkAuth == "token" then
-                        [ "token" ]
-
-                      else
-                        []
+                    , storeBadge True :: linkAuthBadge linkAuth
                     )
 
                 Api.Discord { channelId, linkAuth } ->
                     ( "discord"
                     , channelId
-                    , if linkAuth == "token" then
-                        [ "token" ]
-
-                      else
-                        []
+                    , storeBadge True :: linkAuthBadge linkAuth
                     )
     in
     span [ classList [ ( "dest-chip", True ), ( kind, True ) ] ]
         [ span [ class "dest-chip-kind" ] [ text kind ]
         , span [ class "dest-chip-value" ] [ text labelText ]
-        , span [ class "dest-chip-mods" ] (List.map (\m -> span [ class "dest-chip-mod" ] [ text m ]) modText)
+        , span [ class "dest-chip-mods" ] badges
         , button
             [ class "dest-chip-remove"
             , type_ "button"
@@ -2160,6 +2207,48 @@ destChip index destination =
             ]
             [ Icons.close ]
         ]
+
+
+{-| The Store marker on a destination. Chat destinations always keep a copy, so
+the badge is locked; an email destination stores only when the rule does.
+-}
+storeBadge : Bool -> Html msg
+storeBadge locked =
+    span
+        [ classList
+            [ ( "dest-chip-mod", True )
+            , ( "is-store", True )
+            , ( "is-locked", locked )
+            ]
+        , A.title
+            (if locked then
+                "Always stored — the viewer link needs a copy"
+
+             else
+                "A copy of the message is stored"
+            )
+        ]
+        [ if locked then
+            Icons.lock
+
+          else
+            Icons.check
+        , text "store"
+        ]
+
+
+linkAuthBadge : String -> List (Html msg)
+linkAuthBadge linkAuth =
+    if linkAuth == "token" then
+        [ plainBadge "token" ]
+
+    else
+        []
+
+
+plainBadge : String -> Html msg
+plainBadge label_ =
+    span [ class "dest-chip-mod" ] [ text label_ ]
 
 
 destPlaceholder : String -> String

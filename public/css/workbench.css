@@ -749,16 +749,10 @@
   white-space: nowrap;
 }
 
-.dest-mod {
-  padding: 2px 8px;
-  border-radius: var(--r-pill);
-  background: var(--accent-soft);
-  color: var(--accent);
-  font-family: var(--font-mono);
-  font-size: 9.5px;
-  font-weight: 600;
-  text-transform: uppercase;
-  letter-spacing: 0.04em;
+.dest-mods {
+  display: inline-flex;
+  flex-shrink: 0;
+  gap: 3px;
 }
 
 /* ---- messages ----------------------------------------------------------- */
@@ -1174,12 +1168,33 @@
 }
 
 .dest-chip-mod {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
   padding: 0 5px;
   border-radius: var(--r-xs);
   background: color-mix(in oklab, currentColor 18%, transparent);
   font-size: 9px;
   font-weight: 700;
   text-transform: uppercase;
+}
+
+.dest-chip-mod svg {
+  width: 10px;
+  height: 10px;
+}
+
+/* Store is the point of the badge, so it reads in the "kept" colour rather
+   than the destination channel's. Locked: the channel always stores, so the
+   badge is an outline, not a state you can switch off. */
+.dest-chip-mod.is-store {
+  background: color-mix(in oklab, var(--ok) 22%, transparent);
+  color: var(--ok);
+}
+
+.dest-chip-mod.is-store.is-locked {
+  background: transparent;
+  border: 1px dashed color-mix(in oklab, var(--ok) 50%, transparent);
 }
 
 .dest-chip-remove {
@@ -1225,6 +1240,12 @@
 
 .dest-mod-toggle input {
   accent-color: var(--accent);
+}
+
+.dest-mod-toggles {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
 }
 
 .dest-auth {
