@@ -140,6 +140,38 @@
   transform: rotate(0) scale(0.94);
 }
 
+/* ---- site footer -------------------------------------------------------- */
+
+.site-footer {
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  height: 30px;
+  padding: 0 18px;
+  border-top: 1px solid var(--line);
+  background: var(--bg-1);
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  color: var(--fg-3);
+}
+
+.site-footer-links {
+  display: flex;
+  gap: 16px;
+}
+
+.site-footer a {
+  color: var(--fg-2);
+  transition: color var(--dur);
+}
+
+.site-footer a:hover {
+  color: var(--accent);
+  text-decoration: none;
+}
+
 /* ---- buttons ------------------------------------------------------------ */
 
 .btn {

@@ -339,8 +339,30 @@ view model =
     , body =
         [ header model
         , main_ [ class "app-main" ] [ content model ]
+        , footer
         ]
     }
+
+
+footer : Html Msg
+footer =
+    Html.footer [ class "site-footer" ]
+        [ span [] [ text "Cutout · AGPL-3.0" ]
+        , Html.nav [ class "site-footer-links" ]
+            [ a
+                [ href "https://github.com/ananthb/cutout"
+                , Html.Attributes.target "_blank"
+                , Html.Attributes.rel "noopener"
+                ]
+                [ text "Source" ]
+            , a
+                [ href "https://www.gnu.org/licenses/agpl-3.0.html"
+                , Html.Attributes.target "_blank"
+                , Html.Attributes.rel "noopener"
+                ]
+                [ text "License" ]
+            ]
+        ]
 
 
 title : Route -> String
