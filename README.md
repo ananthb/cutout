@@ -31,7 +31,7 @@ Cloudflare offers two outbound backends and Cutout picks one with the `OUTBOUND_
 | `routing` (default) | Email Routing | free | only addresses verified under Email Routing → Destination Addresses |
 | `service` | Email Service | paid (Workers Paid plan, per message) | anyone |
 
-`service` needs the sending domain onboarded to Email Service. It sends every email destination through `send_email`; `routing` sends the first non-proxy email destination with native `EmailMessage.forward()` (higher fidelity) and the rest through `send_email`. Set the variable under **Workers → cutout → Settings → Variables and Secrets**; leaving it unset means `routing`.
+`service` needs the sending domain onboarded to Email Service. It sends every email destination through `send_email`; `routing` sends the first non-proxy email destination with native `EmailMessage.forward()` (higher fidelity) and the rest through `send_email`. Set it in `[vars]` in `wrangler.toml` (this repo uses `service`) or in the dashboard; leaving it unset means `routing`.
 
 ## Getting Started
 

@@ -99,6 +99,11 @@ dataset = "cutout_events"
 [vars]
 ENVIRONMENT = "production"
 
+# Outbound backend. "routing" (free Email Routing, verified destinations only)
+# or "service" (paid Email Service, any recipient). This deployment sends to
+# anyone; set it to "routing" on a fork without Email Service onboarded.
+OUTBOUND_EMAIL_BACKEND = "service"
+
 [observability.logs]
 enabled = true
 invocation_logs = true
@@ -106,9 +111,11 @@ invocation_logs = true
 # ============================================================================
 # Per-deployment configuration
 # ============================================================================
-# All runtime vars and secrets are managed in the Cloudflare dashboard
+# Runtime vars and secrets are managed in the Cloudflare dashboard
 # (Workers → cutout → Settings → Variables and Secrets) so this file stays
-# portable for forks. Cloudflare Builds redeploys preserve them.
+# portable for forks. Cloudflare Builds redeploys preserve them. The one
+# exception is OUTBOUND_EMAIL_BACKEND, set under [vars] above because the
+# dashboard asks for it in code.
 #
 # Plain-text variables (Settings → Variables):
 #   CF_ACCESS_TEAM    Cloudflare Access team name (e.g. "myteam")
@@ -118,10 +125,6 @@ invocation_logs = true
 #   PUBLIC_BASE_URL   Public origin used for inbox links in Telegram/Discord
 #                     posts (e.g. "https://cutout.example.com"). Empty
 #                     suppresses the link.
-#   OUTBOUND_EMAIL_BACKEND
-#                     "routing" (default) for free Email Routing, verified
-#                     destinations only, or "service" for paid Email Service,
-#                     any recipient. Unset means "routing".
 #
 # Secrets (Settings → Secrets):
 #   CF_API_TOKEN      Cloudflare API token. "Account Analytics: Read" enables
