@@ -948,7 +948,12 @@ pipelinePane model =
             ]
         , div [ class "pipeline-tester" ] [ testerCard model rules ]
         , div [ class "pipeline-list" ]
-            ([ div [ class "pipeline-node" ] [ span [ class "node-dot" ] [], text "INBOUND · email routing" ] ]
+            ([ div
+                [ class "pipeline-node"
+                , A.title "Inbound mail enters the worker here. The green dot marks the start of the pipeline, not a health state; rules below are evaluated top to bottom."
+                ]
+                [ span [ class "node-dot" ] [], text "INBOUND · email routing" ]
+             ]
                 ++ List.concatMap
                     (\card ->
                         [ div [ class "pipeline-connector" ] []
@@ -957,7 +962,11 @@ pipelinePane model =
                     )
                     (List.indexedMap (pipelineCard model) rules)
                 ++ [ div [ class "pipeline-connector" ] []
-                   , div [ class "pipeline-node" ] [ span [ class "node-dot node-dot-end" ] [], text "END · all rules evaluated" ]
+                   , div
+                        [ class "pipeline-node"
+                        , A.title "Every rule has been evaluated. Mail that matched nothing is handled by the pinned catch-all at the end."
+                        ]
+                        [ span [ class "node-dot node-dot-end" ] [], text "END · all rules evaluated" ]
                    ]
             )
         ]
@@ -1089,6 +1098,14 @@ testerCard model rules =
 
         thisMatches =
             selectedRule_ |> Maybe.map (matchesAddress model.tester) |> Maybe.withDefault False
+
+        -- An inbound address is tested against the routing table; anything else
+        -- is treated as a destination and looked up across the rules.
+        addressish =
+            isEmailish model.tester
+
+        delivering =
+            rulesDeliveringTo model.tester rules
     in
     div [ class "tester-card" ]
         [ div [ class "tester-head" ]
@@ -1098,7 +1115,7 @@ testerCard model rules =
             , input
                 [ class "tester-input"
                 , type_ "text"
-                , placeholder "shop@yourdomain.example"
+                , placeholder "shop@yourdomain.example or a destination"
                 , value model.tester
                 , onInput SetTester
                 , A.autocomplete False
@@ -1111,8 +1128,30 @@ testerCard model rules =
 
           else
             div [ class "tester-result" ]
-                [ case selectedRule_ of
-                    Just _ ->
+                ([ if addressish then
+                    div [ class "tester-row" ]
+                        [ span [ class "tester-label" ] [ text "Would fire" ]
+                        , case firing of
+                            Just rule ->
+                                if model.selected == Just rule.id then
+                                    Ui.chip { label = "this rule · " ++ Api.actionSummary rule.action, variant = "ok", dot = True }
+
+                                else
+                                    button
+                                        [ class "tester-link"
+                                        , type_ "button"
+                                        , onClick (SelectRule (Just rule.id))
+                                        ]
+                                        [ Icons.bolt, text rule.displayLabel, Icons.chevronRight ]
+
+                            Nothing ->
+                                Ui.chip { label = "no rule matches · bounced", variant = "bad", dot = True }
+                        ]
+
+                   else
+                    text ""
+                 , case ( addressish, selectedRule_ ) of
+                    ( True, Just _ ) ->
                         div [ class "tester-row" ]
                             [ span [ class "tester-label" ] [ text "This rule" ]
                             , if thisMatches then
@@ -1122,37 +1161,70 @@ testerCard model rules =
                                 Ui.chip { label = "no match", variant = "muted", dot = False }
                             ]
 
-                    Nothing ->
+                    _ ->
                         text ""
-                , div [ class "tester-row" ]
-                    [ span [ class "tester-label" ] [ text "Would fire" ]
-                    , case firing of
-                        Just rule ->
-                            if model.selected == Just rule.id then
-                                Ui.chip { label = "this rule · " ++ Api.actionSummary rule.action, variant = "ok", dot = True }
+                 , div [ class "tester-row" ]
+                    [ span [ class "tester-label" ] [ text "Delivers to" ]
+                    , if List.isEmpty delivering then
+                        Ui.chip { label = "no rule delivers here", variant = "muted", dot = False }
 
-                            else
-                                button
-                                    [ class "tester-link"
-                                    , type_ "button"
-                                    , onClick (SelectRule (Just rule.id))
-                                    ]
-                                    [ Icons.bolt, text rule.displayLabel, Icons.chevronRight ]
-
-                        Nothing ->
-                            if String.contains "@" model.tester then
-                                Ui.chip { label = "no rule matches · bounced", variant = "bad", dot = True }
-
-                            else
-                                Ui.chip { label = "waiting for a full address…", variant = "muted", dot = False }
+                      else
+                        div [ class "tester-links" ] (List.map deliveringLink delivering)
                     ]
-                , if thisMatches && firing /= selectedRule_ then
-                    div [ class "tester-note" ] [ text "This rule matches, but a higher rule catches first." ]
+                 ]
+                    ++ (if addressish && thisMatches && firing /= selectedRule_ then
+                            [ div [ class "tester-note" ] [ text "This rule matches, but a higher rule catches first." ] ]
 
-                  else
-                    text ""
-                ]
+                        else
+                            []
+                       )
+                )
         ]
+
+
+deliveringLink : Api.Rule -> Html Msg
+deliveringLink rule =
+    button
+        [ class "tester-link"
+        , type_ "button"
+        , onClick (SelectRule (Just rule.id))
+        ]
+        [ Icons.bolt, text rule.displayLabel, Icons.chevronRight ]
+
+
+{-| Rules that deliver to `input`, treated as a destination: an email address,
+a Telegram chat id, or a Discord channel id. The `kind:value` forms the
+destination builder uses also match.
+-}
+rulesDeliveringTo : String -> List Api.Rule -> List Api.Rule
+rulesDeliveringTo input rules =
+    let
+        needle =
+            String.toLower (String.trim input)
+    in
+    if String.isEmpty needle then
+        []
+
+    else
+        List.filter (destinationMatches needle) rules
+
+
+destinationMatches : String -> Api.Rule -> Bool
+destinationMatches needle rule =
+    List.any (destinationValueMatches needle) (Api.destinationsOf rule.action)
+
+
+destinationValueMatches : String -> Api.Destination -> Bool
+destinationValueMatches needle destination =
+    case destination of
+        Api.Email { address } ->
+            String.toLower (String.trim address) == needle
+
+        Api.Telegram { chatId } ->
+            needle == chatId || needle == "telegram:" ++ chatId || needle == "tg:" ++ chatId
+
+        Api.Discord { channelId } ->
+            needle == channelId || needle == "discord:" ++ channelId || needle == "dc:" ++ channelId
 
 
 isEmailish : String -> Bool
@@ -1866,18 +1938,7 @@ editorModal model =
                         }
                     , if editor.actionType == "forward" then
                         div [ class "forward-fields" ]
-                            [ destinationsField model editor enabled
-                            , if hasEmailDestination editor then
-                                Ui.toggle
-                                    { id = "rule-store-forward"
-                                    , label = "Store & Forward (keep a copy for the email recipients)"
-                                    , checked = editor.storeForward
-                                    , onCheck = EditorStore
-                                    }
-
-                              else
-                                text ""
-                            ]
+                            [ destinationsField model editor enabled ]
 
                       else if editor.actionType == "store" then
                         Ui.toggle
@@ -2098,40 +2159,13 @@ modifierToggles editor =
                 }
 
         "telegram" ->
-            div [ class "dest-mod-toggles" ]
-                [ lockedStoreToggle "dest-store-telegram" "Store (always on for Telegram)"
-                , authToggle editor
-                ]
+            authToggle editor
 
         "discord" ->
-            div [ class "dest-mod-toggles" ]
-                [ lockedStoreToggle "dest-store-discord" "Store (always on for Discord)"
-                , authToggle editor
-                ]
+            authToggle editor
 
         _ ->
             text ""
-
-
-{-| A Store checkbox that is permanently on and disabled. Chat destinations
-always keep a copy of the message: the bot post links to the stored viewer, so
-there is nothing to switch off.
--}
-lockedStoreToggle : String -> String -> Html Msg
-lockedStoreToggle id_ label_ =
-    div
-        [ class "field field-toggle is-locked"
-        , A.title "Chat destinations always keep a copy of the message"
-        ]
-        [ input
-            [ A.id id_
-            , type_ "checkbox"
-            , A.checked True
-            , A.disabled True
-            ]
-            []
-        , label [ A.for id_ ] [ text label_ ]
-        ]
 
 
 authToggle : Editor -> Html Msg
@@ -2168,13 +2202,8 @@ destChip stores index destination =
                 Api.Email { address, proxy } ->
                     ( "email"
                     , address
-                    , (if stores then
-                        [ storeBadge False ]
-
-                       else
-                        []
-                      )
-                        ++ (if proxy then
+                    , storeToggle stores
+                        :: (if proxy then
                                 [ plainBadge "proxy" ]
 
                             else
@@ -2209,8 +2238,9 @@ destChip stores index destination =
         ]
 
 
-{-| The Store marker on a destination. Chat destinations always keep a copy, so
-the badge is locked; an email destination stores only when the rule does.
+{-| The Store marker on a read-only destination (the inspector). Chat
+destinations always keep a copy, so the badge is locked; an email destination
+shows it only when the rule stores.
 -}
 storeBadge : Bool -> Html msg
 storeBadge locked =
@@ -2218,7 +2248,13 @@ storeBadge locked =
         [ classList
             [ ( "dest-chip-mod", True )
             , ( "is-store", True )
-            , ( "is-locked", locked )
+            , ( if locked then
+                    "is-locked"
+
+                else
+                    "is-on"
+              , True
+              )
             ]
         , A.title
             (if locked then
@@ -2233,6 +2269,45 @@ storeBadge locked =
 
           else
             Icons.check
+        , text "store"
+        ]
+
+
+{-| The Store control on an email destination in the editor. Store & Forward is
+an email concept, so it lives on the email pill: click to keep a copy of the
+rule's mail. Chat destinations always store, so they get the locked badge
+instead.
+-}
+storeToggle : Bool -> Html Msg
+storeToggle on =
+    button
+        [ classList
+            [ ( "dest-chip-mod", True )
+            , ( "is-store", True )
+            , ( "is-toggle", True )
+            , ( if on then
+                    "is-on"
+
+                else
+                    "is-off"
+              , True
+              )
+            ]
+        , type_ "button"
+        , A.title
+            (if on then
+                "Keeping a copy — click to stop storing"
+
+             else
+                "Store a copy of the message"
+            )
+        , onClick (EditorStore (not on))
+        ]
+        [ if on then
+            Icons.check
+
+          else
+            text ""
         , text "store"
         ]
 
