@@ -1,0 +1,22 @@
+# Copy to .dev.vars for `wrangler dev` (which is gitignored). Everything here
+# is optional: a feature whose secret is missing just stays off, matching the
+# deployed behaviour.
+
+# Cloudflare Access. The worker verifies the Access JWT on /api/*, so a real
+# team domain and AUD are needed to use the UI locally; with these dummies the
+# worker starts but every request answers 401.
+CF_ACCESS_TEAM=myteam
+CF_ACCESS_AUD=0000000000000000000000000000000000000000000000000000000000000000
+
+# Optional plain-text variables.
+# CF_ACCOUNT_ID=
+# PUBLIC_BASE_URL=http://localhost:8787
+# OUTBOUND_EMAIL_BACKEND=routing
+
+# Optional secrets.
+# TELEGRAM_BOT_TOKEN=
+# TELEGRAM_WEBHOOK_SECRET=
+# DISCORD_BOT_TOKEN=
+# DISCORD_APP_ID=
+# DISCORD_PUBLIC_KEY=
+# CF_API_TOKEN=
