@@ -34,6 +34,8 @@
 //!
 //! - `/` redirects to `/manage`.
 //! - `/manage/*` serves the Elm shell, protected by Cloudflare Access.
+//! - `/inbox` serves the same shell for the reader-facing inbox, gated by the
+//!   Access identity that `/api/inbox` verifies.
 //! - `/api/*` is the JSON API, also gated by Cloudflare Access.
 //! - `/health` returns 200 OK.
 //! - `/telegram/webhook` and `/discord/interactions` are public; they
@@ -356,6 +358,7 @@ async fn handle_request(req: Request, env: Env) -> Result<Response> {
             handle_manage_viewer(req, env, &path).await
         }
         p if p == "/manage" || p.starts_with("/manage/") => manage::serve_app_shell(),
+        p if p == "/inbox" || p.starts_with("/inbox/") => manage::serve_app_shell(),
         _ => Response::error("Not Found", 404),
     }
 }

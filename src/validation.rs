@@ -121,6 +121,16 @@ pub fn validate(rules: &[Rule], enabled: &EnabledChannels) -> Report {
             }
         }
 
+        // Extra inbox readers must be plausible addresses; a typo here would
+        // silently lock someone out of the `/inbox` view.
+        for reader in &rule.inbox_readers {
+            if !crate::types::valid_email_address(reader) {
+                report.issues[i].push(Issue::Error(format!(
+                    "inbox reader '{reader}' looks invalid"
+                )));
+            }
+        }
+
         // Duplicate detection: exact same (local, domain) as another rule.
         for (j, other) in rules.iter().enumerate() {
             if i == j {
@@ -227,6 +237,7 @@ mod tests {
             domain_pattern: domain.into(),
             action,
             label: id.into(),
+            inbox_readers: Vec::new(),
         }
     }
 
@@ -492,5 +503,18 @@ mod tests {
         let report = validate(&rules, &all_enabled());
         assert!(report.has_errors());
         assert!(report.first_error().unwrap().1.contains("looks invalid"));
+    }
+
+    #[test]
+    fn malformed_inbox_reader_is_error() {
+        let mut r = rule("a", "shop", "x.com", forward("me@x.com"));
+        r.inbox_readers = vec!["not-an-email".into()];
+        let report = validate(&[r], &all_enabled());
+        assert!(report.has_errors());
+        assert!(report
+            .first_error()
+            .unwrap()
+            .1
+            .contains("inbox reader 'not-an-email' looks invalid"));
     }
 }

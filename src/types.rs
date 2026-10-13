@@ -12,6 +12,12 @@ pub struct Rule {
     pub action: Action,
     /// Human-readable label, e.g. "Newsletter drop" or "Catch-all forward".
     pub label: String,
+    /// Extra inbox readers named by the operator, over and above the rule's
+    /// own email destinations. Every email destination is an implicit reader
+    /// (see [`Rule::effective_readers`]); the `/inbox` page shows the stored
+    /// mail of a rule to exactly the addresses in that effective set.
+    #[serde(default)]
+    pub inbox_readers: Vec<String>,
 }
 
 impl Rule {
@@ -64,6 +70,40 @@ impl Rule {
                 format!("{prefix} → {suffix}")
             }
         }
+    }
+
+    /// Every address allowed to read this rule's stored mail: the rule's email
+    /// destinations (implicit recipients) followed by any extra
+    /// `inbox_readers`. Lower-cased and de-duplicated, order preserved.
+    pub fn effective_readers(&self) -> Vec<String> {
+        let mut out: Vec<String> = Vec::new();
+        if let Action::Forward { destinations } | Action::ForwardStore { destinations } =
+            &self.action
+        {
+            for d in destinations {
+                if let Destination::Email { address, .. } = d {
+                    push_unique_addr(&mut out, address);
+                }
+            }
+        }
+        for reader in &self.inbox_readers {
+            push_unique_addr(&mut out, reader);
+        }
+        out
+    }
+
+    /// Whether `email` is in this rule's effective reader set (case-insensitive).
+    pub fn is_reader(&self, email: &str) -> bool {
+        let wanted = email.trim().to_lowercase();
+        !wanted.is_empty() && self.effective_readers().contains(&wanted)
+    }
+}
+
+/// Lower-case `addr`, drop blanks, and append to `out` unless already present.
+fn push_unique_addr(out: &mut Vec<String>, addr: &str) {
+    let addr = addr.trim().to_lowercase();
+    if !addr.is_empty() && !out.contains(&addr) {
+        out.push(addr);
     }
 }
 
@@ -859,5 +899,50 @@ mod tests {
         assert!(!valid_email_address("a@c."));
         assert!(!valid_email_address("a@c.c"));
         assert!(!valid_email_address(""));
+    }
+
+    #[test]
+    fn effective_readers_unions_destinations_and_explicit() {
+        let rule = Rule {
+            id: "r".into(),
+            local_pattern: "*".into(),
+            domain_pattern: "*".into(),
+            action: Action::Forward {
+                destinations: vec![
+                    Destination::Email {
+                        address: "Alice@Example.com".into(),
+                        proxy: false,
+                    },
+                    Destination::Telegram {
+                        chat_id: "42".into(),
+                        link_auth: Default::default(),
+                    },
+                ],
+            },
+            label: String::new(),
+            inbox_readers: vec!["bob@x.com".into(), "ALICE@Example.com".into(), "  ".into()],
+        };
+        assert_eq!(
+            rule.effective_readers(),
+            vec!["alice@example.com", "bob@x.com"]
+        );
+        assert!(rule.is_reader("alice@example.com"));
+        assert!(rule.is_reader("BOB@X.com"));
+        assert!(!rule.is_reader("carol@x.com"));
+        assert!(!rule.is_reader(""));
+    }
+
+    #[test]
+    fn effective_readers_empty_for_store_rule_without_explicit() {
+        let rule = Rule {
+            id: "r".into(),
+            local_pattern: "*".into(),
+            domain_pattern: "*".into(),
+            action: Action::Store { persist: true },
+            label: String::new(),
+            inbox_readers: vec![],
+        };
+        assert!(rule.effective_readers().is_empty());
+        assert!(!rule.is_reader("anyone@example.com"));
     }
 }

@@ -14,6 +14,7 @@ import Url.Parser as Parser exposing ((</>), Parser, oneOf, s)
 type Route
     = Manage
     | Pending
+    | Inbox
     | NotFound
 
 
@@ -22,6 +23,7 @@ parser =
     oneOf
         [ Parser.map Pending (s "manage" </> s "pending")
         , Parser.map Manage (s "manage")
+        , Parser.map Inbox (s "inbox")
         ]
 
 
@@ -38,6 +40,9 @@ toPath route =
 
         Pending ->
             "/manage/pending"
+
+        Inbox ->
+            "/inbox"
 
         NotFound ->
             "/manage"

@@ -11,8 +11,8 @@ command = "./scripts/build-worker.sh"
 # brand mark. A request matching a file here is answered from the edge, which
 # is why they can't carry a per-response header (see `public/_headers`).
 #
-# Anything not matching a file — /manage, /manage/pending, /api/*, /m/* — falls
-# through to the Worker.
+# Anything not matching a file — /manage, /manage/pending, /inbox, /api/*,
+# /m/* — falls through to the Worker.
 # ============================================================================
 [assets]
 directory = "./public"

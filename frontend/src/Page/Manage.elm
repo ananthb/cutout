@@ -85,6 +85,9 @@ type alias Editor =
     , destProxy : Bool
     , destAuth : String
     , destError : String
+    , readers : List String
+    , readerValue : String
+    , readerError : String
     , chats : List Api.TelegramChat
     , submitting : Bool
     }
@@ -110,6 +113,9 @@ emptyEditor =
     , destProxy = False
     , destAuth = "access"
     , destError = ""
+    , readers = []
+    , readerValue = ""
+    , readerError = ""
     , chats = []
     , submitting = False
     }
@@ -188,6 +194,9 @@ type Msg
     | EditorDestAuth String
     | EditorAddDest
     | EditorRemoveDest Int
+    | EditorReaderValue String
+    | EditorAddReader
+    | EditorRemoveReader Int
     | EditorSubmit
     | GotSaved (Api.Data Api.Snapshot)
     | GotRefreshed (Api.Data Api.Snapshot)
@@ -397,6 +406,44 @@ update msg model =
         EditorRemoveDest index ->
             ( mapEditor (\e -> { e | destinations = removeAt index e.destinations }) model, Cmd.none )
 
+        EditorReaderValue v ->
+            ( mapEditor (\e -> { e | readerValue = v, readerError = "" }) model, Cmd.none )
+
+        EditorAddReader ->
+            case model.editor of
+                Just editor ->
+                    let
+                        implicit =
+                            Api.emailRecipients (editorAction editor)
+
+                        value =
+                            String.toLower (String.trim editor.readerValue)
+                    in
+                    if not (validEmail value) then
+                        ( mapEditor (\e -> { e | readerError = "Enter an email address like you@example.com" }) model, Cmd.none )
+
+                    else if List.member value implicit || List.member value editor.readers then
+                        ( mapEditor (\e -> { e | readerError = "Already an inbox reader." }) model, Cmd.none )
+
+                    else
+                        ( mapEditor
+                            (\e ->
+                                { e
+                                    | readers = e.readers ++ [ value ]
+                                    , readerValue = ""
+                                    , readerError = ""
+                                }
+                            )
+                            model
+                        , Cmd.none
+                        )
+
+                Nothing ->
+                    ( model, Cmd.none )
+
+        EditorRemoveReader index ->
+            ( mapEditor (\e -> { e | readers = removeAt index e.readers }) model, Cmd.none )
+
         EditorSubmit ->
             case ( model.editor, model.data ) of
                 ( Just editor, Success snap ) ->
@@ -413,6 +460,7 @@ update msg model =
                                 , localPattern = editor.local
                                 , domainPattern = editor.domain
                                 , action = action
+                                , inboxReaders = editor.readers
                                 , rulesVersion = snap.rulesVersion
                                 }
                         in
@@ -738,6 +786,7 @@ editorFrom rule =
         , destinations = fields.destinations
         , persist = fields.persist
         , storeForward = fields.storeForward
+        , readers = rule.inboxReaders
     }
 
 
@@ -1819,6 +1868,11 @@ editorModal model =
 
                       else
                         p [ class "hint" ] [ text "Matching mail is silently discarded. No notification, no bounce." ]
+                    , if editor.actionType == "drop" then
+                        text ""
+
+                      else
+                        readersField editor
                     ]
                 , footer =
                     [ Ui.button { label = "Cancel", onClick = CloseEditor, variant = Ghost, busy = False, disabled = False }
@@ -1881,6 +1935,73 @@ patternField editor =
             ]
         , p [ class "hint" ]
             [ text "* matches anything, ? matches one character. Local part before @, domain after." ]
+        ]
+
+
+{-| Inbox readers. The rule's email destinations are shown as locked chips:
+every destination is automatically a reader. Extra addresses the operator adds
+are removable. The server unions the two into the rule's effective readers.
+-}
+readersField : Editor -> Html Msg
+readersField editor =
+    let
+        implicit =
+            Api.emailRecipients (editorAction editor)
+    in
+    div [ class "readers-field" ]
+        [ Html.label [] [ text "Inbox readers" ]
+        , div [ class "readers-chips" ]
+            (List.map implicitReaderChip implicit
+                ++ List.indexedMap explicitReaderChip editor.readers
+            )
+        , div [ class "dest-add-row" ]
+            [ input
+                [ class "dest-input"
+                , type_ "text"
+                , value editor.readerValue
+                , placeholder "teammate@example.com"
+                , onInput EditorReaderValue
+                , A.autocomplete False
+                , A.spellcheck False
+                ]
+                []
+            , Ui.button { label = "Add", onClick = EditorAddReader, variant = Secondary, busy = False, disabled = False }
+            ]
+        , if String.isEmpty editor.readerError then
+            text ""
+
+          else
+            p [ class "dest-error" ] [ text editor.readerError ]
+        , p [ class "hint" ]
+            [ text "Email destinations always read this rule's stored mail. Add anyone else who should see it in their inbox." ]
+        ]
+
+
+implicitReaderChip : String -> Html Msg
+implicitReaderChip address =
+    span [ class "reader-chip is-locked" ]
+        [ span [ class "reader-chip-kind" ] [ text "recipient" ]
+        , span [ class "reader-chip-value" ] [ text address ]
+        , span
+            [ class "reader-chip-lock"
+            , A.title "Every email destination is always a reader"
+            ]
+            [ Icons.lock ]
+        ]
+
+
+explicitReaderChip : Int -> String -> Html Msg
+explicitReaderChip index address =
+    span [ class "reader-chip" ]
+        [ span [ class "reader-chip-value" ] [ text address ]
+        , button
+            [ class "reader-chip-remove"
+            , type_ "button"
+            , attribute "aria-label" ("Remove " ++ address)
+            , A.title "Remove"
+            , onClick (EditorRemoveReader index)
+            ]
+            [ Icons.close ]
         ]
 
 
