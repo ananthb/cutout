@@ -329,6 +329,12 @@
   text-decoration: none;
 }
 
+.tester-links {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
 .tester-note {
   font-size: 11.5px;
   color: var(--fg-2);
@@ -608,6 +614,7 @@
 }
 
 .inspector-body > * {
+  flex-shrink: 0;
   animation: rise-in var(--dur-slow) var(--ease) both;
 }
 
@@ -1184,17 +1191,36 @@
   height: 10px;
 }
 
-/* Store is the point of the badge, so it reads in the "kept" colour rather
-   than the destination channel's. Locked: the channel always stores, so the
-   badge is an outline, not a state you can switch off. */
+/* Store reads in the "kept" colour rather than the destination channel's. On:
+   filled. Locked: the channel always stores, so it is an outline you can't
+   switch off. Off: the email toggle before it's switched on. */
 .dest-chip-mod.is-store {
-  background: color-mix(in oklab, var(--ok) 22%, transparent);
   color: var(--ok);
+}
+
+.dest-chip-mod.is-store.is-on {
+  background: color-mix(in oklab, var(--ok) 22%, transparent);
 }
 
 .dest-chip-mod.is-store.is-locked {
   background: transparent;
   border: 1px dashed color-mix(in oklab, var(--ok) 50%, transparent);
+}
+
+.dest-chip-mod.is-store.is-off {
+  background: transparent;
+  border: 1px dashed color-mix(in oklab, var(--fg-3) 45%, transparent);
+  color: var(--fg-3);
+}
+
+.dest-chip-mod.is-toggle {
+  cursor: pointer;
+  transition: background var(--dur), border-color var(--dur), color var(--dur);
+}
+
+.dest-chip-mod.is-toggle:hover {
+  background: color-mix(in oklab, var(--ok) 16%, transparent);
+  color: var(--ok);
 }
 
 .dest-chip-remove {
@@ -1240,12 +1266,6 @@
 
 .dest-mod-toggle input {
   accent-color: var(--accent);
-}
-
-.dest-mod-toggles {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
 }
 
 .dest-auth {

@@ -399,16 +399,6 @@ textarea:focus,
   color: var(--fg);
 }
 
-/* A toggle that is on and can't be turned off, e.g. Store for chat channels. */
-.field-toggle.is-locked label {
-  color: var(--fg-2);
-}
-
-.field-toggle.is-locked input[type="checkbox"] {
-  accent-color: var(--fg-3);
-  cursor: not-allowed;
-}
-
 /* Two fields joined by an @. */
 .pat-input {
   display: grid;
