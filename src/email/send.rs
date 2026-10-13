@@ -125,7 +125,9 @@ pub async fn send_outbound(env: &Env, outbound: &OutboundEmail) -> Result<()> {
 /// True when the runtime rejected the recipient for not being a verified
 /// Email Routing destination address.
 fn is_unverified_recipient(detail: &str) -> bool {
-    detail.to_ascii_lowercase().contains("not a verified address")
+    detail
+        .to_ascii_lowercase()
+        .contains("not a verified address")
 }
 
 /// The custom headers Cloudflare Email Service accepts. Anything else — and
