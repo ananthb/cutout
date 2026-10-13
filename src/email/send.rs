@@ -95,28 +95,30 @@ pub async fn send_outbound(env: &Env, outbound: &OutboundEmail) -> Result<()> {
     }
 
     let promise = send_email.send(&obj.into());
-    wasm_bindgen_futures::JsFuture::from(promise).await.map_err(|e| {
-        let detail = describe_js_error(&e);
-        if is_unverified_recipient(&detail) {
-            // The free Email Routing backend only delivers to addresses
-            // verified in the dashboard. Make that obvious in the logs and
-            // point at the fix, because the raw error says nothing about it.
-            console_log!(
-                "send_outbound: {} is not a verified Email Routing destination. \
-                 Verify it under Email Routing > Destination Addresses, or onboard the \
-                 sending domain to Email Service (paid) and set OUTBOUND_EMAIL_BACKEND=service. \
-                 See https://developers.cloudflare.com/email-service/",
-                outbound.to
-            );
-            Error::from(format!(
-                "{} is not a verified address. Verify it, or switch to Email Service \
-                 (https://developers.cloudflare.com/email-service/)",
-                outbound.to
-            ))
-        } else {
-            Error::from(format!("send_email failed: {detail}"))
-        }
-    })?;
+    wasm_bindgen_futures::JsFuture::from(promise)
+        .await
+        .map_err(|e| {
+            let detail = describe_js_error(&e);
+            if is_unverified_recipient(&detail) {
+                // The free Email Routing backend only delivers to addresses
+                // verified in the dashboard. Make that obvious in the logs and
+                // point at the fix, because the raw error says nothing about it.
+                console_log!(
+                    "send_outbound: {} is not a verified Email Routing destination. \
+                     Verify it under Email Routing > Destination Addresses, or onboard the \
+                     sending domain to Email Service (paid) and set OUTBOUND_EMAIL_BACKEND=service. \
+                     See https://developers.cloudflare.com/email-service/",
+                    outbound.to
+                );
+                Error::from(format!(
+                    "{} is not a verified address. Verify it, or switch to Email Service \
+                     (https://developers.cloudflare.com/email-service/)",
+                    outbound.to
+                ))
+            } else {
+                Error::from(format!("send_email failed: {detail}"))
+            }
+        })?;
     Ok(())
 }
 
