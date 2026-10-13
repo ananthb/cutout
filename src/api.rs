@@ -97,8 +97,6 @@ pub async fn handle(mut req: Request, env: Env, path: &str, method: Method) -> R
         (Method::Delete, ["rules", id]) => delete_rule(&mut req, &env, &operator, id).await,
         (Method::Get, ["rules", id, "messages"]) => list_rule_messages(req, &env, id).await,
 
-        (Method::Get, ["messages", id]) => message(&env, id).await,
-
         (Method::Get, ["inbox"]) => inbox(req, &env, &operator).await,
         (Method::Get, ["inbox", "messages", id]) => inbox_message(&env, &operator, id).await,
 
@@ -574,16 +572,9 @@ async fn list_rule_messages(req: Request, env: &Env, rule_id: &str) -> Result<Re
     json_ok(&json!({ "messages": items, "has_more": has_more, "next_before": next_before }))
 }
 
-/// One stored email, rendered for the inline inspector. The body comes back
-/// either as sanitized HTML (hosted in a sandboxed iframe by the frontend) or
-/// as plain text, because the frontend can't sanitize HTML itself.
-async fn message(env: &Env, id: &str) -> Result<Response> {
-    let Some(rendered) = viewer::build_rendered(env, id).await? else {
-        return json_error(404, "not_found", "No stored email with that id.");
-    };
-    json_ok(&rendered_json(rendered))
-}
-
+/// One rendered stored email as JSON. The body comes back either as sanitized
+/// HTML (hosted in a sandboxed iframe by the frontend) or as plain text,
+/// because the frontend can't sanitize HTML itself.
 fn rendered_json(rendered: viewer::RenderedEmail) -> Value {
     let body = match (rendered.body_html, rendered.body_text) {
         (Some(html), _) => json!({ "kind": "html", "html": html }),

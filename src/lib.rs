@@ -351,63 +351,10 @@ async fn handle_request(req: Request, env: Env) -> Result<Response> {
             bots::handle_discord_interaction(req, env).await
         }
         p if p.starts_with("/api/") => api::handle(req, env, &path, method).await,
-        p if p.starts_with("/m/") && method == Method::Get => {
-            handle_public_viewer(req, env, &path).await
-        }
-        p if p.starts_with("/manage/m/") && method == Method::Get => {
-            handle_manage_viewer(req, env, &path).await
-        }
         p if p == "/manage" || p.starts_with("/manage/") => manage::serve_app_shell(),
         p if p == "/inbox" || p.starts_with("/inbox/") => manage::serve_app_shell(),
         _ => Response::error("Not Found", 404),
     }
-}
-
-/// Access-protected viewer for a stored email (`/manage/m/{id}`), the target of
-/// the inspector's "open in new tab" link.
-async fn handle_manage_viewer(req: Request, env: Env, path: &str) -> Result<Response> {
-    let id = match path.strip_prefix("/manage/m/") {
-        Some(rest) if !rest.is_empty() && !rest.contains('/') => rest,
-        _ => return Response::error("Not Found", 404),
-    };
-    if manage::access::verify_access(&req, &env).await.is_none() {
-        return Response::error("Forbidden: Cloudflare Access required", 403);
-    }
-    manage::viewer::render(&env, id).await
-}
-
-/// Public viewer route `/m/{id}?t={hmac}`. Validates the token is the
-/// HMAC of `id` under `VIEWER_HMAC_KEY` and renders the same viewer used by
-/// the Access-protected `/manage/m/{id}` route.
-async fn handle_public_viewer(req: Request, env: Env, path: &str) -> Result<Response> {
-    let id = match path.strip_prefix("/m/") {
-        Some(rest) if !rest.is_empty() && !rest.contains('/') => rest,
-        _ => return Response::error("Not Found", 404),
-    };
-
-    let url = req.url()?;
-    let token = url
-        .query_pairs()
-        .find(|(k, _)| k == "t")
-        .map(|(_, v)| v.into_owned())
-        .unwrap_or_default();
-    if token.is_empty() {
-        return Response::error("Forbidden", 403);
-    }
-
-    let key = match env.secret("VIEWER_HMAC_KEY") {
-        Ok(s) => s.to_string(),
-        Err(_) => {
-            console_log!("/m/: VIEWER_HMAC_KEY not configured; refusing token-mode viewer");
-            return Response::error("Viewer not configured", 503);
-        }
-    };
-
-    if !manage::viewer::verify_signed_id(&key, id, &token) {
-        return Response::error("Forbidden", 403);
-    }
-
-    manage::viewer::render(&env, id).await
 }
 
 /// Queue consumer dispatcher. Two queues land on the same worker:

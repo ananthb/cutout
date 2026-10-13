@@ -1,39 +1,16 @@
-//! Stored-email viewer. Shared between the Access-protected
-//! `/manage/m/{id}` route and the public token-signed `/m/{id}?t=…` route:
-//! both call [`render`] to produce the response.
+//! Stored-email rendering for the inbox API: fetch, parse and sanitize a
+//! stored message into the parts the frontend reads.
 
-use base64::Engine;
-use hmac::{Hmac, Mac};
-use sha2::Sha256;
-use subtle::ConstantTimeEq;
 use worker::*;
 
 use crate::db;
 use crate::email::mime;
-use crate::helpers::html_escape;
 use crate::r2;
 use crate::sanitize;
 
-/// HMAC-SHA256 the message id with `key` and return URL-safe base64 (no
-/// padding). The result is the `t=` value embedded in token-mode viewer
-/// URLs.
-pub fn sign_id(key: &str, id: &str) -> String {
-    let mut mac = Hmac::<Sha256>::new_from_slice(key.as_bytes()).expect("HMAC accepts any key");
-    mac.update(id.as_bytes());
-    let bytes = mac.finalize().into_bytes();
-    base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(bytes)
-}
-
-/// Verify a token produced by [`sign_id`]. Constant-time compare.
-pub fn verify_signed_id(key: &str, id: &str, token: &str) -> bool {
-    let expected = sign_id(key, id);
-    expected.as_bytes().ct_eq(token.as_bytes()).into()
-}
-
-/// Header + body parts for a stored email. Produced by [`build_rendered`] and
-/// consumed by the standalone page ([`render`]), which assembles them into
-/// markup, and by the JSON API, which ships the sanitized HTML/text to the
-/// frontend for the inline inspector.
+/// Header + body parts for a stored email, produced by [`build_rendered`] and
+/// shipped by the JSON API, which hosts the sanitized HTML in a sandboxed
+/// iframe or shows the text.
 pub struct RenderedEmail {
     pub subject: String,
     pub from: String,
@@ -44,23 +21,6 @@ pub struct RenderedEmail {
     pub body_html: Option<String>,
     /// Plain-text body, used when there is no HTML part.
     pub body_text: Option<String>,
-}
-
-impl RenderedEmail {
-    /// The body rendered for a standalone page: a sandboxed iframe for HTML, a
-    /// `<pre>` for text, or an empty-state paragraph.
-    pub fn body_section(&self) -> String {
-        if let Some(html) = &self.body_html {
-            format!(
-                "<iframe class=\"email-body\" sandbox=\"allow-popups allow-popups-to-escape-sandbox\" srcdoc=\"{}\"></iframe>",
-                srcdoc_attr_escape(html)
-            )
-        } else if let Some(text) = &self.body_text {
-            format!("<pre class=\"email-text\">{}</pre>", html_escape(text))
-        } else {
-            "<p class=\"empty\">No renderable body.</p>".to_string()
-        }
-    }
 }
 
 /// Fetch + parse + sanitize a stored email. Returns `None` when the row or
@@ -104,74 +64,6 @@ pub async fn build_rendered(env: &Env, id: &str) -> Result<Option<RenderedEmail>
     }))
 }
 
-/// Render the viewer for `id` as a standalone page. Returns:
-/// - 200 + HTML when the message exists and has a body to render
-/// - 404 when the row or its R2 object is missing
-pub async fn render(env: &Env, id: &str) -> Result<Response> {
-    let rendered = match build_rendered(env, id).await? {
-        Some(r) => r,
-        None => return Response::error("Not Found", 404),
-    };
-
-    let date_line = rendered
-        .date
-        .as_deref()
-        .map(|ts| {
-            format!(
-                "<div class=\"row\"><span class=\"k\">Date</span><span>{}</span></div>",
-                html_escape(ts)
-            )
-        })
-        .unwrap_or_default();
-
-    let page = format!(
-        r#"<!DOCTYPE html>
-<html lang="en">
-<head>
-<meta charset="utf-8">
-<title>{subject_html} cutout</title>
-<style>
-  body {{ font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif; margin: 0; background: #f5f5f7; color: #1d1d1f; }}
-  .wrap {{ max-width: 920px; margin: 24px auto; padding: 0 16px; }}
-  .header {{ background: #fff; border: 1px solid #d2d2d7; border-radius: 12px; padding: 16px 20px; margin-bottom: 16px; }}
-  .header h1 {{ margin: 0 0 12px; font-size: 18px; line-height: 1.4; word-break: break-word; }}
-  .row {{ display: flex; gap: 12px; font-size: 13px; line-height: 1.6; }}
-  .row .k {{ width: 64px; color: #6e6e73; text-transform: uppercase; letter-spacing: 0.4px; font-size: 11px; padding-top: 2px; }}
-  .row span:not(.k) {{ word-break: break-all; }}
-  .body-card {{ background: #fff; border: 1px solid #d2d2d7; border-radius: 12px; overflow: hidden; }}
-  .email-body {{ width: 100%; min-height: 70vh; border: 0; background: #fff; }}
-  .email-text {{ margin: 0; padding: 16px 20px; white-space: pre-wrap; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 13px; line-height: 1.55; }}
-  .empty {{ padding: 24px; text-align: center; color: #6e6e73; }}
-</style>
-</head>
-<body>
-<div class="wrap">
-  <div class="header">
-    <h1>{subject_html}</h1>
-    <div class="row"><span class="k">From</span><span>{from_html}</span></div>
-    <div class="row"><span class="k">To</span><span>{to_html}</span></div>
-    {date_line}
-  </div>
-  <div class="body-card">
-    {body_section}
-  </div>
-</div>
-</body>
-</html>"#,
-        subject_html = html_escape(&rendered.subject),
-        from_html = html_escape(&rendered.from),
-        to_html = html_escape(&rendered.to),
-        date_line = date_line,
-        body_section = rendered.body_section(),
-    );
-
-    let mut resp = Response::from_html(page)?;
-    let headers = resp.headers_mut();
-    headers.set("Cache-Control", "private, no-store")?;
-    headers.set("X-Content-Type-Options", "nosniff")?;
-    Ok(resp)
-}
-
 fn display_from(p: &mime::ParsedEmail) -> String {
     match (p.from_name.as_deref(), p.from_address.as_deref()) {
         (Some(name), Some(addr)) if !name.is_empty() => format!("{name} <{addr}>"),
@@ -181,29 +73,9 @@ fn display_from(p: &mime::ParsedEmail) -> String {
     }
 }
 
-/// Escape a string for safe embedding inside a `srcdoc="…"` attribute.
-/// Only `&` and `"` need encoding inside a double-quoted attribute value.
-fn srcdoc_attr_escape(s: &str) -> String {
-    let mut out = String::with_capacity(s.len());
-    for ch in s.chars() {
-        match ch {
-            '&' => out.push_str("&amp;"),
-            '"' => out.push_str("&quot;"),
-            c => out.push(c),
-        }
-    }
-    out
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn srcdoc_escape_handles_quotes_and_amps() {
-        let s = srcdoc_attr_escape("<a href=\"x\">x &amp; y</a>");
-        assert_eq!(s, "<a href=&quot;x&quot;>x &amp;amp; y</a>");
-    }
 
     #[test]
     fn display_from_prefers_name_with_address() {
@@ -217,39 +89,6 @@ mod tests {
             html_body: None,
         };
         assert_eq!(display_from(&p), "Alice <alice@example.org>");
-    }
-
-    #[test]
-    fn sign_id_is_stable_for_same_inputs() {
-        let a = sign_id("secret", "abc123");
-        let b = sign_id("secret", "abc123");
-        assert_eq!(a, b);
-    }
-
-    #[test]
-    fn sign_id_differs_when_key_or_id_changes() {
-        let base = sign_id("k1", "id1");
-        assert_ne!(base, sign_id("k2", "id1"));
-        assert_ne!(base, sign_id("k1", "id2"));
-    }
-
-    #[test]
-    fn verify_signed_id_round_trips() {
-        let key = "test-key";
-        let id = "msg-123";
-        let token = sign_id(key, id);
-        assert!(verify_signed_id(key, id, &token));
-    }
-
-    #[test]
-    fn verify_signed_id_rejects_tamper() {
-        let key = "test-key";
-        let id = "msg-123";
-        let mut token = sign_id(key, id);
-        // Flip a character.
-        let last = token.pop().unwrap();
-        token.push(if last == 'A' { 'B' } else { 'A' });
-        assert!(!verify_signed_id(key, id, &token));
     }
 
     #[test]

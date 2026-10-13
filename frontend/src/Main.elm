@@ -159,7 +159,7 @@ ensurePage : Model -> ( Model, Cmd Msg )
 ensurePage model =
     -- No operator access means the inbox is the whole app: any other route
     -- lands there.
-    if manageDenied model && model.route /= Route.Inbox then
+    if manageDenied model && not (isInboxRoute model.route) then
         ( model, Nav.replaceUrl model.key (Route.toPath Route.Inbox) )
 
     else
@@ -194,19 +194,44 @@ ensurePage model =
                         ( { model | pending = Just pending }, Cmd.map PendingMsg cmd )
 
             Route.Inbox ->
-                case model.inbox of
-                    Just _ ->
-                        ( model, Cmd.none )
+                inboxPage model Nothing
 
-                    Nothing ->
-                        let
-                            ( inbox, cmd ) =
-                                Inbox.init
-                        in
-                        ( { model | inbox = Just inbox }, Cmd.map InboxMsg cmd )
+            Route.InboxMessage id ->
+                inboxPage model (Just id)
 
             Route.NotFound ->
                 ( model, Cmd.none )
+
+
+inboxPage : Model -> Maybe String -> ( Model, Cmd Msg )
+inboxPage model target =
+    case model.inbox of
+        Just inbox ->
+            let
+                ( updated, cmd ) =
+                    Inbox.select target inbox
+            in
+            ( { model | inbox = Just updated }, Cmd.map InboxMsg cmd )
+
+        Nothing ->
+            let
+                ( inbox, cmd ) =
+                    Inbox.init target
+            in
+            ( { model | inbox = Just inbox }, Cmd.map InboxMsg cmd )
+
+
+isInboxRoute : Route -> Bool
+isInboxRoute route =
+    case route of
+        Route.Inbox ->
+            True
+
+        Route.InboxMessage _ ->
+            True
+
+        _ ->
+            False
 
 
 {-| True once the bootstrap has answered 401: the person is signed in to
@@ -330,6 +355,9 @@ title route =
         Route.Inbox ->
             "Inbox — Cutout"
 
+        Route.InboxMessage _ ->
+            "Inbox — Cutout"
+
         Route.NotFound ->
             "Not found — Cutout"
 
@@ -388,10 +416,22 @@ header model =
 navLink : Route -> Route -> String -> Html Msg
 navLink current target label_ =
     a
-        [ classList [ ( "nav-link", True ), ( "is-active", current == target ) ]
+        [ classList [ ( "nav-link", True ), ( "is-active", routeIs current target ) ]
         , href (Route.toPath target)
         ]
         [ text label_ ]
+
+
+{-| The Inbox tab stays lit while a message is open.
+-}
+routeIs : Route -> Route -> Bool
+routeIs current target =
+    case ( current, target ) of
+        ( Route.InboxMessage _, Route.Inbox ) ->
+            True
+
+        _ ->
+            current == target
 
 
 content : Model -> Html Msg
@@ -401,12 +441,10 @@ content model =
         -- request rather than the operator bootstrap, so a reader whose
         -- Access policy doesn't cover `/api/bootstrap` still gets their mail.
         Route.Inbox ->
-            case model.inbox of
-                Just inbox ->
-                    Html.map InboxMsg (Inbox.view inbox)
+            inboxContent model
 
-                Nothing ->
-                    fullLoader
+        Route.InboxMessage _ ->
+            inboxContent model
 
         _ ->
             -- A reader is being redirected to the inbox; hold the loader so the
@@ -416,6 +454,16 @@ content model =
 
             else
                 contentForBoot model
+
+
+inboxContent : Model -> Html Msg
+inboxContent model =
+    case model.inbox of
+        Just inbox ->
+            Html.map InboxMsg (Inbox.view inbox)
+
+        Nothing ->
+            fullLoader
 
 
 contentForBoot : Model -> Html Msg
@@ -461,6 +509,9 @@ contentForBoot model =
                             fullLoader
 
                 Route.Inbox ->
+                    fullLoader
+
+                Route.InboxMessage _ ->
                     fullLoader
 
                 Route.NotFound ->

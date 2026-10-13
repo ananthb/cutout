@@ -33,7 +33,6 @@ module Api exposing
     , getEvents
     , getInbox
     , getInboxMessage
-    , getMessage
     , getPending
     , getPendingCount
     , getRuleMessages
@@ -83,8 +82,8 @@ type Action
 
 type Destination
     = Email { address : String, proxy : Bool }
-    | Telegram { chatId : String, linkAuth : String }
-    | Discord { channelId : String, linkAuth : String }
+    | Telegram { chatId : String }
+    | Discord { channelId : String }
 
 
 type alias Enabled =
@@ -490,11 +489,6 @@ getRuleMessages args =
     get path messagesDecoder
 
 
-getMessage : String -> (Data RenderedMessage -> msg) -> Cmd msg
-getMessage id =
-    get ("/api/messages/" ++ id) renderedDecoder
-
-
 {-| Stored emails the signed-in Access identity can read, across every rule
 whose reader set contains them. Cursor-paginated on `before`.
 -}
@@ -655,23 +649,14 @@ destinationDecoder =
                             (D.field "proxy" (D.oneOf [ D.bool, D.succeed False ]))
 
                     "telegram" ->
-                        D.map2 (\chatId auth -> Telegram { chatId = chatId, linkAuth = auth })
-                            (D.field "chat_id" D.string)
-                            (D.field "link_auth" linkAuthDecoder)
+                        D.map (\chatId -> Telegram { chatId = chatId }) (D.field "chat_id" D.string)
 
                     "discord" ->
-                        D.map2 (\channelId auth -> Discord { channelId = channelId, linkAuth = auth })
-                            (D.field "channel_id" D.string)
-                            (D.field "link_auth" linkAuthDecoder)
+                        D.map (\channelId -> Discord { channelId = channelId }) (D.field "channel_id" D.string)
 
                     other ->
                         D.fail ("unknown destination kind: " ++ other)
             )
-
-
-linkAuthDecoder : Decoder String
-linkAuthDecoder =
-    D.oneOf [ D.string, D.succeed "access" ]
 
 
 statsDecoder : Decoder Stats
@@ -839,18 +824,16 @@ encodeDestination destination =
                 , ( "proxy", E.bool proxy )
                 ]
 
-        Telegram { chatId, linkAuth } ->
+        Telegram { chatId } ->
             E.object
                 [ ( "kind", E.string "telegram" )
                 , ( "chat_id", E.string chatId )
-                , ( "link_auth", E.string linkAuth )
                 ]
 
-        Discord { channelId, linkAuth } ->
+        Discord { channelId } ->
             E.object
                 [ ( "kind", E.string "discord" )
                 , ( "channel_id", E.string channelId )
-                , ( "link_auth", E.string linkAuth )
                 ]
 
 

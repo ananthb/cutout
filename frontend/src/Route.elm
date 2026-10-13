@@ -15,6 +15,7 @@ type Route
     = Manage
     | Pending
     | Inbox
+    | InboxMessage String
     | NotFound
 
 
@@ -23,6 +24,7 @@ parser =
     oneOf
         [ Parser.map Pending (s "manage" </> s "pending")
         , Parser.map Manage (s "manage")
+        , Parser.map InboxMessage (s "inbox" </> Parser.string)
         , Parser.map Inbox (s "inbox")
         ]
 
@@ -43,6 +45,9 @@ toPath route =
 
         Inbox ->
             "/inbox"
+
+        InboxMessage id ->
+            "/inbox/" ++ id
 
         NotFound ->
             "/manage"
