@@ -1199,9 +1199,29 @@
   transition: background var(--dur), border-color var(--dur), color var(--dur);
 }
 
-.dest-chip-mod.is-toggle:hover {
+.dest-chip-mod.is-store.is-toggle:hover {
   background: color-mix(in oklab, var(--ok) 16%, transparent);
   color: var(--ok);
+}
+
+/* Proxy reads in the info colour, its own toggle on the email pill. */
+.dest-chip-mod.is-proxy {
+  color: var(--info);
+}
+
+.dest-chip-mod.is-proxy.is-on {
+  background: color-mix(in oklab, var(--info) 22%, transparent);
+}
+
+.dest-chip-mod.is-proxy.is-off {
+  background: transparent;
+  border: 1px dashed color-mix(in oklab, var(--fg-3) 45%, transparent);
+  color: var(--fg-3);
+}
+
+.dest-chip-mod.is-proxy.is-toggle:hover {
+  background: color-mix(in oklab, var(--info) 16%, transparent);
+  color: var(--info);
 }
 
 .dest-chip-remove {
@@ -1247,6 +1267,12 @@
 
 .dest-mod-toggle input {
   accent-color: var(--accent);
+}
+
+.dest-mod-toggles {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
 }
 
 .dest-auth {
