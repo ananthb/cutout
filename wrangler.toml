@@ -106,29 +106,39 @@ invocation_logs = true
 # ============================================================================
 # Per-deployment configuration
 # ============================================================================
-# Runtime vars and secrets are managed in the Cloudflare dashboard
-# (Workers → cutout → Settings → Variables and Secrets) so this file stays
-# portable for forks. Cloudflare Builds redeploys preserve them.
+# Everything below is managed in the Cloudflare dashboard (Workers → cutout →
+# Settings → Variables and Secrets), not in this file, so it stays portable
+# for forks. The split matters:
 #
-# Plain-text variables (Settings → Variables):
+# Secrets (Settings → Secrets) are encrypted and survive every deploy:
 #   CF_ACCESS_TEAM    Cloudflare Access team name (e.g. "myteam")
 #   CF_ACCESS_AUD     Application Audience (AUD) tag from Access app
-#   CF_ACCOUNT_ID     Cloudflare account ID (for Analytics Engine SQL API
-#                     and Browser Rendering REST calls). Empty disables both.
+#   CF_API_TOKEN      Cloudflare API token. "Account Analytics: Read" enables
+#                     dashboard stats; "Browser Rendering: Edit" enables the
+#                     in-chat screenshot for Telegram/Discord. Same token
+#                     covers both. Empty disables both.
+#   VIEWER_HMAC_KEY   Signs public token-mode viewer URLs; required only when
+#                     a chat destination uses link auth `token`.
+#
+# Plain-text values are NOT durable: `wrangler deploy` rewrites the Worker's
+# variables from this file, so a value set only as a dashboard Variable is
+# dropped on the next build. Pass anything here that must persist with --var
+# on the Builds deploy command (it overrides this file on every deploy) — or
+# store it as a Secret, which survives redeploys. Setting CF_ACCOUNT_ID as a
+# Secret is fine; the Worker reads secrets and variables the same way.
+#   CF_ACCOUNT_ID     Cloudflare account ID. Required for the Analytics Engine
+#                     SQL API (dashboard stats) and Browser Rendering (in-chat
+#                     screenshots); without it both features are off. The
+#                     stats panels stay hidden unless this AND CF_API_TOKEN
+#                     are set.
 #   PUBLIC_BASE_URL   Public origin used for inbox links in Telegram/Discord
 #                     posts (e.g. "https://cutout.example.com"). Empty
 #                     suppresses the link.
 #   OUTBOUND_EMAIL_BACKEND
 #                     "routing" (default, free, verified destinations only) or
 #                     "service" (paid Email Service, any recipient). Unset
-#                     means "routing". A dashboard-only value is dropped by
-#                     the next deploy, so keep an instance on "service" with
-#                     `wrangler deploy --var OUTBOUND_EMAIL_BACKEND:service`
-#                     (e.g. as the Builds deploy command) rather than setting
-#                     it in the dashboard.
+#                     means "routing".
 #
-# Secrets (Settings → Secrets):
-#   CF_API_TOKEN      Cloudflare API token. "Account Analytics: Read" enables
-#                     dashboard stats; "Browser Rendering: Edit" enables the
-#                     in-chat screenshot for Telegram/Discord. Same token
-#                     covers both. Empty disables both.
+# Example Builds deploy command that keeps the readable values durable:
+#   npm run deploy -- --var CF_ACCOUNT_ID:<account-id> \
+#                     --var PUBLIC_BASE_URL:https://cutout.example.com
