@@ -236,20 +236,34 @@ impl<'de> Deserialize<'de> for Action {
     }
 }
 
+/// Proxy is the default for email destinations; direct mode is opt-in.
+fn proxy_default() -> bool {
+    true
+}
+
 /// A single forward target. Multiple destinations of different kinds may be
 /// attached to one rule.
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum Destination {
-    /// Forward to an email address. With `proxy = false` (default) the message
-    /// is delivered via Cloudflare's `EmailMessage.forward()`, preserving the
-    /// original `From` so the recipient sees the underlying sender. With
-    /// `proxy = true` the forward is rewritten so the `From` and `Reply-To`
-    /// route through the reverse alias, hiding the recipient's address from
-    /// further direct contact.
+    /// Forward to an email address.
+    ///
+    /// Proxy mode (`proxy = true`, the default) re-originates the message
+    /// through the structured `send_email` API. Cloudflare requires the `From`
+    /// address to be on an onboarded sending domain, so the address becomes
+    /// the alias the message was sent to; the original sender is carried in
+    /// the display name and in `X-Original-From`, and `Reply-To` is the
+    /// reverse alias so replies route back through Cutout.
+    ///
+    /// Direct mode (`proxy = false`) is the explicit opt-in to native
+    /// `EmailMessage.forward()`, which preserves the original `From` and
+    /// `Reply-To`. Replies then go straight to the sender and reveal this
+    /// destination's address to them. The destination must be verified under
+    /// Email Routing > Destination Addresses; an unverified one falls back to
+    /// structured send, which replaces `From` with the alias.
     Email {
         address: String,
-        #[serde(default)]
+        #[serde(default = "proxy_default")]
         proxy: bool,
     },
     /// Forward to a Telegram chat via bot `sendMessage`.
@@ -294,7 +308,9 @@ impl Destination {
         }
         match kind.trim().to_lowercase().as_str() {
             "email" => {
-                // Optional `:proxy` suffix selects reply-to rewriting.
+                // Optional modifier: `:direct` opts out of proxy mode. An
+                // explicit `:proxy` is accepted for round-tripping with older
+                // lists, but proxy is already the default.
                 let (value, modifier) = match rest.rsplit_once(':') {
                     Some((v, m)) if !m.trim().is_empty() => (v.trim().to_string(), m.trim()),
                     _ => (rest.to_string(), ""),
@@ -303,9 +319,9 @@ impl Destination {
                     return Err("email address looks invalid (expected name@example.com)");
                 }
                 let proxy = match modifier.to_lowercase().as_str() {
-                    "" => false,
-                    "proxy" => true,
-                    _ => return Err("email modifier must be 'proxy'"),
+                    "" | "proxy" => true,
+                    "direct" | "noproxy" => false,
+                    _ => return Err("email modifier must be 'direct'"),
                 };
                 Ok(Some(Destination::Email {
                     address: value.to_lowercase(),
@@ -351,15 +367,16 @@ impl Destination {
 
     /// Format a list of destinations as newline-separated `kind:value` lines,
     /// suitable for round-tripping through [`Destination::parse_list`]. An
-    /// email destination appends `:proxy` when non-default.
+    /// email destination appends `:direct` when it opts out of the default
+    /// proxy mode.
     pub fn format_list(destinations: &[Destination]) -> String {
         destinations
             .iter()
             .map(|d| match d {
                 Destination::Email {
                     address,
-                    proxy: true,
-                } => format!("email:{address}:proxy"),
+                    proxy: false,
+                } => format!("email:{address}:direct"),
                 Destination::Email { address, .. } => format!("email:{address}"),
                 Destination::Telegram { chat_id } => format!("telegram:{chat_id}"),
                 Destination::Discord { channel_id } => format!("discord:{channel_id}"),
@@ -401,13 +418,15 @@ pub struct OutboundEmail {
 }
 
 /// Instruction to Cloudflare to forward the inbound message via the native
-/// `EmailMessage.forward()` call. Preserves original From/To/DKIM. The
-/// destination must be verified in the zone's Email Routing Destination
-/// Addresses list.
+/// `EmailMessage.forward()` call. Preserves original From/To/DKIM, and is
+/// therefore only used in direct mode. Cloudflare strips every non-`X-`
+/// header on `forward()`, so no `Reply-To` is overlaid here.
 pub struct ForwardInstruction {
     pub destination: String,
-    /// Reply-To to overlay so recipient replies route back through the proxy.
-    pub reply_to: String,
+    /// The alias the inbound message was addressed to. Used as the `From`
+    /// address if the native forward fails and has to be replayed through the
+    /// structured API, which requires a Cutout-domain sender.
+    pub alias: String,
     /// Original sender for archival headers.
     pub original_from: String,
 }
@@ -499,11 +518,12 @@ pub enum EmailResult {
 /// Bot forwards fan out to Telegram/Discord.
 #[derive(Default)]
 pub struct Dispatch {
-    /// At most one: assigned to the first non-proxy email destination,
-    /// ensuring high fidelity (PGP/attachments preserved). Subsequent or
-    /// proxy email destinations go through `send_emails` instead.
-    pub forward_email: Option<ForwardInstruction>,
-    /// Email destinations sent via structured `send_email`.
+    /// Direct-mode destinations. Each one is forwarded with native
+    /// `EmailMessage.forward()` so the original `From` survives; Cloudflare
+    /// applies ARC so the forward stays authenticated. Proxy destinations go
+    /// through `send_emails` instead.
+    pub forward_emails: Vec<ForwardInstruction>,
+    /// Proxy-mode email destinations sent via structured `send_email`.
     pub send_emails: Vec<OutboundEmail>,
     /// Telegram + Discord bot posts.
     pub bot_forwards: Vec<BotForward>,
@@ -511,7 +531,9 @@ pub struct Dispatch {
 
 impl Dispatch {
     pub fn is_empty(&self) -> bool {
-        self.forward_email.is_none() && self.send_emails.is_empty() && self.bot_forwards.is_empty()
+        self.forward_emails.is_empty()
+            && self.send_emails.is_empty()
+            && self.bot_forwards.is_empty()
     }
 }
 
@@ -520,7 +542,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn parse_email_destination() {
+    fn parse_email_destination_defaults_to_proxy() {
         let d = Destination::parse_line("email:Foo@Bar.com")
             .unwrap()
             .unwrap();
@@ -528,9 +550,23 @@ mod tests {
             d,
             Destination::Email {
                 address: "foo@bar.com".into(),
-                proxy: false,
+                proxy: true,
             }
         );
+    }
+
+    #[test]
+    fn parse_email_direct_modifier() {
+        for input in ["email:foo@bar.com:direct", "email:foo@bar.com:noproxy"] {
+            let d = Destination::parse_line(input).unwrap().unwrap();
+            assert_eq!(
+                d,
+                Destination::Email {
+                    address: "foo@bar.com".into(),
+                    proxy: false,
+                }
+            );
+        }
     }
 
     #[test]
@@ -711,7 +747,9 @@ mod tests {
     }
 
     #[test]
-    fn legacy_without_replace_reply_to_keeps_proxy_false() {
+    fn legacy_without_proxy_field_defaults_to_proxy() {
+        // Blobs written before the per-destination modifier existed have no
+        // `proxy` field. Proxy is now the default, so they load as proxy.
         let legacy = serde_json::json!({
             "type": "forward",
             "destinations": [
@@ -724,7 +762,7 @@ mod tests {
                 destinations[0],
                 Destination::Email {
                     address: "a@b.com".into(),
-                    proxy: false,
+                    proxy: true,
                 }
             ),
             _ => panic!("expected forward"),
@@ -732,7 +770,7 @@ mod tests {
     }
 
     #[test]
-    fn format_emits_proxy_modifier() {
+    fn format_emits_direct_modifier() {
         let dests = vec![
             Destination::Email {
                 address: "a@b.com".into(),
@@ -745,7 +783,7 @@ mod tests {
         ];
         assert_eq!(
             Destination::format_list(&dests),
-            "email:a@b.com:proxy\nemail:c@d.com"
+            "email:a@b.com\nemail:c@d.com:direct"
         );
         let parsed = Destination::parse_list(&Destination::format_list(&dests)).unwrap();
         assert_eq!(parsed, dests);

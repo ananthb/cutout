@@ -134,19 +134,38 @@ pub async fn email(
 
     match outcome.result {
         types::EmailResult::Dispatch(dispatch) => {
-            // Native EmailMessage.forward() — synchronously, only available here.
-            if let Some(instr) = &dispatch.forward_email {
+            // Native EmailMessage.forward() — synchronously, only available
+            // here. Direct-mode destinations use it so the original From and
+            // Reply-To survive.
+            for instr in &dispatch.forward_emails {
                 match try_native_forward(&message, instr).await {
                     Ok(()) => push_unique(&mut succeeded_channels, "email"),
                     Err(e) => {
-                        errors.push(format!("native forward to {}: {e}", instr.destination));
-                        // Convert to a structured send for retry; we do not
-                        // have an IncomingEmailMessage handle on the queue
-                        // consumer side.
+                        // Native forward only reaches verified Email Routing
+                        // destinations. Fall back to a structured send right
+                        // away so unverified destinations still get the mail
+                        // (with the alias as From) instead of waiting for the
+                        // retry queue.
+                        console_warn!(
+                            "native forward to {} failed ({e}); falling back to send_email. \
+                             The original From cannot be preserved through the structured API, \
+                             so this message will show the alias as From. Verify the destination \
+                             under Email Routing > Destination Addresses to keep From intact.",
+                            instr.destination
+                        );
                         let parsed = email::mime::parse_email(&raw_bytes);
                         let structured =
                             email::handler::structured_from_native(parsed.as_ref(), instr);
-                        failed_actions.push(types::PendingAction::SendEmail(structured));
+                        match email::send::send_outbound(&worker_env, &structured).await {
+                            Ok(()) => push_unique(&mut succeeded_channels, "email"),
+                            Err(e2) => {
+                                errors.push(format!(
+                                    "forward to {}: native: {e}; structured: {e2}",
+                                    instr.destination
+                                ));
+                                failed_actions.push(types::PendingAction::SendEmail(structured));
+                            }
+                        }
                     }
                 }
             }
@@ -238,10 +257,11 @@ async fn try_native_forward(
     message: &IncomingEmailMessage,
     instr: &types::ForwardInstruction,
 ) -> std::result::Result<(), String> {
+    // `forward()` only accepts `X-` headers: Cloudflare strips everything
+    // else, including a Reply-To overlay. Direct mode is therefore genuinely
+    // transparent — the original From and Reply-To reach the recipient
+    // untouched.
     let headers = web_sys::Headers::new().map_err(|e| format!("Headers::new: {e:?}"))?;
-    headers
-        .set("Reply-To", &instr.reply_to)
-        .map_err(|e| format!("set Reply-To: {e:?}"))?;
     headers
         .set("X-Cutout-Forwarded", "1")
         .map_err(|e| format!("set X-Cutout-Forwarded: {e:?}"))?;

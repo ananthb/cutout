@@ -107,7 +107,7 @@ emptyEditor =
     , storeForward = False
     , destKind = "email"
     , destValue = ""
-    , destProxy = False
+    , destProxy = True
     , destError = ""
     , readers = []
     , readerValue = ""
@@ -2093,7 +2093,7 @@ modifierToggles editor =
                     }
                 , Ui.toggle
                     { id = "dest-proxy"
-                    , label = "Proxy mode (rewrite Reply-To through the worker)"
+                    , label = "Proxy mode (default; rewrite Reply-To through the worker)"
                     , checked = editor.destProxy
                     , onCheck = EditorDestProxy
                     }
