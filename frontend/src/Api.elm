@@ -646,7 +646,7 @@ destinationDecoder =
                     "email" ->
                         D.map2 (\address proxy -> Email { address = address, proxy = proxy })
                             (D.field "address" D.string)
-                            (D.field "proxy" (D.oneOf [ D.bool, D.succeed False ]))
+                            (D.field "proxy" (D.oneOf [ D.bool, D.succeed True ]))
 
                     "telegram" ->
                         D.map (\chatId -> Telegram { chatId = chatId }) (D.field "chat_id" D.string)

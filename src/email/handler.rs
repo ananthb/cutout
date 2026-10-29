@@ -201,31 +201,35 @@ async fn execute_action(
                 None
             };
 
-            // On the paid Email Service backend every email goes through
-            // `send_email`, so it isn't limited to verified destinations.
-            let use_native = send::OutboundBackend::from_env(env).uses_native_forward();
-
+            // Proxy destinations are re-originated through `send_email`;
+            // direct destinations keep Cloudflare's native forward so the
+            // original From survives. The choice is per destination.
             let mut dispatch = Dispatch::default();
-            let mut email_count = 0usize;
 
             for dest in destinations {
                 match dest {
                     Destination::Email { address, proxy } => {
-                        if use_native && !proxy && email_count == 0 {
-                            dispatch.forward_email = Some(ForwardInstruction {
-                                destination: address.clone(),
-                                reply_to: reverse_addr.clone(),
-                                original_from: from.to_string(),
-                            });
-                        } else {
+                        if *proxy {
+                            // Cloudflare's structured send requires `From` to
+                            // be on an onboarded domain. Keep the original
+                            // sender visible in the display name, and route
+                            // replies back through the reverse alias.
                             dispatch.send_emails.push(structured_forward_email(
                                 parsed.as_ref(),
-                                &reverse_addr,
+                                to,
                                 address,
                                 from,
+                                Some(&reverse_addr),
                             ));
+                        } else {
+                            // Native forward preserves the original From and
+                            // Reply-To. Only X- headers can be added.
+                            dispatch.forward_emails.push(ForwardInstruction {
+                                destination: address.clone(),
+                                alias: to.to_string(),
+                                original_from: from.to_string(),
+                            });
                         }
-                        email_count += 1;
                     }
                     Destination::Telegram { chat_id } => {
                         dispatch.bot_forwards.push(BotForward {
@@ -274,7 +278,7 @@ async fn execute_action(
 
             console_log!(
                 "Forwarding from {from} via {to} (rule: {rule_label}): native={} send_emails={} bots={}",
-                dispatch.forward_email.is_some() as u8,
+                dispatch.forward_emails.len(),
                 dispatch.send_emails.len(),
                 dispatch.bot_forwards.len()
             );
@@ -308,9 +312,10 @@ async fn execute_action(
 
 fn structured_forward_email(
     parsed: Option<&mime::ParsedEmail>,
-    reverse_addr: &str,
+    from_addr: &str,
     destination: &str,
     original_from: &str,
+    reply_to: Option<&str>,
 ) -> OutboundEmail {
     let mut headers: Vec<(String, String)> = vec![
         ("X-Cutout-Forwarded".to_string(), "1".to_string()),
@@ -329,18 +334,23 @@ fn structured_forward_email(
     let text = parsed.and_then(|p| p.text_body.clone());
     let html = parsed.and_then(|p| p.html_body.clone());
 
-    // Build a conservative RFC 5322 `From`: a quoted display name plus an
-    // angle-addr. Earlier code used `Name (addr) <reply+...>`, which is a
-    // valid display-name + comment form per the spec, but Cloudflare's
-    // `send_email` parser rejects it with an opaque 500. The original
-    // sender address is preserved in the `X-Original-From` header, so we
-    // don't need to encode it in the display.
-    let display = parsed
-        .and_then(|p| p.from_name.clone().or_else(|| p.from_address.clone()))
-        .filter(|s| !s.is_empty());
+    // Cloudflare's structured send rejects a `From` outside an onboarded
+    // sending domain, so `from_addr` is always one of ours. Keep the original
+    // sender visible in a quoted display name: RFC 5322 permits any qtext
+    // (including `<`, `>` and `@`) inside a quoted-string, and the full
+    // address is what the recipient needs in order to recognise the sender.
+    // `X-Original-From` remains the machine-readable copy.
+    let display = parsed.and_then(|p| match (&p.from_name, &p.from_address) {
+        (Some(name), Some(addr)) if !name.is_empty() && name != addr => {
+            Some(format!("{name} <{addr}>"))
+        }
+        (_, Some(addr)) if !addr.is_empty() => Some(addr.clone()),
+        (Some(name), _) if !name.is_empty() => Some(name.clone()),
+        _ => None,
+    });
     let from = match display {
-        Some(name) => format!("\"{}\" <{}>", quote_display(&name), reverse_addr),
-        None => reverse_addr.to_string(),
+        Some(name) => format!("\"{}\" <{}>", quote_display(&name), from_addr),
+        None => from_addr.to_string(),
     };
 
     OutboundEmail {
@@ -349,7 +359,7 @@ fn structured_forward_email(
         subject,
         text,
         html,
-        reply_to: Some(reverse_addr.to_string()),
+        reply_to: reply_to.map(str::to_string),
         headers,
     }
 }
@@ -427,15 +437,20 @@ fn quote_display(name: &str) -> String {
 /// `EmailMessage.forward()` because there is no `IncomingEmailMessage`
 /// handle on the consumer side, so the only durable retry is via
 /// structured `send_email`.
+///
+/// The fallback cannot preserve the original `From` (Cloudflare requires a
+/// sender on an onboarded domain), so it uses the alias the message was
+/// addressed to and leaves `Reply-To` alone; direct mode stays direct.
 pub fn structured_from_native(
     parsed: Option<&mime::ParsedEmail>,
     instr: &ForwardInstruction,
 ) -> OutboundEmail {
     structured_forward_email(
         parsed,
-        &instr.reply_to,
+        &instr.alias,
         &instr.destination,
         &instr.original_from,
+        None,
     )
 }
 
@@ -489,12 +504,20 @@ mod tests {
         let destination = "me@home.com";
         let original_from = "alice@example.org";
 
-        let outbound =
-            structured_forward_email(Some(&parsed), reverse_addr, destination, original_from);
+        let outbound = structured_forward_email(
+            Some(&parsed),
+            "newsletter@proxy.com",
+            destination,
+            original_from,
+            Some(reverse_addr),
+        );
 
-        // Display name only; the original address is preserved in
-        // X-Original-From (CF's send_email rejects parens-as-comment From).
-        assert_eq!(outbound.from, "\"Alice\" <reply+abc@proxy.com>");
+        // The From address must be ours; the original identity (name and
+        // address) lives in the quoted display name.
+        assert_eq!(
+            outbound.from,
+            "\"Alice <alice@example.org>\" <newsletter@proxy.com>"
+        );
         assert_eq!(outbound.reply_to, Some(reverse_addr.to_string()));
 
         // Should include the original sender in headers
@@ -520,10 +543,12 @@ mod tests {
             "reply@proxy.com",
             "me@home.com",
             "alice@example.org",
+            None,
         );
 
-        // Should fall back to original address as quoted display name
+        // Should fall back to the original address as the display name.
         assert_eq!(outbound.from, "\"alice@example.org\" <reply@proxy.com>");
+        assert_eq!(outbound.reply_to, None);
     }
 
     #[test]
@@ -542,6 +567,7 @@ mod tests {
             "reply@proxy.com",
             "me@home.com",
             "alice@example.org",
+            None,
         );
 
         // Should fall back to just the address

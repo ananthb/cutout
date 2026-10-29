@@ -51,22 +51,22 @@
 </ol>
 
 <h2>Forwarding modes</h2>
-<p>Each rule with email destinations picks one of two modes. Both inject an <code>X-Original-From</code> header carrying the real sender's address, for archival.</p>
+<p>Each email destination picks one of two modes. Both inject an <code>X-Original-From</code> header carrying the real sender's address, for archival.</p>
 <div class="card-grid">
   <div class="card">
-    <h4>Native (default)</h4>
-    <p>Uses <code>EmailMessage.forward()</code>. Original bytes pass through untouched (PGP, attachments, formatting). <code>Reply-To</code> is overlaid but may be ignored by clients if the message already has one.</p>
+    <h4>Proxy (default)</h4>
+    <p>Uses Email Service structured send. Cloudflare requires <code>From</code> to be on your onboarded sending domain, so the address is your alias while the original sender (name and address) is carried in the display name. <code>Reply-To</code> is the reverse alias, so replies route back through Cutout. Attachments and signed MIME are dropped.</p>
   </div>
   <div class="card">
-    <h4>Proxy via rewrite</h4>
-    <p>Uses Email Service structured send. Reconstructs the message so <code>Reply-To</code> always works, but strips PGP / signed MIME and attachments.</p>
+    <h4>Direct (opt-in)</h4>
+    <p>Uses <code>EmailMessage.forward()</code>. Original bytes pass through untouched (PGP, attachments, formatting) and the original <code>From</code>/<code>Reply-To</code> survive; Cloudflare strips other added headers. Replies go straight to the sender and reveal your address. <code>From</code> is preserved only for destinations verified under <strong>Email Routing &rsaquo; Destination Addresses</strong>; an unverified one falls back to structured send, which replaces <code>From</code> with your alias.</p>
   </div>
 </div>
-<p>Which backend sends them is set by <code>OUTBOUND_EMAIL_BACKEND</code>. <code>routing</code> (default) is free but only delivers to addresses verified under <strong>Email Routing &rsaquo; Destination Addresses</strong>. <code>service</code> is paid <a href="https://developers.cloudflare.com/email-service/">Email Service</a> and reaches any address.</p>
+<p>There is no backend variable to set: the choice is per destination.</p>
 <p>Telegram destinations use <code>sendMessage</code>; Discord destinations use <code>createMessage</code> with a Reply button. Bot reply context is keyed by <code>tg:&lt;chat_id&gt;:&lt;message_id&gt;</code> or <code>dc:&lt;channel_id&gt;:&lt;message_id&gt;</code> in D1.</p>
 
 <h2>Replies</h2>
-<p>You reply from your real mailbox, or by replying to a bot message. Either way, the worker resolves the original sender from D1 and re-sends via <code>send_email</code>, with the alias as <code>From</code> and the original sender as <code>To</code>.</p>
+<p>For proxied destinations, you reply from your real mailbox, or by replying to a bot message. Either way, the worker resolves the original sender from D1 and re-sends via <code>send_email</code>, with the alias as <code>From</code> and the original sender as <code>To</code>.</p>
 <ul>
   <li><strong>Email replies</strong> are addressed to <code>reply+&lt;uuid&gt;@yourdomain.com</code>; Email Routing fires the worker again.</li>
   <li><strong>Bot replies</strong> arrive as a Telegram webhook or Discord interaction event, both carrying the message ID used to look up the alias.</li>
@@ -74,8 +74,8 @@
 
 <h2>Components</h2>
 <ul>
-  <li><strong>Cloudflare Email Routing</strong>: inbound catch-all to worker, Native-mode <code>forward()</code>, and destination-address verification (the free <code>routing</code> backend).</li>
-  <li><strong>Cloudflare Email Service</strong>: outbound replies, Proxy-mode forwarding, and fan-out beyond the first destination; also the paid <code>service</code> backend, which reaches any recipient.</li>
+  <li><strong>Cloudflare Email Routing</strong>: inbound catch-all to worker, direct-mode <code>forward()</code>, and destination-address verification.</li>
+  <li><strong>Cloudflare Email Service</strong>: proxy-mode forwarding and outbound replies.</li>
   <li><strong>Cloudflare D1</strong>: durable storage for reverse-alias mappings and bot reply contexts. Entries don't expire, so old threads stay replyable.</li>
   <li><strong>Cloudflare KV</strong>: routing rule list, managed via <code>/manage</code>.</li>
   <li><strong>Cloudflare Access</strong>: guards <code>/manage</code> and <code>/inbox</code>. <code>/health</code>, <code>/telegram/webhook</code>, and <code>/discord/interactions</code> are public; the bot endpoints authenticate via secret token and Ed25519 signature.</li>

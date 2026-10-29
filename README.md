@@ -15,31 +15,17 @@ Transparent email alias proxy: similar to [SimpleLogin](https://simplelogin.io) 
 2. Someone emails `anything@yourdomain.com`
 3. Cutout worker is triggered, matches the recipient against your rules, and forwards the email to your real address
 4. For email destinations:
-    - **Native mode** uses CF's native `EmailMessage.forward()`; original bytes (PGP, attachments) pass through untouched.
-    - **Proxy mode** reconstructs the email via `send_email` to ensure `Reply-To` works reliably when replying via the same domain (strips signatures/attachments).
+    - **Proxy mode (default)** re-originates the message via `send_email` so `Reply-To` routes replies back through Cutout. Cloudflare requires the `From` address to be on an onboarded domain, so the address becomes your alias; the original sender is kept in the display name and `X-Original-From`.
+    - **Direct mode** (opt-in, per destination) uses native `EmailMessage.forward()`; the original `From` and `Reply-To` pass through untouched (PGP, attachments, signed MIME preserved), but replies go straight to the sender and reveal your address. The destination must be verified under **Email Routing → Destination Addresses**: an unverified one falls back to `send_email`, where `From` becomes your alias.
     Both modes inject an `X-Original-From` header for permanent archival in your inbox.
-    Which backend sends them is set by `OUTBOUND_EMAIL_BACKEND`: `routing` (default) is free but only delivers to destinations verified in the dashboard; `service` is paid and delivers to anyone. See [Sending](#sending).
 5. For Telegram/Discord destinations: the bot posts the content to the chat and stores a reply context in KV. Replies in the chat (Telegram's native reply, Discord's "Reply" button → modal) route back to the original sender via email
 6. Destinations depend on your secrets: Telegram and Discord only appear in the UI when their bot tokens are configured
 
 ## Sending
 
-Cloudflare offers two outbound backends and Cutout picks one with the `OUTBOUND_EMAIL_BACKEND` variable:
+Proxy mode uses the shared `EMAIL` binding: on the free plan it can deliver to addresses verified under **Email Routing → Destination Addresses**; to reach anyone, onboard the sending domain to **Email Service**. Direct mode uses Email Routing's native `forward()`, which is also free and also limited to verified destinations. In direct mode Cutout tries the native forward first and falls back to `send_email` if the destination is unverified, so the mail still arrives (with the alias as `From`) — verify the destination if you want the original `From` preserved.
 
-| Value | Backend | Cost | Recipients |
-|---|---|---|---|
-| `routing` (default) | Email Routing | free | only addresses verified under Email Routing → Destination Addresses |
-| `service` | Email Service | paid (Workers Paid plan, per message) | anyone |
-
-`routing` is the default and needs no setup beyond verifying destinations. `service` needs the sending domain onboarded to Email Service; it sends every email destination through `send_email` (so attachments and signed MIME are dropped), while `routing` sends the first non-proxy email destination with native `EmailMessage.forward()` and the rest through `send_email`.
-
-The variable isn't in `wrangler.toml`, so the code default is `routing` and a fork is free out of the box. Setting it in the dashboard alone won't stick: `wrangler deploy` rewrites the Worker's variables from `wrangler.toml`, so the next build drops it. To keep your own instance on `service` without changing the shared file, set the Worker's **Deploy command** under **Settings → Builds** to:
-
-```
-npm run deploy -- --var OUTBOUND_EMAIL_BACKEND:service
-```
-
-`--var` sets the variable on every deploy (it overrides `wrangler.toml`), so it survives redeploys and only applies to that Worker.
+There is no backend variable to set: the `EMAIL` binding handles both paths, and the choice is per destination in the rule.
 
 ## Getting Started
 
@@ -51,14 +37,14 @@ The **[Deploy guide](https://ananthb.github.io/cutout/deploy.html)** walks throu
    - **Build command:** leave default (CF Builds runs `npm install` from `package.json`)
    - **Deploy command:** `npm run deploy` (defined in `package.json` — installs `worker-build`, applies pending D1 migrations, then runs `wrangler deploy`)
 2. Bind a D1 database (`DB`), KV namespace (`KV`), R2 bucket (`EMAILS`), Queues (`RETRIES` producer + `cutout-retries`/`cutout-retries-dlq` consumers), Email send-binding (`EMAIL`), and Analytics Engine dataset (`EVENTS`) under **Settings → Bindings**. Names must match the `binding` values in [`wrangler.toml`](wrangler.toml). Replace the `database_id` there with the one `wrangler d1 create` prints.
-3. Set runtime secrets under **Settings → Variables and Secrets** — see the list at the bottom of [`wrangler.toml`](wrangler.toml). `CF_ACCESS_TEAM` and `CF_ACCESS_AUD` are required. Add `CF_API_TOKEN` (with *Account Analytics: Read*) and `CF_ACCOUNT_ID` to turn on the dashboard stats panels (the two are a pair — with either missing the panels stay hidden), and `PUBLIC_BASE_URL` for inbox links posted to Telegram/Discord. Use the **Secret** type for anything that must persist: a plain-text **Variable** set only in the dashboard is dropped on the next `wrangler deploy`. `OUTBOUND_EMAIL_BACKEND` is optional and passed on the Deploy command (see [Sending](#sending)).
+3. Set runtime secrets under **Settings → Variables and Secrets** — see the list at the bottom of [`wrangler.toml`](wrangler.toml). `CF_ACCESS_TEAM` and `CF_ACCESS_AUD` are required. Add `CF_API_TOKEN` (with *Account Analytics: Read*) and `CF_ACCOUNT_ID` to turn on the dashboard stats panels (the two are a pair — with either missing the panels stay hidden), and `PUBLIC_BASE_URL` for inbox links posted to Telegram/Discord. Use the **Secret** type for anything that must persist: a plain-text **Variable** set only in the dashboard is dropped on the next `wrangler deploy`.
 4. Push to `main`. Cloudflare Builds runs the build command (which applies any pending D1 migrations), then `wrangler deploy` — which picks up `[build] command = "worker-build --release"` from `wrangler.toml` to compile the Rust crate to WASM.
 
 ## Features
 
 - **Rule-based routing**: ordered glob patterns on local and domain parts, evaluated top-to-bottom, first match wins; a `*@*` Drop catch-all is always pinned at the end
-- **Dual-mode email forwarding**: choose between high-fidelity **Native mode** (preserves PGP/attachments) and reliable **Proxy mode** (ensures `Reply-To` routing works via your custom domain)
-- **Free or paid sending**: default to free Email Routing (verified destinations only), or switch to paid Email Service to send to any address
+- **Dual-mode email forwarding**: **Proxy mode** (default) routes replies through your domain, while opt-in **Direct mode** preserves the original `From`/`Reply-To` and attachments
+- **Free or paid sending**: verified destinations work on the free Email Routing plan; onboarding a sending domain to Email Service lifts the recipient limit
 - **Permanent Archival**: an `X-Original-From` header is injected into all forwarded mail so you never lose the sender's identity even if KV mappings expire
 - **Multi-destination forwards**: one rule can forward to any mix of email / Telegram / Discord targets
 - **Bot-relay replies**: reply directly from Telegram or Discord chat; Cutout routes it back to the original sender via email
@@ -73,8 +59,8 @@ The **[Deploy guide](https://ananthb.github.io/cutout/deploy.html)** walks throu
 
 - [Cloudflare Workers](https://workers.cloudflare.com/): Rust compiled to WebAssembly
 - [Elm](https://elm-lang.org/): the management SPA, compiled to `public/app.js`
-- [Cloudflare Email Routing](https://developers.cloudflare.com/email-routing/): inbound MX + catch-all -> worker, plus `EmailMessage.forward()` for the Native Forward path
-- [Cloudflare Email Service](https://developers.cloudflare.com/email-service/): outbound `send_email`; free for verified destinations, or paid to send to anyone (`OUTBOUND_EMAIL_BACKEND=service`)
+- [Cloudflare Email Routing](https://developers.cloudflare.com/email-routing/): inbound MX + catch-all -> worker, plus `EmailMessage.forward()` for direct-mode forwarding
+- [Cloudflare Email Service](https://developers.cloudflare.com/email-service/): outbound `send_email` for proxy mode and replies
 - [Cloudflare KV](https://developers.cloudflare.com/kv/): rule list, reverse-alias mappings, and per-message bot reply contexts
 - [Cloudflare Access](https://developers.cloudflare.com/cloudflare-one/applications/): protects `/manage`, `/inbox` and `/api`
 - [botrelay-rs](https://github.com/ananthb/botrelay-rs): shared crate providing the Telegram + Discord bot clients and reply-context primitives

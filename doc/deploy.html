@@ -67,8 +67,7 @@
   <li><strong>Secrets (optional):</strong> <code>CF_API_TOKEN</code> &mdash; with <em>Account Analytics: Read</em> for the stats panels and/or <em>Browser Rendering: Edit</em> for in-chat screenshots. Add <code>CF_ACCOUNT_ID</code> (your Cloudflare account ID) alongside it: the stats panels and the screenshots each need <em>both</em>, and stay off if either is missing. <code>PUBLIC_BASE_URL</code> (origin used in inbox links posted to Telegram/Discord; empty suppresses the link) and <code>VIEWER_HMAC_KEY</code> (signs public token-mode viewer URLs) are optional too.</li>
 </ul>
 <p>Use the <strong>Secret</strong> type for all of these. A plain-text <strong>Variable</strong> set only in the dashboard is not durable: <code>wrangler deploy</code> rewrites the Worker's variables from <code>wrangler.toml</code>, so the next build drops it.</p>
-<p><strong>Outbound email.</strong> <code>OUTBOUND_EMAIL_BACKEND</code> is optional and defaults to <code>routing</code>: free <a href="https://developers.cloudflare.com/email-routing/">Email Routing</a>, which only delivers to addresses you verify under <strong>Email &rsaquo; Email Routing &rsaquo; Destination Addresses</strong>. Set it to <code>service</code> to send through paid <a href="https://developers.cloudflare.com/email-service/">Email Service</a> instead, which reaches any address; onboard your sending domain to Email Service first (Workers Paid plan, billed per message).</p>
-<p>Do not set it only in the dashboard: <code>wrangler deploy</code> rewrites the Worker's variables from <code>wrangler.toml</code>, so the next build drops it. To keep an instance on <code>service</code> without editing the shared file, set the Worker's <strong>Deploy command</strong> under <strong>Settings &rsaquo; Builds</strong> to <code>npm run deploy -- --var OUTBOUND_EMAIL_BACKEND:service</code>. The <code>--var</code> flag sets it on every deploy and overrides <code>wrangler.toml</code>.</p>
+<p><strong>Outbound email.</strong> The <code>EMAIL</code> binding handles both send paths, and there is no backend variable to set. <strong>Proxy mode</strong> is the default for email destinations and uses <code>send_email</code>: it can reach addresses you verify under <strong>Email &rsaquo; Email Routing &rsaquo; Destination Addresses</strong>, and onboarding your sending domain to <a href="https://developers.cloudflare.com/email-service/">Email Service</a> (step 7) lifts that restriction. Cloudflare requires the <code>From</code> address to be on a domain you control, which is why proxied mail shows your alias with the original sender in the display name. <strong>Direct mode</strong> is the per-destination opt-in that uses free <a href="https://developers.cloudflare.com/email-routing/">Email Routing</a> <code>forward()</code>; it preserves the original <code>From</code>/<code>Reply-To</code> but only delivers to verified addresses. Verify each direct destination: an unverified one falls back to <code>send_email</code>, which replaces <code>From</code> with your alias.</p>
 <p>The full reference is at the bottom of <a href="https://github.com/ananthb/cutout/blob/main/wrangler.toml">wrangler.toml</a>.</p>
 
 <h2><span class="step-num">04</span> Push to <code>main</code></h2>
@@ -82,15 +81,15 @@
 </ol>
 
 <h2><span class="step-num">06</span> Verify destination addresses</h2>
-<p>On the default <code>routing</code> backend, Cloudflare delivers only to addresses you have verified, so do this for each email destination (your real Gmail, a teammate, and so on).</p>
+<p>Without Email Service onboarded, Cloudflare delivers only to addresses you have verified, so do this for each email destination (your real Gmail, a teammate, and so on). In Direct mode this also decides whether the original <code>From</code> survives: an unverified destination falls back to <code>send_email</code> and shows your alias instead.</p>
 <ol>
   <li>Dashboard &rsaquo; <strong>Email &rsaquo; Email Routing &rsaquo; Destination addresses</strong>.</li>
   <li>Click <strong>Add destination address</strong> and enter the address.</li>
   <li>Click the confirmation link sent to that address.</li>
 </ol>
 
-<h2><span class="step-num">07</span> Optional: send to anyone with Email Service</h2>
-<p>Skip this unless you set <code>OUTBOUND_EMAIL_BACKEND=service</code>. Email Service is what lets Cutout reach recipients you have not verified; onboard each sending domain first.</p>
+<h2><span class="step-num">07</span> Onboard a sending domain for Email Service</h2>
+<p>Skip this if every destination is verified under Email Routing. Onboarding a domain to Email Service lets Proxy mode reach any recipient.</p>
 <ol>
   <li>Dashboard &rsaquo; <strong>Email &rsaquo; Email Sending &rsaquo; Onboard Domain</strong>.</li>
   <li>Accept the DNS records (MX / SPF / DKIM / DMARC) on the <code>cf-bounce.&lt;yourdomain&gt;</code> subdomain.</li>
@@ -126,7 +125,7 @@
 <p>Telegram replies (Telegram's native reply) and Discord replies (the Reply button on each forwarded message) route back through Cutout to the original email sender, so the chat client becomes a fully functional mailbox for that thread.</p>
 
 <h2><span class="step-num">10</span> Add routing rules</h2>
-<p>Visit <code>https://&lt;your-cutout-host&gt;/manage</code>. Add Forward rules using glob patterns on the local part and domain. For email destinations, the <strong>Proxy</strong> toggle ensures <code>Reply-To</code> works when replying via your custom domain, at the cost of attachments (see <a href="how-it-works.html">How it works</a>). The <strong>Store</strong> toggle keeps a copy, which lands in <code>/inbox</code> for the rule's readers.</p>
+<p>Visit <code>https://&lt;your-cutout-host&gt;/manage</code>. Add Forward rules using glob patterns on the local part and domain. For email destinations, <strong>Proxy</strong> is on by default: replies route back through your custom domain, but Cloudflare sends from your alias (the original sender stays in the display name) and attachments are dropped. Turn it off for <strong>Direct mode</strong>, which preserves the original <code>From</code>/<code>Reply-To</code> and the raw message, at the cost of revealing your address to the sender when you reply (see <a href="how-it-works.html">How it works</a>). The <strong>Store</strong> toggle keeps a copy, which lands in <code>/inbox</code> for the rule's readers.</p>
 
 <h2>Updating</h2>
 <p>Pull from upstream into your fork's <code>main</code> branch (or merge a PR): Cloudflare Builds re-runs on every push to <code>main</code>.</p>

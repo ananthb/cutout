@@ -34,22 +34,25 @@ database_id = "2d32c0f5-f9c1-4b47-a275-c5a896d272b5"
 binding = "KV"
 
 # ============================================================================
-# Outbound email. Cloudflare has two ways to send, chosen at runtime by the
-# `OUTBOUND_EMAIL_BACKEND` variable (see the variables list at the bottom):
+# Outbound email. The EMAIL binding is used for both send paths:
 #
-#   routing (default)  Cloudflare Email Routing. Free. Delivers only to
-#                      destination addresses verified in the dashboard
-#                      (Email > Email Routing > Destination Addresses). The
-#                      first non-proxy email destination uses native
-#                      `EmailMessage.forward()`, which preserves the original
-#                      message; the rest go through `send_email`.
+#   proxy (default)    Re-originates the message via `send_email`. Cloudflare
+#                      Email Service must be onboarded for the sending
+#                      domain, and it requires `From` to be on that domain —
+#                      so the address becomes the alias, with the original
+#                      sender in the display name and X-Original-From.
+#                      Reply-To routes replies back through Cutout.
 #
-#   service            Cloudflare Email Service "Email Sending". Paid. Any
-#                      recipient. Every email destination goes through
-#                      `send_email`. The sending domain must be onboarded to
-#                      Email Service (Workers Paid plan; billed per message).
+#   direct (opt-in)    Uses Email Routing's native `EmailMessage.forward()`,
+#                      preserving the original From/Reply-To and the raw
+#                      message. Free, but only delivers to destination
+#                      addresses verified in the dashboard (Email > Email
+#                      Routing > Destination Addresses). Falls back to
+#                      `send_email` when the destination is unverified; that
+#                      fallback uses the alias as From, so verify the
+#                      destination if From must stay intact.
 #
-# The binding is the same either way; only the send path changes.
+# The binding is the same either way; the choice is per destination.
 # ============================================================================
 [[send_email]]
 name = "EMAIL"
@@ -134,10 +137,6 @@ invocation_logs = true
 #   PUBLIC_BASE_URL   Public origin used for inbox links in Telegram/Discord
 #                     posts (e.g. "https://cutout.example.com"). Empty
 #                     suppresses the link.
-#   OUTBOUND_EMAIL_BACKEND
-#                     "routing" (default, free, verified destinations only) or
-#                     "service" (paid Email Service, any recipient). Unset
-#                     means "routing".
 #
 # Example Builds deploy command that keeps the readable values durable:
 #   npm run deploy -- --var CF_ACCOUNT_ID:<account-id> \
