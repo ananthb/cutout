@@ -7,13 +7,12 @@ queue; discard cuts it loose and deletes its stored body.
 
 import Api
 import Browser.Events
-import Html exposing (Html, a, div, h1, p, section, span, table, tbody, td, text, th, thead, tr)
-import Html.Attributes as A exposing (class, classList, href, title)
+import Html exposing (Html, a, button, div, h1, p, section, span, table, tbody, td, text, th, thead, tr)
+import Html.Attributes exposing (class, classList, href, title, type_)
 import Html.Events exposing (onClick)
 import Icons
 import Json.Decode as D
 import RemoteData exposing (RemoteData(..))
-import Route
 import Time
 import Ui exposing (ButtonVariant(..))
 
@@ -23,6 +22,9 @@ type alias Model =
     , notice : Maybe ( Ui.Banner, String )
     , busyId : Maybe String
     , allBusy : Bool
+    , refreshing : Bool
+    , filter : String
+    , confirmingDiscard : Maybe Api.PendingRow
     , confirmingDiscardAll : Bool
     }
 
@@ -33,6 +35,9 @@ init =
       , notice = Nothing
       , busyId = Nothing
       , allBusy = False
+      , refreshing = False
+      , filter = "all"
+      , confirmingDiscard = Nothing
       , confirmingDiscardAll = False
       }
     , Api.getPending GotRows
@@ -43,34 +48,79 @@ subscriptions : Model -> Sub Msg
 subscriptions model =
     Sub.batch
         [ Time.every 15000 (\_ -> Poll)
-        , if model.confirmingDiscardAll then
-            Browser.Events.onKeyDown
-                (D.field "key" D.string
-                    |> D.andThen
-                        (\key ->
-                            if key == "Escape" then
-                                D.succeed CancelDiscardAll
-
-                            else
-                                D.fail "ignored"
-                        )
-                )
-
-          else
-            Sub.none
+        , Browser.Events.onKeyDown (keyDecoder model)
         ]
+
+
+keyDecoder : Model -> D.Decoder Msg
+keyDecoder model =
+    D.map5
+        (\key tag ctrl meta alt ->
+            if ctrl || meta || alt || isInputTag tag then
+                Nothing
+
+            else
+                case key of
+                    "Escape" ->
+                        if model.confirmingDiscard /= Nothing then
+                            Just CancelDiscard
+
+                        else if model.confirmingDiscardAll then
+                            Just CancelDiscardAll
+
+                        else
+                            Nothing
+
+                    "r" ->
+                        if model.confirmingDiscard == Nothing && not model.confirmingDiscardAll then
+                            Just Refresh
+
+                        else
+                            Nothing
+
+                    _ ->
+                        Nothing
+        )
+        (D.field "key" D.string)
+        (D.oneOf [ D.at [ "target", "tagName" ] D.string, D.succeed "" ])
+        (D.oneOf [ D.field "ctrlKey" D.bool, D.succeed False ])
+        (D.oneOf [ D.field "metaKey" D.bool, D.succeed False ])
+        (D.oneOf [ D.field "altKey" D.bool, D.succeed False ])
+        |> D.andThen
+            (\maybeMsg ->
+                case maybeMsg of
+                    Just msg ->
+                        D.succeed msg
+
+                    Nothing ->
+                        D.fail "ignored"
+            )
+
+
+isInputTag : String -> Bool
+isInputTag tag =
+    let
+        upper =
+            String.toUpper tag
+    in
+    upper == "INPUT" || upper == "TEXTAREA" || upper == "SELECT"
 
 
 type Msg
     = Poll
+    | Refresh
     | GotRows (Api.Data (List Api.PendingRow))
+    | SetFilter String
     | Retry String
-    | Discard String
+    | AskDiscard Api.PendingRow
+    | CancelDiscard
+    | ConfirmDiscard
     | RetryAll
     | AskDiscardAll
     | CancelDiscardAll
     | DiscardAll
-    | ActionDone (Api.Data Bool)
+    | RetryDone (Api.Data Bool)
+    | DiscardDone (Api.Data Bool)
     | RetryAllDone (Api.Data Int)
     | DiscardAllDone (Api.Data Int)
     | Dismiss
@@ -82,18 +132,37 @@ update msg model =
         Poll ->
             ( model, Api.getPending GotRows )
 
+        Refresh ->
+            ( { model | refreshing = True }
+            , Api.getPending GotRows
+            )
+
         GotRows result ->
-            ( { model | rows = result }, Cmd.none )
+            ( { model | rows = result, refreshing = False }, Cmd.none )
+
+        SetFilter filter ->
+            ( { model | filter = filter }, Cmd.none )
 
         Retry id ->
             ( { model | busyId = Just id, notice = Nothing }
-            , Api.retryPending id ActionDone
+            , Api.retryPending id RetryDone
             )
 
-        Discard id ->
-            ( { model | busyId = Just id, notice = Nothing }
-            , Api.discardPending id ActionDone
-            )
+        AskDiscard entry ->
+            ( { model | confirmingDiscard = Just entry }, Cmd.none )
+
+        CancelDiscard ->
+            ( { model | confirmingDiscard = Nothing }, Cmd.none )
+
+        ConfirmDiscard ->
+            case model.confirmingDiscard of
+                Just entry ->
+                    ( { model | busyId = Just entry.id, confirmingDiscard = Nothing, notice = Nothing }
+                    , Api.discardPending entry.id DiscardDone
+                    )
+
+                Nothing ->
+                    ( model, Cmd.none )
 
         RetryAll ->
             ( { model | allBusy = True, notice = Nothing }
@@ -111,10 +180,25 @@ update msg model =
             , Api.discardAllPending DiscardAllDone
             )
 
-        ActionDone result ->
+        RetryDone result ->
             case result of
                 Success _ ->
                     ( { model | busyId = Nothing, notice = Just ( Ui.Success, "Queued." ) }
+                    , Api.getPending GotRows
+                    )
+
+                Failure err ->
+                    ( { model | busyId = Nothing, notice = Just ( Ui.Error, Api.errorMessage err ) }
+                    , Cmd.none
+                    )
+
+                _ ->
+                    ( model, Cmd.none )
+
+        DiscardDone result ->
+            case result of
+                Success _ ->
+                    ( { model | busyId = Nothing, notice = Just ( Ui.Success, "Discarded." ) }
                     , Api.getPending GotRows
                     )
 
@@ -181,7 +265,15 @@ view model =
                     ]
                 ]
             , div [ class "pending-actions" ]
-                [ Ui.button
+                [ Ui.iconButton
+                    { icon = Icons.refresh
+                    , label = "Refresh (r)"
+                    , onClick = Refresh
+                    , variant = Ghost
+                    , disabled = model.refreshing || model.rows == Loading
+                    , small = False
+                    }
+                , Ui.button
                     { label = "Retry all"
                     , onClick = RetryAll
                     , variant = Secondary
@@ -195,13 +287,12 @@ view model =
                     , busy = False
                     , disabled = not hasRows || model.allBusy
                     }
-                , a [ class "btn btn-secondary", href (Route.toPath Route.Manage) ]
-                    [ Icons.chevronRight, text "Back to rules" ]
                 ]
             ]
         , case model.notice of
             Just ( kind, message ) ->
-                Ui.banner kind message
+                div [ class "notice-bar", onClick Dismiss, title "Click to dismiss" ]
+                    [ Ui.banner kind message ]
 
             Nothing ->
                 text ""
@@ -225,18 +316,31 @@ view model =
                         }
 
                 else
-                    table [ class "pending-table" ]
-                        [ thead []
-                            [ tr []
-                                [ th [] [ text "Status" ]
-                                , th [] [ text "From → To" ]
-                                , th [] [ text "Attempts" ]
-                                , th [] [ text "Last error" ]
-                                , th [] [ text "Action" ]
+                    let
+                        visible =
+                            visibleRows model.filter rows
+                    in
+                    div [ class "pending-content" ]
+                        [ pendingToolbar model.filter rows
+                        , if List.isEmpty visible then
+                            div [ class "card empty-inline" ]
+                                [ text "No pending dispatches match this filter." ]
+
+                          else
+                            table [ class "pending-table" ]
+                                [ thead []
+                                    [ tr []
+                                        [ th [] [ text "Status" ]
+                                        , th [] [ text "From → To" ]
+                                        , th [] [ text "Attempts" ]
+                                        , th [] [ text "Last error" ]
+                                        , th [] [ text "Action" ]
+                                        ]
+                                    ]
+                                , tbody [] (List.map (row model.busyId) visible)
                                 ]
-                            ]
-                        , tbody [] (List.map (row model.busyId) rows)
                         ]
+        , discardModal model
         , if model.confirmingDiscardAll then
             Ui.modal
                 { title = "Delete all pending"
@@ -256,6 +360,83 @@ view model =
           else
             text ""
         ]
+
+
+visibleRows : String -> List Api.PendingRow -> List Api.PendingRow
+visibleRows filter rows =
+    case filter of
+        "queued" ->
+            List.filter (\r -> not r.deadLettered) rows
+
+        "dead" ->
+            List.filter .deadLettered rows
+
+        _ ->
+            rows
+
+
+pendingToolbar : String -> List Api.PendingRow -> Html Msg
+pendingToolbar currentFilter rows =
+    let
+        totalCount =
+            List.length rows
+
+        queuedCount =
+            List.length (List.filter (\r -> not r.deadLettered) rows)
+
+        deadCount =
+            List.length (List.filter .deadLettered rows)
+    in
+    div [ class "pending-toolbar" ]
+        [ div [ class "pending-filter-chips" ]
+            [ filterChip ("All (" ++ String.fromInt totalCount ++ ")") (currentFilter == "all") (SetFilter "all")
+            , filterChip ("Queued (" ++ String.fromInt queuedCount ++ ")") (currentFilter == "queued") (SetFilter "queued")
+            , filterChip ("Dead-lettered (" ++ String.fromInt deadCount ++ ")") (currentFilter == "dead") (SetFilter "dead")
+            ]
+        ]
+
+
+filterChip : String -> Bool -> Msg -> Html Msg
+filterChip label isActive onSelect =
+    button
+        [ classList
+            [ ( "pending-filter-chip", True )
+            , ( "is-active", isActive )
+            ]
+        , type_ "button"
+        , onClick onSelect
+        ]
+        [ text label ]
+
+
+discardModal : Model -> Html Msg
+discardModal model =
+    case model.confirmingDiscard of
+        Just entry ->
+            let
+                busy =
+                    model.busyId == Just entry.id
+            in
+            Ui.modal
+                { title = "Discard dispatch"
+                , onClose = CancelDiscard
+                , body =
+                    [ p []
+                        [ text "Discard this dispatch and permanently delete its stored message body? This can't be undone." ]
+                    , div [ class "pending-confirm-meta" ]
+                        [ span [ class "pr-from" ] [ text entry.sender ]
+                        , span [ class "pr-arrow" ] [ text "→" ]
+                        , span [ class "pr-to" ] [ text entry.recipient ]
+                        ]
+                    ]
+                , footer =
+                    [ Ui.button { label = "Cancel", onClick = CancelDiscard, variant = Ghost, busy = False, disabled = False }
+                    , Ui.button { label = "Discard", onClick = ConfirmDiscard, variant = Danger, busy = busy, disabled = busy }
+                    ]
+                }
+
+        Nothing ->
+            text ""
 
 
 row : Maybe String -> Api.PendingRow -> Html Msg
@@ -296,7 +477,9 @@ row busyId entry =
         , td [ class "errcell", title (Maybe.withDefault "" entry.lastError) ]
             [ text (Maybe.withDefault "—" (Maybe.map (String.left 200) entry.lastError)) ]
         , td [ class "pr-actions" ]
-            [ Ui.button
+            [ a [ class "btn btn-ghost btn-sm", href ("/inbox/" ++ entry.id) ]
+                [ text "View" ]
+            , Ui.button
                 { label = "Retry"
                 , onClick = Retry entry.id
                 , variant = Secondary
@@ -305,7 +488,7 @@ row busyId entry =
                 }
             , Ui.button
                 { label = "Discard"
-                , onClick = Discard entry.id
+                , onClick = AskDiscard entry
                 , variant = Danger
                 , busy = busy
                 , disabled = busy

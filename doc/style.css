@@ -45,7 +45,7 @@ html, body { margin: 0; padding: 0; }
 body {
   font-family: var(--font-sans);
   font-size: 14px;
-  line-height: 1.45;
+  line-height: 1.5;
   color: var(--fg);
   background: var(--bg);
   -webkit-font-smoothing: antialiased;
@@ -53,7 +53,6 @@ body {
 }
 a { color: inherit; text-decoration: none; }
 a:hover { text-decoration: underline; text-decoration-color: var(--line-2); }
-.mono { font-family: var(--font-mono); }
 
 /* Atoms */
 .l-container { max-width: 1100px; margin: 0 auto; padding: 0 32px; }
@@ -73,6 +72,7 @@ a:hover { text-decoration: underline; text-decoration-color: var(--line-2); }
 }
 .l-cta:hover { filter: brightness(1.05); text-decoration: none; }
 .l-cta.ghost { background: transparent; color: var(--fg); border-color: var(--line-2); }
+.l-cta.ghost:hover { border-color: var(--fg-2); }
 
 /* Site chrome */
 header.site { border-bottom: 1px solid var(--line); }
@@ -104,9 +104,9 @@ footer.site .row .links { display: flex; gap: 18px; }
   letter-spacing: -0.02em;
   line-height: 1.1;
 }
-.doc .lede { font-size: 16px; color: var(--fg-1); margin: 8px 0 36px; }
+.doc .lede { font-size: 16px; color: var(--fg-1); margin: 8px 0 36px; line-height: 1.55; }
 .doc h2 {
-  margin: 44px 0 14px;
+  margin: 40px 0 14px;
   padding-bottom: 8px;
   border-bottom: 1px solid var(--line);
   font-size: 18px;
@@ -122,8 +122,8 @@ footer.site .row .links { display: flex; gap: 18px; }
   letter-spacing: 0.06em;
 }
 .doc h3 {
-  margin: 24px 0 8px;
-  font-size: 13.5px;
+  margin: 22px 0 8px;
+  font-size: 13px;
   font-weight: 600;
   font-family: var(--font-mono);
   text-transform: uppercase;
@@ -137,7 +137,7 @@ footer.site .row .links { display: flex; gap: 18px; }
 .doc ol { counter-reset: step; }
 .doc ol > li {
   position: relative;
-  padding-left: 36px;
+  padding-left: 34px;
   margin: 8px 0;
   font-size: 14.5px;
   line-height: 1.65;
@@ -185,7 +185,7 @@ footer.site .row .links { display: flex; gap: 18px; }
   border: 1px solid var(--line);
   border-radius: 8px;
   padding: 14px 18px;
-  margin: 14px 0;
+  margin: 10px 0;
   overflow-x: auto;
   font-family: var(--font-mono);
   font-size: 12.5px;
@@ -198,7 +198,7 @@ footer.site .row .links { display: flex; gap: 18px; }
 
 /* Compact callout cards inside doc body */
 .doc .card-grid {
-  display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin: 16px 0;
+  display: grid; grid-template-columns: 1fr 1fr; gap: 14px; margin: 16px 0;
 }
 .doc .card {
   background: var(--bg-1);
