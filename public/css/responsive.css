@@ -7,11 +7,12 @@
     grid-template-columns: 1fr;
   }
 
-  .workbench.no-selection .inspector-pane {
+  .workbench.no-selection:not(.is-editing) .inspector-pane {
     display: none;
   }
 
-  .workbench.has-selection .pipeline-pane {
+  .workbench.has-selection .pipeline-pane,
+  .workbench.is-editing .pipeline-pane {
     display: none;
   }
 
@@ -41,6 +42,10 @@
   }
 
   .brand-sub {
+    display: none;
+  }
+
+  .header-stats {
     display: none;
   }
 
@@ -89,12 +94,18 @@
     padding: 12px 12px 20px;
   }
 
-  .inspector-body {
+  .inspector-body,
+  .editor-body,
+  .overview-pane {
     padding: 16px 14px 28px;
   }
 
   .inspector-head {
     padding: 14px;
+  }
+
+  .editor-footer {
+    padding: 12px 14px;
   }
 
   .ih-title {

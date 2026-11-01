@@ -1,32 +1,32 @@
 module Page.Manage exposing (Model, Msg, init, subscriptions, update, view)
 
-{-| The workbench: the routing pipeline, the inspector, the live feed and the
-rule editor.
+{-| The workbench: the routing pipeline, the inspector/overview, the inline rule
+editor and the live feed.
 
 The page owns its copy of the server state (`data`). Every rule mutation returns
-a fresh snapshot, so there is exactly one way the rules list changes: a whole
-snapshot replaces the old one. Nothing here patches a list in place.
+a fresh snapshot, so the server snapshot remains the source of truth (with
+optimistic reordering for immediate feedback).
 
 The tester runs the routing engine's glob matcher in Elm on every keystroke and
-glows the rule that would fire, so you can see the pipeline decide without a
-request.
+highlights the rule that would fire, so you can see the pipeline decide without
+a request.
 
 -}
 
 import Api
-import Browser.Dom as Dom
+import Browser.Events
 import Browser.Navigation as Nav
 import Format
 import Glob
-import Html exposing (Html, a, aside, button, div, h1, h3, header, input, label, p, section, span, text)
+import Html exposing (Html, a, aside, button, div, h1, h3, header, input, p, section, span, text)
 import Html.Attributes as A exposing (attribute, class, classList, href, placeholder, title, type_, value)
-import Html.Events as E exposing (onClick, onInput)
+import Html.Events exposing (onClick, onInput)
 import Icons
 import Json.Decode as D
+import Page.Manage.Editor as Editor
 import Ports
 import RemoteData exposing (RemoteData(..))
 import Route
-import Task
 import Time
 import Ui exposing (ButtonVariant(..))
 
@@ -39,7 +39,7 @@ type alias Model =
     { data : Api.Data Api.Snapshot
     , selected : Maybe String
     , tester : String
-    , editor : Maybe Editor
+    , editor : Maybe Editor.Editor
     , live : Live
     , messages : Messages
     , notice : Maybe ( Ui.Banner, String )
@@ -69,52 +69,9 @@ type alias Messages =
     }
 
 
-type alias Editor =
-    { id : Maybe String
-    , label : String
-    , local : String
-    , domain : String
-    , actionType : String
-    , destinations : List Api.Destination
-    , persist : Bool
-    , storeForward : Bool
-    , destKind : String
-    , destValue : String
-    , destProxy : Bool
-    , destError : String
-    , readers : List String
-    , readerValue : String
-    , readerError : String
-    , chats : List Api.TelegramChat
-    , submitting : Bool
-    }
-
-
 emptyMessages : Messages
 emptyMessages =
     { items = [], cursor = Nothing, hasMore = False, loading = False, error = Nothing }
-
-
-emptyEditor : Editor
-emptyEditor =
-    { id = Nothing
-    , label = ""
-    , local = "*"
-    , domain = "*"
-    , actionType = "forward"
-    , destinations = []
-    , persist = False
-    , storeForward = False
-    , destKind = "email"
-    , destValue = ""
-    , destProxy = True
-    , destError = ""
-    , readers = []
-    , readerValue = ""
-    , readerError = ""
-    , chats = []
-    , submitting = False
-    }
 
 
 init : Nav.Key -> Api.Snapshot -> ( Model, Cmd Msg )
@@ -146,13 +103,114 @@ init _ snapshot =
 
 
 subscriptions : Model -> Sub Msg
-subscriptions _ =
+subscriptions model =
     Sub.batch
-        [ Time.every 1000 Tick
-        , Time.every 2000 (\_ -> PollEvents)
+        [ if not model.live.collapsed || model.selected /= Nothing then
+            Time.every 1000 Tick
+
+          else
+            Sub.none
+        , if not model.live.collapsed then
+            Time.every 2000 (\_ -> PollEvents)
+
+          else
+            Sub.none
         , Time.every 10000 (\_ -> PollPending)
         , Ports.zone Zone
+        , Browser.Events.onKeyDown (keyDecoder model)
         ]
+
+
+keyDecoder : Model -> D.Decoder Msg
+keyDecoder model =
+    D.map5
+        (\key tag ctrl meta alt ->
+            if ctrl || meta || alt || isInputTag tag then
+                Nothing
+
+            else
+                case key of
+                    "Escape" ->
+                        if model.deleteTarget /= Nothing then
+                            Just CancelDelete
+
+                        else if model.editor /= Nothing then
+                            Just CloseEditor
+
+                        else if model.selected /= Nothing then
+                            Just (SelectRule Nothing)
+
+                        else
+                            Nothing
+
+                    "ArrowDown" ->
+                        if model.editor == Nothing && model.deleteTarget == Nothing then
+                            Just (StepRule 1)
+
+                        else
+                            Nothing
+
+                    "j" ->
+                        if model.editor == Nothing && model.deleteTarget == Nothing then
+                            Just (StepRule 1)
+
+                        else
+                            Nothing
+
+                    "ArrowUp" ->
+                        if model.editor == Nothing && model.deleteTarget == Nothing then
+                            Just (StepRule -1)
+
+                        else
+                            Nothing
+
+                    "k" ->
+                        if model.editor == Nothing && model.deleteTarget == Nothing then
+                            Just (StepRule -1)
+
+                        else
+                            Nothing
+
+                    "e" ->
+                        if model.editor == Nothing && model.deleteTarget == Nothing then
+                            Maybe.map OpenEditRule model.selected
+
+                        else
+                            Nothing
+
+                    "n" ->
+                        if model.editor == Nothing && model.deleteTarget == Nothing then
+                            Just OpenNewRule
+
+                        else
+                            Nothing
+
+                    _ ->
+                        Nothing
+        )
+        (D.field "key" D.string)
+        (D.oneOf [ D.at [ "target", "tagName" ] D.string, D.succeed "" ])
+        (D.oneOf [ D.field "ctrlKey" D.bool, D.succeed False ])
+        (D.oneOf [ D.field "metaKey" D.bool, D.succeed False ])
+        (D.oneOf [ D.field "altKey" D.bool, D.succeed False ])
+        |> D.andThen
+            (\maybeMsg ->
+                case maybeMsg of
+                    Just msg ->
+                        D.succeed msg
+
+                    Nothing ->
+                        D.fail "ignored"
+            )
+
+
+isInputTag : String -> Bool
+isInputTag tag =
+    let
+        upper =
+            String.toUpper tag
+    in
+    upper == "INPUT" || upper == "TEXTAREA" || upper == "SELECT"
 
 
 
@@ -170,28 +228,12 @@ type Msg
     | SetLiveFilter String
     | SetTester String
     | SelectRule (Maybe String)
+    | StepRule Int
     | Reorder String String
     | OpenNewRule
     | OpenEditRule String
     | CloseEditor
-    | EditorLabel String
-    | EditorLocal String
-    | EditorDomain String
-    | EditorAt
-    | FocusResult (Result Dom.Error ())
-    | EditorActionType String
-    | EditorPersist Bool
-    | EditorStore Bool
-    | EditorDestKind String
-    | EditorDestValue String
-    | EditorDestProxy Bool
-    | EditorToggleDestProxy Int
-    | EditorAddDest
-    | EditorRemoveDest Int
-    | EditorReaderValue String
-    | EditorAddReader
-    | EditorRemoveReader Int
-    | EditorSubmit
+    | EditorMsg Editor.Msg
     | GotSaved (Api.Data Api.Snapshot)
     | GotRefreshed (Api.Data Api.Snapshot)
     | AskDelete String
@@ -215,14 +257,7 @@ update msg model =
 
         PollEvents ->
             ( model
-            , Api.getEvents
-                (if model.live.loaded then
-                    Just model.live.lastTs
-
-                 else
-                    Nothing
-                )
-                GotEvents
+            , fetchEvents model.live
             )
 
         GotEvents result ->
@@ -274,7 +309,20 @@ update msg model =
                     ( model, Cmd.none )
 
         ToggleLive ->
-            ( { model | live = model.live |> (\l -> { l | collapsed = not l.collapsed }) }, Cmd.none )
+            let
+                nextCollapsed =
+                    not model.live.collapsed
+
+                live =
+                    model.live
+            in
+            ( { model | live = { live | collapsed = nextCollapsed } }
+            , if nextCollapsed then
+                Cmd.none
+
+              else
+                fetchEvents live
+            )
 
         SetLiveFilter f ->
             ( { model | live = model.live |> (\l -> { l | filter = f }) }, Cmd.none )
@@ -283,12 +331,13 @@ update msg model =
             ( { model | tester = v }, Cmd.none )
 
         SelectRule target ->
-            if target == model.selected then
+            if target == model.selected && model.editor == Nothing then
                 ( { model | selected = Nothing, messages = emptyMessages }, Cmd.none )
 
             else
                 ( { model
                     | selected = target
+                    , editor = Nothing
                     , messages = { emptyMessages | loading = target /= Nothing }
                     , notice = Nothing
                   }
@@ -300,10 +349,26 @@ update msg model =
                         Cmd.none
                 )
 
+        StepRule delta ->
+            let
+                ids =
+                    List.map .id (rulesOf model)
+            in
+            case stepRuleId delta model.selected ids of
+                Just nextId ->
+                    update (SelectRule (Just nextId)) model
+
+                Nothing ->
+                    ( model, Cmd.none )
+
         Reorder id direction ->
             case model.data of
                 Success snap ->
-                    ( { model | busy = True }
+                    let
+                        optimisticSnap =
+                            { snap | rules = swapRule id direction snap.rules }
+                    in
+                    ( { model | busy = True, data = Success optimisticSnap }
                     , Api.reorderRule { id = id, direction = direction, rulesVersion = snap.rulesVersion } GotSaved
                     )
 
@@ -311,14 +376,14 @@ update msg model =
                     ( model, Cmd.none )
 
         OpenNewRule ->
-            ( { model | editor = Just emptyEditor, notice = Nothing }
+            ( { model | editor = Just Editor.empty, notice = Nothing }
             , Api.getTelegramChats GotChats
             )
 
         OpenEditRule id ->
             case ruleAt id model of
                 Just rule ->
-                    ( { model | editor = Just (editorFrom rule), notice = Nothing }
+                    ( { model | editor = Just (Editor.fromRule rule), notice = Nothing }
                     , Api.getTelegramChats GotChats
                     )
 
@@ -328,140 +393,47 @@ update msg model =
         CloseEditor ->
             ( { model | editor = Nothing }, Cmd.none )
 
-        EditorLabel v ->
-            ( mapEditor (\e -> { e | label = v }) model, Cmd.none )
+        EditorMsg subMsg ->
+            case ( model.editor, enabledChannels model ) of
+                ( Just editor, Just enabled ) ->
+                    let
+                        ( nextEditor, editorCmd, outMsg ) =
+                            Editor.update enabled subMsg editor
+                    in
+                    case outMsg of
+                        Editor.NoOut ->
+                            ( { model | editor = Just nextEditor }, Cmd.map EditorMsg editorCmd )
 
-        EditorLocal v ->
-            ( mapEditor (\e -> { e | local = v }) model, Cmd.none )
+                        Editor.Cancelled ->
+                            ( { model | editor = Nothing }, Cmd.map EditorMsg editorCmd )
 
-        EditorDomain v ->
-            ( mapEditor (\e -> { e | domain = v }) model, Cmd.none )
-
-        EditorAt ->
-            -- Typing `@` in the local part jumps to the domain field.
-            ( model, Dom.focus "rule-domain" |> Task.attempt FocusResult )
-
-        FocusResult _ ->
-            ( model, Cmd.none )
-
-        EditorActionType v ->
-            ( mapEditor (\e -> { e | actionType = v }) model, Cmd.none )
-
-        EditorPersist v ->
-            ( mapEditor (\e -> { e | persist = v }) model, Cmd.none )
-
-        EditorStore v ->
-            ( mapEditor (\e -> { e | storeForward = v }) model, Cmd.none )
-
-        EditorDestKind v ->
-            ( mapEditor (\e -> { e | destKind = v, destValue = "", destError = "" }) model, Cmd.none )
-
-        EditorDestValue v ->
-            ( mapEditor (\e -> { e | destValue = v, destError = "" }) model, Cmd.none )
-
-        EditorDestProxy v ->
-            ( mapEditor (\e -> { e | destProxy = v }) model, Cmd.none )
-
-        EditorToggleDestProxy index ->
-            ( mapEditor (\e -> { e | destinations = toggleProxyAt index e.destinations }) model, Cmd.none )
-
-        EditorAddDest ->
-            case model.editor of
-                Just editor ->
-                    case enabledChannels model of
-                        Just enabled ->
-                            case parseDestination enabled editor of
-                                Ok dest ->
-                                    ( mapEditor
-                                        (\e ->
-                                            { e
-                                                | destinations = e.destinations ++ [ dest ]
-                                                , destValue = ""
-                                                , destError = ""
+                        Editor.Submit sub ->
+                            case model.data of
+                                Success snap ->
+                                    let
+                                        newRule =
+                                            { label = sub.label
+                                            , localPattern = sub.localPattern
+                                            , domainPattern = sub.domainPattern
+                                            , action = sub.action
+                                            , inboxReaders = sub.inboxReaders
+                                            , rulesVersion = snap.rulesVersion
                                             }
-                                        )
-                                        model
-                                    , Cmd.none
+
+                                        saveCmd =
+                                            case sub.id of
+                                                Just id ->
+                                                    Api.updateRule id newRule GotSaved
+
+                                                Nothing ->
+                                                    Api.createRule newRule GotSaved
+                                    in
+                                    ( { model | editor = Just nextEditor, notice = Nothing }
+                                    , Cmd.batch [ Cmd.map EditorMsg editorCmd, saveCmd ]
                                     )
 
-                                Err err ->
-                                    ( mapEditor (\e -> { e | destError = err }) model, Cmd.none )
-
-                        Nothing ->
-                            ( model, Cmd.none )
-
-                Nothing ->
-                    ( model, Cmd.none )
-
-        EditorRemoveDest index ->
-            ( mapEditor (\e -> { e | destinations = removeAt index e.destinations }) model, Cmd.none )
-
-        EditorReaderValue v ->
-            ( mapEditor (\e -> { e | readerValue = v, readerError = "" }) model, Cmd.none )
-
-        EditorAddReader ->
-            case model.editor of
-                Just editor ->
-                    let
-                        implicit =
-                            Api.emailRecipients (editorAction editor)
-
-                        value =
-                            String.toLower (String.trim editor.readerValue)
-                    in
-                    if not (validEmail value) then
-                        ( mapEditor (\e -> { e | readerError = "Enter an email address like you@example.com" }) model, Cmd.none )
-
-                    else if List.member value implicit || List.member value editor.readers then
-                        ( mapEditor (\e -> { e | readerError = "Already an inbox reader." }) model, Cmd.none )
-
-                    else
-                        ( mapEditor
-                            (\e ->
-                                { e
-                                    | readers = e.readers ++ [ value ]
-                                    , readerValue = ""
-                                    , readerError = ""
-                                }
-                            )
-                            model
-                        , Cmd.none
-                        )
-
-                Nothing ->
-                    ( model, Cmd.none )
-
-        EditorRemoveReader index ->
-            ( mapEditor (\e -> { e | readers = removeAt index e.readers }) model, Cmd.none )
-
-        EditorSubmit ->
-            case ( model.editor, model.data ) of
-                ( Just editor, Success snap ) ->
-                    if editor.actionType == "forward" && List.isEmpty editor.destinations then
-                        ( { model | notice = Just ( Ui.Error, "A forward rule needs at least one destination." ) }, Cmd.none )
-
-                    else
-                        let
-                            action =
-                                editorAction editor
-
-                            newRule =
-                                { label = editor.label
-                                , localPattern = editor.local
-                                , domainPattern = editor.domain
-                                , action = action
-                                , inboxReaders = editor.readers
-                                , rulesVersion = snap.rulesVersion
-                                }
-                        in
-                        ( { model | editor = Just { editor | submitting = True }, notice = Nothing }
-                        , case editor.id of
-                            Just id ->
-                                Api.updateRule id newRule GotSaved
-
-                            Nothing ->
-                                Api.createRule newRule GotSaved
-                        )
+                                _ ->
+                                    ( { model | editor = Just nextEditor }, Cmd.map EditorMsg editorCmd )
 
                 _ ->
                     ( model, Cmd.none )
@@ -469,8 +441,22 @@ update msg model =
         GotSaved result ->
             case result of
                 Success snap ->
+                    let
+                        stillSelected =
+                            case model.selected of
+                                Just selId ->
+                                    if List.any (\r -> r.id == selId) snap.rules then
+                                        Just selId
+
+                                    else
+                                        Nothing
+
+                                Nothing ->
+                                    Nothing
+                    in
                     ( { model
                         | data = Success snap
+                        , selected = stillSelected
                         , editor = Nothing
                         , busy = False
                         , notice = Just ( Ui.Success, "Saved." )
@@ -493,13 +479,27 @@ update msg model =
                         )
 
                     else
-                        ( { model
-                            | busy = False
-                            , editor = Maybe.map (\e -> { e | submitting = False }) model.editor
-                            , notice = Just ( Ui.Error, Api.errorMessage err )
-                          }
-                        , Cmd.none
-                        )
+                        case model.editor of
+                            Just editor ->
+                                ( { model
+                                    | busy = False
+                                    , editor =
+                                        Just
+                                            (editor
+                                                |> Editor.setSubmitting False
+                                                |> Editor.setError (Just (Api.errorMessage err))
+                                            )
+                                  }
+                                , Cmd.none
+                                )
+
+                            Nothing ->
+                                ( { model
+                                    | busy = False
+                                    , notice = Just ( Ui.Error, Api.errorMessage err )
+                                  }
+                                , Api.getBootstrap GotRefreshed
+                                )
 
                 _ ->
                     ( model, Cmd.none )
@@ -590,7 +590,7 @@ update msg model =
         GotChats result ->
             case result of
                 Success chats ->
-                    ( mapEditor (\e -> { e | chats = chats }) model, Cmd.none )
+                    ( { model | editor = Maybe.map (Editor.setChats chats) model.editor }, Cmd.none )
 
                 _ ->
                     ( model, Cmd.none )
@@ -603,37 +603,107 @@ update msg model =
 -- UPDATE HELPERS
 
 
-mapEditor : (Editor -> Editor) -> Model -> Model
-mapEditor f model =
-    { model | editor = Maybe.map f model.editor }
+fetchEvents : Live -> Cmd Msg
+fetchEvents live =
+    Api.getEvents
+        (if live.loaded then
+            Just live.lastTs
+
+         else
+            Nothing
+        )
+        GotEvents
 
 
-removeAt : Int -> List a -> List a
-removeAt index items =
-    List.indexedMap Tuple.pair items
-        |> List.filter (\( i, _ ) -> i /= index)
-        |> List.map Tuple.second
-
-
-{-| Flip the proxy flag on the email destination at `index`, leaving the rest
-untouched.
--}
-toggleProxyAt : Int -> List Api.Destination -> List Api.Destination
-toggleProxyAt index destinations =
-    List.indexedMap
-        (\i d ->
-            if i == index then
-                case d of
-                    Api.Email email ->
-                        Api.Email { email | proxy = not email.proxy }
-
-                    other ->
-                        other
+stepRuleId : Int -> Maybe String -> List String -> Maybe String
+stepRuleId delta selected ids =
+    case selected of
+        Nothing ->
+            if delta >= 0 then
+                List.head ids
 
             else
-                d
-        )
-        destinations
+                List.reverse ids |> List.head
+
+        Just current ->
+            let
+                indexed =
+                    List.indexedMap Tuple.pair ids
+
+                currentIdx =
+                    indexed
+                        |> List.filter (\( _, id ) -> id == current)
+                        |> List.head
+                        |> Maybe.map Tuple.first
+            in
+            case currentIdx of
+                Just idx ->
+                    let
+                        targetIdx =
+                            clamp 0 (List.length ids - 1) (idx + delta)
+                    in
+                    if targetIdx == idx then
+                        Nothing
+
+                    else
+                        indexed
+                            |> List.filter (\( i, _ ) -> i == targetIdx)
+                            |> List.head
+                            |> Maybe.map Tuple.second
+
+                Nothing ->
+                    List.head ids
+
+
+swapRule : String -> String -> List Api.Rule -> List Api.Rule
+swapRule id direction rules =
+    let
+        movable =
+            List.filter (\r -> not r.isCatchAll) rules
+
+        catchAlls =
+            List.filter .isCatchAll rules
+
+        swappedMovable =
+            case direction of
+                "up" ->
+                    swapUp id movable
+
+                "down" ->
+                    swapDown id movable
+
+                _ ->
+                    movable
+    in
+    swappedMovable ++ catchAlls
+
+
+swapUp : String -> List Api.Rule -> List Api.Rule
+swapUp id rules =
+    case rules of
+        a :: b :: rest ->
+            if b.id == id then
+                b :: a :: rest
+
+            else
+                a :: swapUp id (b :: rest)
+
+        _ ->
+            rules
+
+
+swapDown : String -> List Api.Rule -> List Api.Rule
+swapDown id rules =
+    case rules of
+        a :: b :: rest ->
+            if a.id == id then
+                b :: a :: rest
+
+            else
+                a :: swapDown id (b :: rest)
+
+        _ ->
+            rules
 
 
 isConflict : Api.ApiError -> Bool
@@ -649,167 +719,6 @@ isConflict err =
 enabledChannels : Model -> Maybe Api.Enabled
 enabledChannels model =
     model.data |> RemoteData.toMaybe |> Maybe.map .enabled
-
-
-editorAction : Editor -> Api.Action
-editorAction editor =
-    case editor.actionType of
-        "store" ->
-            Api.Store { persist = editor.persist }
-
-        "drop" ->
-            Api.Drop
-
-        _ ->
-            if editor.storeForward && hasEmailDestination editor then
-                Api.ForwardStore editor.destinations
-
-            else
-                Api.Forward editor.destinations
-
-
-{-| Store & Forward is an email concept: chat destinations keep a copy of the
-message regardless, because the bot post links to the stored viewer. A rule
-whose only destinations are chat channels is therefore a plain Forward.
--}
-hasEmailDestination : Editor -> Bool
-hasEmailDestination editor =
-    List.any
-        (\d ->
-            case d of
-                Api.Email _ ->
-                    True
-
-                _ ->
-                    False
-        )
-        editor.destinations
-
-
-storesRule : Editor -> Bool
-storesRule editor =
-    editor.actionType == "forward" && editor.storeForward && hasEmailDestination editor
-
-
-parseDestination : Api.Enabled -> Editor -> Result String Api.Destination
-parseDestination enabled editor =
-    let
-        raw =
-            String.trim editor.destValue
-    in
-    case editor.destKind of
-        "email" ->
-            let
-                v =
-                    String.toLower raw
-            in
-            if validEmail v then
-                Ok (Api.Email { address = v, proxy = editor.destProxy })
-
-            else
-                Err "Enter an email address like you@example.com"
-
-        "telegram" ->
-            if not enabled.telegram then
-                Err "Telegram isn't configured on this deployment"
-
-            else if isInteger raw then
-                Ok (Api.Telegram { chatId = raw })
-
-            else
-                Err "A Telegram chat id is an integer, like -1001234567890"
-
-        "discord" ->
-            if not enabled.discord then
-                Err "Discord isn't configured on this deployment"
-
-            else if isInteger raw then
-                Ok (Api.Discord { channelId = raw })
-
-            else
-                Err "A Discord channel id is a positive integer"
-
-        _ ->
-            Err "Unknown destination kind"
-
-
-isInteger : String -> Bool
-isInteger s =
-    let
-        body =
-            if String.startsWith "-" s then
-                String.dropLeft 1 s
-
-            else
-                s
-    in
-    not (String.isEmpty body) && String.all Char.isDigit body
-
-
-validEmail : String -> Bool
-validEmail addr =
-    case String.split "@" addr of
-        [ local, domain ] ->
-            not (String.isEmpty local)
-                && String.all isLocalChar local
-                && not (String.isEmpty domain)
-                && String.contains "." domain
-                && not (String.startsWith "-" domain)
-                && not (String.endsWith "-" domain)
-                && not (String.startsWith "." domain)
-                && not (String.endsWith "." domain)
-                && not (String.contains ".." domain)
-                && String.all isDomainChar domain
-                && (case List.reverse (String.split "." domain) of
-                        tld :: _ ->
-                            String.length tld >= 2 && String.all Char.isAlpha tld
-
-                        [] ->
-                            False
-                   )
-
-        _ ->
-            False
-
-
-isLocalChar : Char -> Bool
-isLocalChar c =
-    Char.isAlphaNum c || String.contains (String.fromChar c) "!#$%&'*+-/=?^_`{|}~."
-
-
-isDomainChar : Char -> Bool
-isDomainChar c =
-    Char.isAlphaNum c || c == '-' || c == '.'
-
-
-editorFrom : Api.Rule -> Editor
-editorFrom rule =
-    let
-        fields =
-            case rule.action of
-                Api.Forward dests ->
-                    { actionType = "forward", destinations = dests, persist = False, storeForward = False }
-
-                Api.ForwardStore dests ->
-                    { actionType = "forward", destinations = dests, persist = False, storeForward = True }
-
-                Api.Store store ->
-                    { actionType = "store", destinations = [], persist = store.persist, storeForward = False }
-
-                Api.Drop ->
-                    { actionType = "drop", destinations = [], persist = False, storeForward = False }
-    in
-    { emptyEditor
-        | id = Just rule.id
-        , label = rule.label
-        , local = rule.localPattern
-        , domain = rule.domainPattern
-        , actionType = fields.actionType
-        , destinations = fields.destinations
-        , persist = fields.persist
-        , storeForward = fields.storeForward
-        , readers = rule.inboxReaders
-    }
 
 
 ruleAt : String -> Model -> Maybe Api.Rule
@@ -829,17 +738,17 @@ ruleAt id model =
 view : Model -> Html Msg
 view model =
     div [ class "workbench-shell" ]
-        [ microbar model
-        , div
+        [ div
             [ classList
                 [ ( "workbench", True )
-                , ( if model.selected == Nothing then
+                , ( if model.selected == Nothing && model.editor == Nothing then
                         "no-selection"
 
                     else
                         "has-selection"
                   , True
                   )
+                , ( "is-editing", model.editor /= Nothing )
                 ]
             ]
             [ pipelinePane model
@@ -847,7 +756,6 @@ view model =
             ]
         , liveFeed model
         , deleteModal model
-        , editorModal model
         ]
 
 
@@ -856,70 +764,15 @@ snapshotOf model =
     RemoteData.toMaybe model.data
 
 
-microbar : Model -> Html Msg
-microbar model =
-    let
-        stats =
-            snapshotOf model |> Maybe.andThen .stats
-    in
-    div [ class "microbar" ]
-        [ div [ class "microstats" ]
-            (case stats of
-                Just s ->
-                    [ microstat "fwd" (Format.count s.forwardedTotal) "forwarded · 7d"
-                    , microstat "str" (Format.count s.storedTotal) "stored · 7d"
-                    , microstat "drp" (Format.count s.droppedTotal) "dropped · 7d"
-                    ]
+noticeBanner : Model -> Html Msg
+noticeBanner model =
+    case model.notice of
+        Just ( kind, message ) ->
+            div [ onClick DismissNotice, title "Click to dismiss" ]
+                [ Ui.banner kind message ]
 
-                Nothing ->
-                    [ microstat "muted" "—" "stats unavailable" ]
-            )
-        , case stats of
-            Just s ->
-                ticker s.topSenders
-
-            Nothing ->
-                text ""
-        , div [ class "microbar-right" ]
-            [ span [ class "microbar-zone" ]
-                [ text
-                    (if model.zone == 0 then
-                        "UTC"
-
-                     else
-                        "local"
-                    )
-                ]
-            ]
-        ]
-
-
-microstat : String -> String -> String -> Html Msg
-microstat tone value_ label =
-    div [ class "microstat" ]
-        [ span [ classList [ ( "ms-value", True ), ( tone, True ) ] ] [ text value_ ]
-        , span [ class "ms-key" ] [ text label ]
-        ]
-
-
-ticker : List Api.TopSender -> Html Msg
-ticker senders =
-    if List.isEmpty senders then
-        div [ class "ticker ticker-empty" ] [ text "no senders yet · 7d" ]
-
-    else
-        let
-            item s =
-                span [ class "ticker-item" ]
-                    [ span [ class "ticker-n" ] [ text (Format.count s.n) ]
-                    , span [ class "ticker-addr" ] [ text s.address ]
-                    ]
-        in
-        div [ class "ticker", attribute "title" "Top senders · 7d (forwarded)" ]
-            [ span [ class "ticker-label" ] [ text "top senders · 7d" ]
-            , div [ class "ticker-window" ]
-                [ div [ class "ticker-track" ] (List.map item senders ++ List.map item senders) ]
-            ]
+        Nothing ->
+            text ""
 
 
 pipelinePane : Model -> Html Msg
@@ -927,6 +780,9 @@ pipelinePane model =
     let
         rules =
             snapshotOf model |> Maybe.map .rules |> Maybe.withDefault []
+
+        movableCount =
+            List.length (List.filter (\r -> not r.isCatchAll) rules)
     in
     aside [ class "pipeline-pane" ]
         [ header [ class "pane-head" ]
@@ -947,27 +803,7 @@ pipelinePane model =
             ]
         , div [ class "pipeline-tester" ] [ testerCard model rules ]
         , div [ class "pipeline-list" ]
-            ([ div
-                [ class "pipeline-node"
-                , A.title "Inbound mail enters here. Green marks the pipeline start, not a status."
-                ]
-                [ span [ class "node-dot" ] [], text "INBOUND · email routing" ]
-             ]
-                ++ List.concatMap
-                    (\card ->
-                        [ div [ class "pipeline-connector" ] []
-                        , card
-                        ]
-                    )
-                    (List.indexedMap (pipelineCard model) rules)
-                ++ [ div [ class "pipeline-connector" ] []
-                   , div
-                        [ class "pipeline-node"
-                        , A.title "All rules evaluated. The catch-all handles the rest."
-                        ]
-                        [ span [ class "node-dot node-dot-end" ] [], text "END · all rules evaluated" ]
-                   ]
-            )
+            (List.indexedMap (pipelineCard model movableCount) rules)
         ]
 
 
@@ -980,8 +816,8 @@ ruleWord n =
         " rules"
 
 
-pipelineCard : Model -> Int -> Api.Rule -> Html Msg
-pipelineCard model index rule =
+pipelineCard : Model -> Int -> Int -> Api.Rule -> Html Msg
+pipelineCard model movableCount index rule =
     let
         selected =
             model.selected == Just rule.id
@@ -1045,7 +881,7 @@ pipelineCard model index rule =
                     , label = "Move up"
                     , onClick = Reorder rule.id "up"
                     , variant = Ghost
-                    , disabled = model.busy
+                    , disabled = model.busy || index == 0
                     , small = True
                     }
                 , Ui.iconButton
@@ -1053,7 +889,7 @@ pipelineCard model index rule =
                     , label = "Move down"
                     , onClick = Reorder rule.id "down"
                     , variant = Ghost
-                    , disabled = model.busy
+                    , disabled = model.busy || index >= movableCount - 1
                     , small = True
                     }
                 ]
@@ -1280,27 +1116,153 @@ rulesOf model =
 
 inspectorPane : Model -> Html Msg
 inspectorPane model =
-    case Maybe.andThen (\id -> ruleAt id model) model.selected of
-        Nothing ->
-            section [ class "inspector-pane" ]
-                [ div [ class "inspector-empty" ]
-                    [ span [ class "inspector-empty-arrow" ] [ Icons.chevronRight ]
-                    , p []
-                        [ text "Pick a rule from the pipeline to see its destinations, recent traffic and the mail it has stored." ]
-                    ]
-                ]
+    case ( model.editor, enabledChannels model ) of
+        ( Just editor, Just enabled ) ->
+            Html.map EditorMsg (Editor.view enabled editor)
 
-        Just rule ->
-            section [ class "inspector-pane" ]
-                [ inspectorHead model rule
-                , div [ class "inspector-body" ]
-                    [ statStrip model rule
-                    , issuesCard rule
-                    , destinationsCard rule
-                    , actionCard rule
-                    , messagesCard model rule
-                    ]
+        _ ->
+            case Maybe.andThen (\id -> ruleAt id model) model.selected of
+                Nothing ->
+                    overviewPane model
+
+                Just rule ->
+                    section [ class "inspector-pane" ]
+                        [ inspectorHead model rule
+                        , div [ class "inspector-body" ]
+                            [ noticeBanner model
+                            , statStrip model rule
+                            , issuesCard rule
+                            , destinationsCard rule
+                            , actionCard rule
+                            , messagesCard model rule
+                            ]
+                        ]
+
+
+overviewPane : Model -> Html Msg
+overviewPane model =
+    let
+        stats =
+            snapshotOf model |> Maybe.andThen .stats
+
+        pending =
+            model.live.pending
+
+        pendingTotal =
+            pending.queued + pending.deadLettered
+
+        rules =
+            rulesOf model
+
+        rulesWithIssues =
+            List.filter (\r -> not (List.isEmpty r.issues)) rules
+
+        fwdVal =
+            stats |> Maybe.map (\s -> Format.count s.forwardedTotal) |> Maybe.withDefault "—"
+
+        strVal =
+            stats |> Maybe.map (\s -> Format.count s.storedTotal) |> Maybe.withDefault "—"
+
+        drpVal =
+            stats |> Maybe.map (\s -> Format.count s.droppedTotal) |> Maybe.withDefault "—"
+
+        senders =
+            stats |> Maybe.map .topSenders |> Maybe.withDefault []
+    in
+    section [ class "inspector-pane" ]
+        [ header [ class "inspector-head" ]
+            [ div [ class "ih-meta" ]
+                [ span [ class "ih-id" ] [ text "7-day routing summary" ]
+                , h1 [ class "ih-title" ] [ text "Overview" ]
                 ]
+            , div [ class "ih-actions" ]
+                [ Ui.button
+                    { label = "+ New rule"
+                    , onClick = OpenNewRule
+                    , variant = Primary
+                    , busy = False
+                    , disabled = False
+                    }
+                ]
+            ]
+        , div [ class "overview-pane" ]
+            [ noticeBanner model
+            , div [ class "stat-strip" ]
+                [ Ui.stat { key = "forwarded · 7d", value = fwdVal, tone = "fwd", sub = "delivered" }
+                , Ui.stat { key = "stored · 7d", value = strVal, tone = "plain", sub = "kept in inbox" }
+                , Ui.stat { key = "dropped · 7d", value = drpVal, tone = "plain", sub = "discarded" }
+                , Ui.stat
+                    { key = "pending / DLQ"
+                    , value = String.fromInt pendingTotal
+                    , tone =
+                        if pending.deadLettered > 0 then
+                            "bad"
+
+                        else
+                            "plain"
+                    , sub = String.fromInt pending.queued ++ " queued · " ++ String.fromInt pending.deadLettered ++ " DLQ"
+                    }
+                ]
+            , if List.isEmpty rulesWithIssues then
+                text ""
+
+              else
+                Ui.card
+                    [ div [ class "card-head" ]
+                        [ h3 [] [ text ("Validation issues (" ++ String.fromInt (List.length rulesWithIssues) ++ ")") ] ]
+                    , div [ class "issues" ]
+                        (List.concatMap
+                            (\rule ->
+                                List.map
+                                    (\issue ->
+                                        button
+                                            [ classList [ ( "issue", True ), ( "issue-" ++ issue.level, True ) ]
+                                            , type_ "button"
+                                            , onClick (SelectRule (Just rule.id))
+                                            ]
+                                            [ span [ class "issue-label" ] [ text rule.displayLabel ]
+                                            , span [] [ text issue.message ]
+                                            ]
+                                    )
+                                    rule.issues
+                            )
+                            rulesWithIssues
+                        )
+                    ]
+            , Ui.card
+                [ div [ class "card-head" ]
+                    [ h3 [] [ text "Top senders · 7d" ]
+                    , span [ class "card-count" ] [ text "forwarded" ]
+                    ]
+                , if List.isEmpty senders then
+                    div [ class "empty-inline" ]
+                        [ text "No forwarded senders in the last 7 days." ]
+
+                  else
+                    div [ class "sender-list" ]
+                        (List.map topSenderRow senders)
+                ]
+            , Ui.card
+                [ div [ class "card-head" ]
+                    [ h3 [] [ text "Quick navigation" ] ]
+                , p [ class "card-text" ]
+                    [ text "Select any rule on the left to inspect its destinations and stored emails. Use ↑/↓ or j/k to step through rules, e to edit the selected rule, n to create a new rule, and Esc to return here." ]
+                ]
+            ]
+        ]
+
+
+topSenderRow : Api.TopSender -> Html Msg
+topSenderRow sender =
+    button
+        [ class "sender-row"
+        , type_ "button"
+        , onClick (SetTester sender.address)
+        , title "Test this address in the pipeline tester"
+        ]
+        [ span [ class "sender-addr" ] [ text sender.address ]
+        , span [ class "sender-count" ] [ text (Format.count sender.n) ]
+        ]
 
 
 inspectorHead : Model -> Api.Rule -> Html Msg
@@ -1603,7 +1565,7 @@ actionCard rule =
 
 
 messagesCard : Model -> Api.Rule -> Html Msg
-messagesCard model rule =
+messagesCard model _ =
     let
         messages =
             model.messages
@@ -1806,7 +1768,7 @@ channelDot channel =
 
 
 
--- MODALS
+-- MODALS & BADGES
 
 
 deleteModal : Model -> Html Msg
@@ -1835,328 +1797,6 @@ deleteModal model =
             text ""
 
 
-editorModal : Model -> Html Msg
-editorModal model =
-    case ( model.editor, enabledChannels model ) of
-        ( Just editor, Just enabled ) ->
-            Ui.modal
-                { title =
-                    if storesRule editor then
-                        "Store & Forward"
-
-                    else if editor.id == Nothing then
-                        "New rule"
-
-                    else
-                        "Edit rule"
-                , onClose = CloseEditor
-                , body =
-                    [ Ui.field
-                        { id = "rule-label"
-                        , label = "Label (optional)"
-                        , value = editor.label
-                        , hint = "Leave blank to name it after the pattern and action."
-                        , placeholder = editorAutoLabel editor
-                        , type_ = "text"
-                        , required = False
-                        , onInput = EditorLabel
-                        }
-                    , patternField editor
-                    , Ui.segmented
-                        { name = "rule-action"
-                        , options = [ ( "forward", "Forward" ), ( "store", "Store" ), ( "drop", "Drop" ) ]
-                        , selected = editor.actionType
-                        , onSelect = EditorActionType
-                        , disabled = []
-                        }
-                    , if editor.actionType == "forward" then
-                        div [ class "forward-fields" ]
-                            [ destinationsField model editor enabled ]
-
-                      else if editor.actionType == "store" then
-                        Ui.toggle
-                            { id = "rule-persist"
-                            , label = "Persist the message body to the database"
-                            , checked = editor.persist
-                            , onCheck = EditorPersist
-                            }
-
-                      else
-                        p [ class "hint" ] [ text "Matching mail is silently discarded. No notification, no bounce." ]
-                    , if editor.actionType == "drop" then
-                        text ""
-
-                      else
-                        readersField editor
-                    ]
-                , footer =
-                    [ Ui.button { label = "Cancel", onClick = CloseEditor, variant = Ghost, busy = False, disabled = False }
-                    , Ui.button
-                        { label =
-                            if editor.id == Nothing then
-                                "Create rule"
-
-                            else
-                                "Save"
-                        , onClick = EditorSubmit
-                        , variant = Primary
-                        , busy = editor.submitting
-                        , disabled = False
-                        }
-                    ]
-                }
-
-        _ ->
-            text ""
-
-
-patternField : Editor -> Html Msg
-patternField editor =
-    div [ class "field" ]
-        [ Html.label [] [ text "Pattern" ]
-        , div [ class "pat-input" ]
-            [ input
-                [ A.id "rule-local"
-                , type_ "text"
-                , value editor.local
-                , placeholder "*"
-                , onInput EditorLocal
-                , E.preventDefaultOn "keydown"
-                    (D.field "key" D.string
-                        |> D.andThen
-                            (\key ->
-                                if key == "@" then
-                                    D.succeed ( EditorAt, True )
-
-                                else
-                                    D.fail "not the at key"
-                            )
-                    )
-                , A.autocomplete False
-                , A.spellcheck False
-                ]
-                []
-            , span [ class "pat-at" ] [ text "@" ]
-            , input
-                [ A.id "rule-domain"
-                , type_ "text"
-                , value editor.domain
-                , placeholder "*"
-                , onInput EditorDomain
-                , A.autocomplete False
-                , A.spellcheck False
-                ]
-                []
-            ]
-        , p [ class "hint" ]
-            [ text "* matches anything, ? matches one character. Local part before @, domain after." ]
-        ]
-
-
-{-| Inbox readers. The rule's email destinations are shown as locked chips:
-every destination is automatically a reader. Extra addresses the operator adds
-are removable. The server unions the two into the rule's effective readers.
--}
-readersField : Editor -> Html Msg
-readersField editor =
-    let
-        implicit =
-            Api.emailRecipients (editorAction editor)
-    in
-    div [ class "readers-field" ]
-        [ Html.label [] [ text "Inbox readers" ]
-        , div [ class "readers-chips" ]
-            (List.map implicitReaderChip implicit
-                ++ List.indexedMap explicitReaderChip editor.readers
-            )
-        , div [ class "dest-add-row" ]
-            [ input
-                [ class "dest-input"
-                , type_ "text"
-                , value editor.readerValue
-                , placeholder "teammate@example.com"
-                , onInput EditorReaderValue
-                , A.autocomplete False
-                , A.spellcheck False
-                ]
-                []
-            , Ui.button { label = "Add", onClick = EditorAddReader, variant = Secondary, busy = False, disabled = False }
-            ]
-        , if String.isEmpty editor.readerError then
-            text ""
-
-          else
-            p [ class "dest-error" ] [ text editor.readerError ]
-        , p [ class "hint" ]
-            [ text "Email destinations always read this rule. Add more." ]
-        ]
-
-
-implicitReaderChip : String -> Html Msg
-implicitReaderChip address =
-    span [ class "reader-chip is-locked" ]
-        [ span [ class "reader-chip-kind" ] [ text "recipient" ]
-        , span [ class "reader-chip-value" ] [ text address ]
-        , span
-            [ class "reader-chip-lock"
-            , A.title "Always a reader"
-            ]
-            [ Icons.lock ]
-        ]
-
-
-explicitReaderChip : Int -> String -> Html Msg
-explicitReaderChip index address =
-    span [ class "reader-chip" ]
-        [ span [ class "reader-chip-value" ] [ text address ]
-        , button
-            [ class "reader-chip-remove"
-            , type_ "button"
-            , attribute "aria-label" ("Remove " ++ address)
-            , A.title "Remove"
-            , onClick (EditorRemoveReader index)
-            ]
-            [ Icons.close ]
-        ]
-
-
-destinationsField : Model -> Editor -> Api.Enabled -> Html Msg
-destinationsField _ editor enabled =
-    let
-        kindOptions =
-            List.filterMap identity
-                [ Just ( "email", "Email" )
-                , if enabled.telegram then
-                    Just ( "telegram", "Telegram" )
-
-                  else
-                    Nothing
-                , if enabled.discord then
-                    Just ( "discord", "Discord" )
-
-                  else
-                    Nothing
-                ]
-    in
-    div [ class "dest-builder" ]
-        [ if List.isEmpty editor.destinations then
-            text ""
-
-          else
-            div [ class "dest-chips" ] (List.indexedMap (destChip editor.storeForward) editor.destinations)
-        , div [ class "dest-add" ]
-            [ Ui.segmented
-                { name = "dest-kind"
-                , options = kindOptions
-                , selected = editor.destKind
-                , onSelect = EditorDestKind
-                , disabled = []
-                }
-            , div [ class "dest-add-row" ]
-                [ input
-                    [ class "dest-input"
-                    , type_ "text"
-                    , value editor.destValue
-                    , placeholder (destPlaceholder editor.destKind)
-                    , onInput EditorDestValue
-                    , A.autocomplete False
-                    , A.spellcheck False
-                    ]
-                    []
-                , Ui.button { label = "Add", onClick = EditorAddDest, variant = Secondary, busy = False, disabled = False }
-                ]
-            , modifierToggles editor
-            , if String.isEmpty editor.destError then
-                text ""
-
-              else
-                p [ class "dest-error" ] [ text editor.destError ]
-            , if editor.destKind == "telegram" && not (List.isEmpty editor.chats) then
-                div [ class "dest-suggest" ] (List.map chatSuggestion editor.chats)
-
-              else
-                text ""
-            ]
-        ]
-
-
-modifierToggles : Editor -> Html Msg
-modifierToggles editor =
-    case editor.destKind of
-        "email" ->
-            div [ class "dest-mod-toggles" ]
-                [ Ui.toggle
-                    { id = "dest-store"
-                    , label = "Store a copy"
-                    , checked = editor.storeForward
-                    , onCheck = EditorStore
-                    }
-                , Ui.toggle
-                    { id = "dest-proxy"
-                    , label = "Proxy mode (default; rewrite Reply-To through the worker)"
-                    , checked = editor.destProxy
-                    , onCheck = EditorDestProxy
-                    }
-                ]
-
-        _ ->
-            text ""
-
-
-chatSuggestion : Api.TelegramChat -> Html Msg
-chatSuggestion chat =
-    button
-        [ class "dest-suggest-item"
-        , type_ "button"
-        , onClick (EditorDestValue chat.chatId)
-        ]
-        [ span [] [ text chat.label ]
-        , span [ class "dest-suggest-id" ] [ text chat.chatId ]
-        ]
-
-
-destChip : Bool -> Int -> Api.Destination -> Html Msg
-destChip stores index destination =
-    let
-        ( kind, labelText, badges ) =
-            case destination of
-                Api.Email { address, proxy } ->
-                    ( "email"
-                    , address
-                    , [ storeToggle stores, proxyToggle index proxy ]
-                    )
-
-                Api.Telegram { chatId } ->
-                    ( "telegram"
-                    , chatId
-                    , [ storeBadge True ]
-                    )
-
-                Api.Discord { channelId } ->
-                    ( "discord"
-                    , channelId
-                    , [ storeBadge True ]
-                    )
-    in
-    span [ classList [ ( "dest-chip", True ), ( kind, True ) ] ]
-        [ span [ class "dest-chip-kind" ] [ text kind ]
-        , span [ class "dest-chip-value" ] [ text labelText ]
-        , span [ class "dest-chip-mods" ] badges
-        , button
-            [ class "dest-chip-remove"
-            , type_ "button"
-            , attribute "aria-label" ("Remove " ++ labelText)
-            , A.title "Remove"
-            , onClick (EditorRemoveDest index)
-            ]
-            [ Icons.close ]
-        ]
-
-
-{-| The Store marker on a read-only destination (the inspector). Chat
-destinations always keep a copy, so the badge is locked; an email destination
-shows it only when the rule stores.
--}
 storeBadge : Bool -> Html msg
 storeBadge locked =
     span
@@ -2188,130 +1828,6 @@ storeBadge locked =
         ]
 
 
-{-| The Store control on an email destination in the editor. Store & Forward is
-an email concept, so it lives on the email pill: click to keep a copy of the
-rule's mail. Chat destinations always store, so they get the locked badge
-instead.
--}
-storeToggle : Bool -> Html Msg
-storeToggle on =
-    button
-        [ classList
-            [ ( "dest-chip-mod", True )
-            , ( "is-store", True )
-            , ( "is-toggle", True )
-            , ( if on then
-                    "is-on"
-
-                else
-                    "is-off"
-              , True
-              )
-            ]
-        , type_ "button"
-        , A.title
-            (if on then
-                "Storing. Click to stop."
-
-             else
-                "Store a copy"
-            )
-        , onClick (EditorStore (not on))
-        ]
-        [ if on then
-            Icons.check
-
-          else
-            text ""
-        , text "store"
-        ]
-
-
-{-| The Proxy control on an email destination. Proxy is per destination, so the
-pill toggles this one by index; the builder's checkbox sets it for the next
-destination added.
--}
-proxyToggle : Int -> Bool -> Html Msg
-proxyToggle index on =
-    button
-        [ classList
-            [ ( "dest-chip-mod", True )
-            , ( "is-proxy", True )
-            , ( "is-toggle", True )
-            , ( if on then
-                    "is-on"
-
-                else
-                    "is-off"
-              , True
-              )
-            ]
-        , type_ "button"
-        , A.title
-            (if on then
-                "Proxying replies. Click to stop."
-
-             else
-                "Proxy replies through the worker"
-            )
-        , onClick (EditorToggleDestProxy index)
-        ]
-        [ if on then
-            Icons.check
-
-          else
-            text ""
-        , text "proxy"
-        ]
-
-
 plainBadge : String -> Html msg
 plainBadge label_ =
     span [ class "dest-chip-mod" ] [ text label_ ]
-
-
-destPlaceholder : String -> String
-destPlaceholder kind =
-    case kind of
-        "telegram" ->
-            "-1001234567890"
-
-        "discord" ->
-            "987654321098765432"
-
-        _ ->
-            "you@example.com"
-
-
-editorAutoLabel : Editor -> String
-editorAutoLabel editor =
-    let
-        isCatch =
-            editor.local == "*" && editor.domain == "*"
-
-        prefix =
-            if isCatch then
-                "Catch-all"
-
-            else
-                editor.local ++ "@" ++ editor.domain
-
-        suffix =
-            case editor.actionType of
-                "drop" ->
-                    "drop"
-
-                "store" ->
-                    "store"
-
-                _ ->
-                    if editor.storeForward then
-                        "store & forward"
-
-                    else if List.isEmpty editor.destinations then
-                        "forward (no destinations)"
-
-                    else
-                        "forward"
-    in
-    prefix ++ " → " ++ suffix
