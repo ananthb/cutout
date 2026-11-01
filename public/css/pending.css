@@ -71,7 +71,6 @@
 }
 
 .pending-row {
-  animation: rise-in var(--dur-slow) var(--ease) both;
   transition: background var(--dur);
 }
 

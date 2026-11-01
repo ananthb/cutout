@@ -26,18 +26,6 @@ body {
   min-height: 100dvh;
 }
 
-/* A faint warm glow behind everything, so large empty areas aren't flat. */
-body::before {
-  content: "";
-  position: fixed;
-  inset: 0;
-  z-index: -1;
-  background:
-    radial-gradient(60rem 40rem at 15% -10%, color-mix(in oklab, var(--accent) 10%, transparent), transparent 60%),
-    radial-gradient(50rem 36rem at 100% 0%, color-mix(in oklab, var(--info) 8%, transparent), transparent 55%);
-  pointer-events: none;
-}
-
 button {
   font: inherit;
   color: inherit;
@@ -134,7 +122,6 @@ code,
 }
 
 .full-loader-mark {
-  font-size: 44px;
+  font-size: 40px;
   color: var(--accent);
-  animation: float 3s var(--ease) infinite;
 }

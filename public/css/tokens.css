@@ -56,15 +56,15 @@
   --shadow-md: 0 6px 18px rgba(40, 30, 20, 0.09), 0 2px 6px rgba(40, 30, 20, 0.05);
   --shadow-lg: 0 24px 60px rgba(40, 30, 20, 0.18), 0 8px 24px rgba(40, 30, 20, 0.10);
 
-  --header-h: 58px;
+  --header-h: 52px;
   --micro-h: 42px;
   --live-h: 232px;
   --live-collapsed: 40px;
 
   --ease: cubic-bezier(0.22, 1, 0.36, 1);
-  --ease-pop: cubic-bezier(0.34, 1.56, 0.64, 1);
-  --dur: 180ms;
-  --dur-slow: 340ms;
+  --ease-pop: cubic-bezier(0.16, 1, 0.3, 1);
+  --dur: 130ms;
+  --dur-slow: 200ms;
 
   color-scheme: light;
 }

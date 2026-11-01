@@ -340,7 +340,8 @@ modal :
     -> Html msg
 modal config =
     div [ class "modal-overlay" ]
-        [ div
+        [ div [ class "modal-backdrop", onClick config.onClose ] []
+        , div
             [ class "modal"
             , attribute "role" "dialog"
             , attribute "aria-modal" "true"

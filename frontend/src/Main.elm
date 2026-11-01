@@ -19,6 +19,7 @@ to the inbox, which is the only surface they can use.
 import Api
 import Browser
 import Browser.Navigation as Nav
+import Format
 import Html exposing (Html, a, button, div, main_, span, text)
 import Html.Attributes exposing (class, classList, href)
 import Html.Events exposing (onClick)
@@ -216,7 +217,7 @@ inboxPage model target =
         Nothing ->
             let
                 ( inbox, cmd ) =
-                    Inbox.init target
+                    Inbox.init model.key target
             in
             ( { model | inbox = Just inbox }, Cmd.map InboxMsg cmd )
 
@@ -308,21 +309,25 @@ subscriptions : Model -> Sub Msg
 subscriptions model =
     Sub.batch
         [ Ports.theme GotTheme
-        , case model.manage of
-            Just manage ->
+        , case ( model.route, model.manage ) of
+            ( Route.Manage, Just manage ) ->
                 Sub.map ManageMsg (Manage.subscriptions manage)
 
-            Nothing ->
+            _ ->
                 Sub.none
-        , case model.pending of
-            Just pending ->
+        , case ( model.route, model.pending ) of
+            ( Route.Pending, Just pending ) ->
                 Sub.map PendingMsg (Pending.subscriptions pending)
 
-            Nothing ->
+            _ ->
                 Sub.none
         , case model.inbox of
             Just inbox ->
-                Sub.map InboxMsg (Inbox.subscriptions inbox)
+                if isInboxRoute model.route then
+                    Sub.map InboxMsg (Inbox.subscriptions inbox)
+
+                else
+                    Sub.none
 
             Nothing ->
                 Sub.none
@@ -339,30 +344,8 @@ view model =
     , body =
         [ header model
         , main_ [ class "app-main" ] [ content model ]
-        , footer
         ]
     }
-
-
-footer : Html Msg
-footer =
-    Html.footer [ class "site-footer" ]
-        [ span [] [ text "Cutout · AGPL-3.0" ]
-        , Html.nav [ class "site-footer-links" ]
-            [ a
-                [ href "https://github.com/ananthb/cutout"
-                , Html.Attributes.target "_blank"
-                , Html.Attributes.rel "noopener"
-                ]
-                [ text "Source" ]
-            , a
-                [ href "https://www.gnu.org/licenses/agpl-3.0.html"
-                , Html.Attributes.target "_blank"
-                , Html.Attributes.rel "noopener"
-                ]
-                [ text "License" ]
-            ]
-        ]
 
 
 title : Route -> String
@@ -384,9 +367,32 @@ title route =
             "Not found — Cutout"
 
 
+activeSnapshot : Model -> Maybe Api.Snapshot
+activeSnapshot model =
+    case model.manage of
+        Just manage ->
+            RemoteData.toMaybe manage.data
+
+        Nothing ->
+            RemoteData.toMaybe model.boot
+
+
+pendingCounts : Model -> Maybe Api.PendingCounts
+pendingCounts model =
+    case model.pending |> Maybe.map .rows of
+        Just (Success rows) ->
+            Just
+                { queued = List.length (List.filter (\r -> not r.deadLettered) rows)
+                , deadLettered = List.length (List.filter .deadLettered rows)
+                }
+
+        _ ->
+            activeSnapshot model |> Maybe.map .pending
+
+
 operator : Model -> Maybe String
 operator model =
-    RemoteData.toMaybe model.boot |> Maybe.map .operator
+    activeSnapshot model |> Maybe.map .operator
 
 
 header : Model -> Html Msg
@@ -408,14 +414,15 @@ header model =
             ]
         , Html.nav [ class "site-nav" ]
             (if manageDenied model then
-                [ navLink model.route Route.Inbox "Inbox" ]
+                [ navLink model.route Route.Inbox "Inbox" [] ]
 
              else
-                [ navLink model.route Route.Manage "Rules"
-                , navLink model.route Route.Pending "Pending"
-                , navLink model.route Route.Inbox "Inbox"
+                [ navLink model.route Route.Manage "Rules" []
+                , navLink model.route Route.Pending "Pending" (pendingBadge model)
+                , navLink model.route Route.Inbox "Inbox" []
                 ]
             )
+        , headerStats model
         , div [ class "site-header-right" ]
             [ button
                 [ class "theme-toggle"
@@ -435,13 +442,65 @@ header model =
         ]
 
 
-navLink : Route -> Route -> String -> Html Msg
-navLink current target label_ =
+navLink : Route -> Route -> String -> List (Html Msg) -> Html Msg
+navLink current target label_ extras =
     a
         [ classList [ ( "nav-link", True ), ( "is-active", routeIs current target ) ]
         , href (Route.toPath target)
         ]
-        [ text label_ ]
+        (text label_ :: extras)
+
+
+pendingBadge : Model -> List (Html Msg)
+pendingBadge model =
+    case pendingCounts model of
+        Just counts ->
+            let
+                total =
+                    counts.queued + counts.deadLettered
+            in
+            if total > 0 then
+                [ span
+                    [ classList
+                        [ ( "nav-badge", True )
+                        , ( "is-bad", counts.deadLettered > 0 )
+                        , ( "is-warn", counts.deadLettered == 0 && counts.queued > 0 )
+                        ]
+                    ]
+                    [ text (String.fromInt total) ]
+                ]
+
+            else
+                []
+
+        Nothing ->
+            []
+
+
+headerStats : Model -> Html Msg
+headerStats model =
+    if manageDenied model then
+        text ""
+
+    else
+        case activeSnapshot model |> Maybe.andThen .stats of
+            Just s ->
+                div [ class "header-stats" ]
+                    [ headerStat "fwd" (Format.count s.forwardedTotal) "fwd · 7d"
+                    , headerStat "str" (Format.count s.storedTotal) "stored · 7d"
+                    , headerStat "drp" (Format.count s.droppedTotal) "dropped · 7d"
+                    ]
+
+            Nothing ->
+                text ""
+
+
+headerStat : String -> String -> String -> Html Msg
+headerStat tone value_ label_ =
+    div [ class "header-stat" ]
+        [ span [ classList [ ( "hs-value", True ), ( tone, True ) ] ] [ text value_ ]
+        , span [ class "hs-key" ] [ text label_ ]
+        ]
 
 
 {-| The Inbox tab stays lit while a message is open.

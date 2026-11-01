@@ -6,10 +6,12 @@ queue; discard cuts it loose and deletes its stored body.
 -}
 
 import Api
+import Browser.Events
 import Html exposing (Html, a, div, h1, p, section, span, table, tbody, td, text, th, thead, tr)
 import Html.Attributes as A exposing (class, classList, href, title)
 import Html.Events exposing (onClick)
 import Icons
+import Json.Decode as D
 import RemoteData exposing (RemoteData(..))
 import Route
 import Time
@@ -38,8 +40,25 @@ init =
 
 
 subscriptions : Model -> Sub Msg
-subscriptions _ =
-    Time.every 15000 (\_ -> Poll)
+subscriptions model =
+    Sub.batch
+        [ Time.every 15000 (\_ -> Poll)
+        , if model.confirmingDiscardAll then
+            Browser.Events.onKeyDown
+                (D.field "key" D.string
+                    |> D.andThen
+                        (\key ->
+                            if key == "Escape" then
+                                D.succeed CancelDiscardAll
+
+                            else
+                                D.fail "ignored"
+                        )
+                )
+
+          else
+            Sub.none
+        ]
 
 
 type Msg

@@ -15,26 +15,31 @@ pane.
 -}
 
 import Api
+import Browser.Events
+import Browser.Navigation as Nav
 import Format
 import Html exposing (Html, a, div, h1, iframe, p, pre, section, span, text)
 import Html.Attributes as A exposing (attribute, class, classList, href, type_)
 import Html.Events exposing (onClick)
 import Icons
+import Json.Decode as D
 import RemoteData exposing (RemoteData(..))
 import Ui exposing (ButtonVariant(..))
 
 
 type alias Model =
-    { data : Api.Data Api.InboxPayload
+    { key : Nav.Key
+    , data : Api.Data Api.InboxPayload
     , selected : Maybe String
     , viewing : Api.Data Api.RenderedMessage
     , loadingMore : Bool
     }
 
 
-init : Maybe String -> ( Model, Cmd Msg )
-init selected =
-    ( { data = Loading
+init : Nav.Key -> Maybe String -> ( Model, Cmd Msg )
+init key selected =
+    ( { key = key
+      , data = Loading
       , selected = selected
       , viewing =
             case selected of
@@ -87,7 +92,56 @@ select target model =
 
 subscriptions : Model -> Sub Msg
 subscriptions _ =
-    Sub.none
+    Browser.Events.onKeyDown keyDecoder
+
+
+keyDecoder : D.Decoder Msg
+keyDecoder =
+    D.map5
+        (\key tag ctrl meta alt ->
+            if ctrl || meta || alt || isInputTag tag then
+                Nothing
+
+            else
+                case key of
+                    "ArrowDown" ->
+                        Just (StepMessage 1)
+
+                    "j" ->
+                        Just (StepMessage 1)
+
+                    "ArrowUp" ->
+                        Just (StepMessage -1)
+
+                    "k" ->
+                        Just (StepMessage -1)
+
+                    _ ->
+                        Nothing
+        )
+        (D.field "key" D.string)
+        (D.oneOf [ D.at [ "target", "tagName" ] D.string, D.succeed "" ])
+        (D.oneOf [ D.field "ctrlKey" D.bool, D.succeed False ])
+        (D.oneOf [ D.field "metaKey" D.bool, D.succeed False ])
+        (D.oneOf [ D.field "altKey" D.bool, D.succeed False ])
+        |> D.andThen
+            (\maybeMsg ->
+                case maybeMsg of
+                    Just msg ->
+                        D.succeed msg
+
+                    Nothing ->
+                        D.fail "ignored"
+            )
+
+
+isInputTag : String -> Bool
+isInputTag tag =
+    let
+        upper =
+            String.toUpper tag
+    in
+    upper == "INPUT" || upper == "TEXTAREA" || upper == "SELECT"
 
 
 type Msg
@@ -95,6 +149,7 @@ type Msg
     | GotMessage (Api.Data Api.RenderedMessage)
     | LoadMore
     | GotMore (Api.Data Api.InboxPayload)
+    | StepMessage Int
 
 
 update : Msg -> Model -> ( Model, Cmd Msg )
@@ -134,6 +189,59 @@ update msg model =
 
                 _ ->
                     ( { model | loadingMore = False }, Cmd.none )
+
+        StepMessage delta ->
+            case model.data of
+                Success payload ->
+                    case stepId delta model.selected (List.map .id payload.messages) of
+                        Just nextId ->
+                            ( model, Nav.pushUrl model.key ("/inbox/" ++ nextId) )
+
+                        Nothing ->
+                            ( model, Cmd.none )
+
+                _ ->
+                    ( model, Cmd.none )
+
+
+stepId : Int -> Maybe String -> List String -> Maybe String
+stepId delta selected ids =
+    case selected of
+        Nothing ->
+            if delta >= 0 then
+                List.head ids
+
+            else
+                List.reverse ids |> List.head
+
+        Just current ->
+            let
+                indexed =
+                    List.indexedMap Tuple.pair ids
+
+                currentIdx =
+                    indexed
+                        |> List.filter (\( _, id ) -> id == current)
+                        |> List.head
+                        |> Maybe.map Tuple.first
+            in
+            case currentIdx of
+                Just idx ->
+                    let
+                        targetIdx =
+                            clamp 0 (List.length ids - 1) (idx + delta)
+                    in
+                    if targetIdx == idx then
+                        Nothing
+
+                    else
+                        indexed
+                            |> List.filter (\( i, _ ) -> i == targetIdx)
+                            |> List.head
+                            |> Maybe.map Tuple.second
+
+                Nothing ->
+                    List.head ids
 
 
 view : Model -> Html Msg
