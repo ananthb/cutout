@@ -49,10 +49,6 @@
     display: none;
   }
 
-  .ticker {
-    display: none;
-  }
-
   .inbox-page {
     grid-template-columns: 1fr;
   }
@@ -95,15 +91,6 @@
 
   .operator {
     display: none;
-  }
-
-  .microbar {
-    gap: 10px;
-    padding: 0 12px;
-  }
-
-  .ms-value {
-    font-size: 13px;
   }
 
   .pipeline-tester {

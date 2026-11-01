@@ -6,7 +6,6 @@ use worker::*;
 use super::{forward, mime, routing, send};
 use crate::db;
 use crate::events::EventKind;
-use crate::kv;
 use crate::r2;
 use crate::types::*;
 use crate::{bots, types};
@@ -82,7 +81,7 @@ pub async fn handle_email(
     }
 
     // Load and match routing rules from D1.
-    let rules = kv::get_rules(&database).await?;
+    let rules = db::get_rules(&database).await?;
     let matched_rule = routing::find_matching_rule(&rules, &local, &domain);
 
     match matched_rule {

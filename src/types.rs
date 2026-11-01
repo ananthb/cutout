@@ -1,6 +1,6 @@
 use serde::{Deserialize, Deserializer, Serialize};
 
-/// A routing rule. Rules are stored as an ordered `Vec<Rule>` in KV.
+/// A routing rule. Rules are stored as an ordered `Vec<Rule>` in D1 (`rules_state`).
 /// Evaluated top-to-bottom; first match wins.
 #[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct Rule {
@@ -393,7 +393,7 @@ fn stringify_kind_err(_kind: &str) -> &'static str {
     "unknown destination kind (use email, telegram, or discord)"
 }
 
-/// Stored in KV under `reverse:{reply+uuid@domain}` with 30-day TTL.
+/// Reverse alias mapping stored in D1 (`reverse_mappings`).
 #[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct ReverseAlias {
     /// The alias address the original email was sent to.

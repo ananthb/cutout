@@ -114,8 +114,6 @@ invocation_logs = true
 #                     dashboard stats; "Browser Rendering: Edit" enables the
 #                     in-chat screenshot for Telegram/Discord. Same token
 #                     covers both. Empty disables both.
-#   VIEWER_HMAC_KEY   Signs public token-mode viewer URLs; required only when
-#                     a chat destination uses link auth `token`.
 #
 # Plain-text values are NOT durable: `wrangler deploy` rewrites the Worker's
 # variables from this file, so a value set only as a dashboard Variable is

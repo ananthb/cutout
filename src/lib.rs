@@ -14,9 +14,8 @@
 //!
 //! ## Architecture
 //!
-//! - `kv`: routing rule storage in Cloudflare D1.
-//! - `db`: reverse-alias mappings and bot reply contexts in Cloudflare D1
-//!   (durable, no expiry).
+//! - `db`: routing rules, live events, reverse-alias mappings, stored message
+//!   metadata, pending dispatches, and bot reply contexts in Cloudflare D1.
 //! - `email`: inbound `EmailMessage.forward()` and outbound `send_email()`.
 //! - `bots`: Telegram and Discord destinations plus reply webhooks.
 //! - `api`: the JSON API the Elm app consumes.
@@ -46,12 +45,11 @@ use worker::*;
 
 mod api;
 mod bots;
-mod db;
+pub mod db;
 mod dlq;
 mod email;
 mod events;
 mod helpers;
-pub mod kv;
 mod manage;
 mod r2;
 mod retries;
@@ -59,7 +57,7 @@ mod sanitize;
 mod screenshot;
 mod shell;
 mod stats;
-mod types;
+pub mod types;
 mod validation;
 
 // --- Email event handler via wasm_bindgen ---

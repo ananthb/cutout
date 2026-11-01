@@ -46,25 +46,25 @@
 <p>To set it up manually instead, fork <a href="https://github.com/ananthb/cutout">ananthb/cutout</a>, create a Worker named <code>cutout</code>, and connect the fork under <strong>Workers &rsaquo; cutout &rsaquo; Settings &rsaquo; Builds</strong>:</p>
 <ul>
   <li><strong>Build command:</strong> leave default (runs <code>npm install</code>).</li>
-  <li><strong>Deploy command:</strong> <code>npm run deploy</code> (runs <code>cargo install -q worker-build &amp;&amp; wrangler d1 migrations apply cutout-db --remote &amp;&amp; node scripts/migrate-kv-to-d1.mjs &amp;&amp; wrangler deploy</code>).</li>
+  <li><strong>Deploy command:</strong> <code>npm run deploy</code> (runs <code>cargo install -q worker-build &amp;&amp; wrangler d1 migrations apply cutout-db --remote &amp;&amp; wrangler deploy</code>).</li>
 </ul>
 <p>Every push to <code>main</code> runs D1 migrations and deploys the Worker.</p>
 
 <h2><span class="step-num">02</span> Verify Worker bindings</h2>
 <p>Under <strong>Workers &rsaquo; cutout &rsaquo; Settings &rsaquo; Bindings</strong>, ensure these bindings match <a href="https://github.com/ananthb/cutout/blob/main/wrangler.toml">wrangler.toml</a>:</p>
 <ul>
-  <li><strong>D1:</strong> <code>DB</code> &rarr; database <code>cutout-db</code></li>
-  <li><strong>R2:</strong> <code>EMAILS</code> &rarr; bucket <code>cutout-emails</code></li>
+  <li><strong>D1:</strong> <code>DB</code> &rarr; database <code>cutout-db</code> (routing rules, live events, reverse-alias mappings, stored message metadata, pending dispatches, and bot reply contexts)</li>
+  <li><strong>R2:</strong> <code>EMAILS</code> &rarr; bucket <code>cutout-emails</code> (raw message bytes for stored mail and retries)</li>
   <li><strong>Queues:</strong> producer <code>RETRIES</code> &rarr; <code>cutout-retries</code>; consumers <code>cutout-retries</code> (with DLQ <code>cutout-retries-dlq</code>) and <code>cutout-retries-dlq</code></li>
   <li><strong>Email:</strong> send-binding <code>EMAIL</code></li>
-  <li><strong>Analytics Engine (optional):</strong> dataset <code>EVENTS</code> &rarr; <code>cutout_events</code> (enables dashboard stats)</li>
+  <li><strong>Analytics Engine (optional):</strong> dataset <code>EVENTS</code> &rarr; <code>cutout_events</code> (enables 7-day dashboard stats)</li>
 </ul>
 
 <h2><span class="step-num">03</span> Protect with Cloudflare Access &amp; set secrets</h2>
 <p>Create a <strong>Cloudflare Access</strong> application covering <code>&lt;your-cutout-host&gt;/manage/*</code> and <code>&lt;your-cutout-host&gt;/inbox/*</code>. Then add secrets under <strong>Workers &rsaquo; cutout &rsaquo; Settings &rsaquo; Variables and Secrets</strong> (always use the <strong>Secret</strong> type so <code>wrangler deploy</code> preserves them):</p>
 <ul>
   <li><strong>Required:</strong> <code>CF_ACCESS_TEAM</code> (your Access team domain) and <code>CF_ACCESS_AUD</code> (the Access application's AUD tag).</li>
-  <li><strong>Optional:</strong> <code>CF_API_TOKEN</code> (with <em>Account Analytics: Read</em> for stats panels and/or <em>Browser Rendering: Edit</em> for in-chat screenshots) + <code>CF_ACCOUNT_ID</code> (required alongside <code>CF_API_TOKEN</code>), <code>PUBLIC_BASE_URL</code> (origin for <code>/inbox</code> links in chat notifications), and <code>VIEWER_HMAC_KEY</code> (signs public token-mode viewer URLs).</li>
+  <li><strong>Optional:</strong> <code>CF_API_TOKEN</code> (with <em>Account Analytics: Read</em> for stats panels and/or <em>Browser Rendering: Edit</em> for in-chat screenshots) + <code>CF_ACCOUNT_ID</code> (required alongside <code>CF_API_TOKEN</code>), and <code>PUBLIC_BASE_URL</code> (origin for <code>/inbox</code> links in chat notifications).</li>
 </ul>
 
 <h2><span class="step-num">04</span> Configure Email Routing &amp; outbound sending</h2>

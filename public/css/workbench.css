@@ -1,6 +1,4 @@
-/* The workbench: microbar, pipeline, inspector, live feed and the rule editor.
- * This is where most of the motion lives.
- */
+/* The workbench: overview, pipeline, inspector, live feed and the rule editor. */
 
 .workbench-shell {
   flex: 1;
@@ -9,74 +7,7 @@
   flex-direction: column;
 }
 
-/* ---- microbar & overview ------------------------------------------------ */
-
-.microbar {
-  height: var(--micro-h);
-  flex-shrink: 0;
-  display: flex;
-  align-items: center;
-  gap: 16px;
-  padding: 0 18px;
-  border-bottom: 1px solid var(--line);
-  background: var(--bg-1);
-}
-
-.microstats {
-  display: flex;
-  align-items: center;
-  gap: 16px;
-}
-
-.microstat {
-  display: flex;
-  flex-direction: column;
-  line-height: 1.1;
-  gap: 1px;
-}
-
-.ms-value {
-  font-family: var(--font-mono);
-  font-size: 15px;
-  font-weight: 600;
-  transition: color var(--dur);
-}
-
-.ms-value.fwd {
-  color: var(--accent);
-}
-
-.ms-value.str {
-  color: var(--info);
-}
-
-.ms-value.drp {
-  color: var(--bad);
-}
-
-.ms-value.muted {
-  color: var(--fg-3);
-}
-
-.ms-key {
-  font-family: var(--font-mono);
-  font-size: 9.5px;
-  color: var(--fg-2);
-  text-transform: uppercase;
-  letter-spacing: 0.06em;
-}
-
-.microbar-right {
-  margin-left: auto;
-}
-
-.microbar-zone {
-  font-family: var(--font-mono);
-  font-size: 10px;
-  color: var(--fg-3);
-  text-transform: uppercase;
-  letter-spacing: 0.08em;
-}
+/* ---- overview ----------------------------------------------------------- */
 
 .overview-pane {
   flex: 1;
@@ -815,38 +746,6 @@
   transition: transform var(--dur) var(--ease-pop);
 }
 
-.embed-header {
-  display: flex;
-  flex-direction: column;
-  gap: 5px;
-  padding: 11px 13px;
-  margin-bottom: 10px;
-  border: 1px solid var(--line);
-  border-radius: var(--r-sm);
-  background: var(--bg-1);
-}
-
-.embed-row {
-  display: flex;
-  gap: 10px;
-  font-size: 12px;
-  line-height: 1.5;
-}
-
-.embed-k {
-  width: 54px;
-  flex-shrink: 0;
-  color: var(--fg-2);
-  text-transform: uppercase;
-  letter-spacing: 0.4px;
-  font-size: 10px;
-  padding-top: 2px;
-}
-
-.embed-v {
-  overflow-wrap: anywhere;
-}
-
 .email-body {
   width: 100%;
   min-height: 420px;
@@ -868,12 +767,6 @@
   line-height: 1.55;
   max-height: 70vh;
   overflow: auto;
-}
-
-.embed-footer {
-  display: flex;
-  justify-content: flex-end;
-  margin-top: 10px;
 }
 
 .load-more {
@@ -1754,10 +1647,6 @@
 .inbox-read-pane > .inbox-read-head + .inbox-read-body {
   flex: 1;
   min-height: 0;
-}
-
-.inbox-read-body .embed-header {
-  flex-shrink: 0;
 }
 
 .inbox-read-body .email-body,
