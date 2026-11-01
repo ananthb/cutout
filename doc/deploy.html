@@ -39,96 +39,66 @@
   <span class="l-eyebrow">SELF-HOST GUIDE</span>
 </div>
 <h1>Deploy your own Cutout</h1>
-<p class="lede">Cutout is self-host first. Click the Deploy to Cloudflare button (or fork manually and connect Cloudflare Builds), then finish the bindings, secrets and Cloudflare Access in the dashboard. Every push to <code>main</code> deploys to your own Worker.</p>
+<p class="lede">Deploy with the one-click Cloudflare button or connect a fork to Cloudflare Builds, then finish bindings, secrets, and Email Routing in the dashboard.</p>
 
-<h2><span class="step-num">01</span> Deploy to Cloudflare</h2>
-<p>The fastest path is the one-click Deploy button on the <a href="https://github.com/ananthb/cutout">repo README</a>. It forks <code>ananthb/cutout</code> into your account, creates a Worker, provisions the storage and queues declared in <code>wrangler.toml</code> (D1, KV, R2, Queues), and connects the fork to <strong>Cloudflare Builds</strong> so future pushes deploy automatically. The Email send-binding, Analytics Engine dataset, secrets and Access app are still dashboard steps below.</p>
-<p>If you'd rather wire it up by hand: fork <a href="https://github.com/ananthb/cutout">ananthb/cutout</a>, then in the Cloudflare dashboard create a Worker named <code>cutout</code> and connect the fork under <strong>Workers &rsaquo; cutout &rsaquo; Settings &rsaquo; Builds</strong>. Build configuration:</p>
+<h2><span class="step-num">01</span> Create the Worker &amp; connect Builds</h2>
+<p>Use the <strong>Deploy to Cloudflare</strong> button on the <a href="https://github.com/ananthb/cutout">repo README</a> to fork <code>ananthb/cutout</code>, provision D1/KV/R2/Queues from <code>wrangler.toml</code>, and connect <strong>Cloudflare Builds</strong>.</p>
+<p>To set it up manually instead, fork <a href="https://github.com/ananthb/cutout">ananthb/cutout</a>, create a Worker named <code>cutout</code>, and connect the fork under <strong>Workers &rsaquo; cutout &rsaquo; Settings &rsaquo; Builds</strong>:</p>
 <ul>
-  <li><strong>Build command:</strong> leave default (CF Builds detects <code>package.json</code> and runs <code>npm install</code>).</li>
-  <li><strong>Deploy command:</strong> <code>npm run deploy</code> &mdash; the script in <code>package.json</code> runs <code>cargo install -q worker-build &amp;&amp; wrangler d1 migrations apply cutout-db --remote &amp;&amp; wrangler deploy</code>.</li>
+  <li><strong>Build command:</strong> leave default (runs <code>npm install</code>).</li>
+  <li><strong>Deploy command:</strong> <code>npm run deploy</code> (runs <code>cargo install -q worker-build &amp;&amp; wrangler d1 migrations apply cutout-db --remote &amp;&amp; wrangler deploy</code>).</li>
+</ul>
+<p>Every push to <code>main</code> runs D1 migrations and deploys the Worker.</p>
+
+<h2><span class="step-num">02</span> Verify Worker bindings</h2>
+<p>Under <strong>Workers &rsaquo; cutout &rsaquo; Settings &rsaquo; Bindings</strong>, ensure these bindings match <a href="https://github.com/ananthb/cutout/blob/main/wrangler.toml">wrangler.toml</a>:</p>
+<ul>
+  <li><strong>D1:</strong> <code>DB</code> &rarr; database <code>cutout-db</code></li>
+  <li><strong>KV:</strong> <code>KV</code> &rarr; one namespace (any name)</li>
+  <li><strong>R2:</strong> <code>EMAILS</code> &rarr; bucket <code>cutout-emails</code></li>
+  <li><strong>Queues:</strong> producer <code>RETRIES</code> &rarr; <code>cutout-retries</code>; consumers <code>cutout-retries</code> (with DLQ <code>cutout-retries-dlq</code>) and <code>cutout-retries-dlq</code></li>
+  <li><strong>Email:</strong> send-binding <code>EMAIL</code></li>
+  <li><strong>Analytics Engine (optional):</strong> dataset <code>EVENTS</code> &rarr; <code>cutout_events</code> (enables dashboard stats)</li>
 </ul>
 
-<h2><span class="step-num">02</span> Bind resources in the dashboard</h2>
-<p>If you used the Deploy button, most bindings are already created. Otherwise create them and attach by name to the Worker under <strong>Workers &rsaquo; cutout &rsaquo; Settings &rsaquo; Bindings</strong>. The names must match the <code>binding</code> values in <code>wrangler.toml</code>:</p>
+<h2><span class="step-num">03</span> Protect with Cloudflare Access &amp; set secrets</h2>
+<p>Create a <strong>Cloudflare Access</strong> application covering <code>&lt;your-cutout-host&gt;/manage/*</code> and <code>&lt;your-cutout-host&gt;/inbox/*</code>. Then add secrets under <strong>Workers &rsaquo; cutout &rsaquo; Settings &rsaquo; Variables and Secrets</strong> (always use the <strong>Secret</strong> type so <code>wrangler deploy</code> preserves them):</p>
 <ul>
-  <li><strong>D1:</strong> <code>DB</code> &rarr; database <code>cutout-db</code> (rule storage, reverse-alias mappings, pending dispatches, bot reply contexts).</li>
-  <li><strong>KV:</strong> <code>KV</code> &rarr; one namespace, any name.</li>
-  <li><strong>R2:</strong> <code>EMAILS</code> &rarr; bucket <code>cutout-emails</code> (raw bytes for queued retries and Store-action persistence).</li>
-  <li><strong>Queues:</strong> producer <code>RETRIES</code> &rarr; <code>cutout-retries</code>; consumers <code>cutout-retries</code> (with DLQ <code>cutout-retries-dlq</code>) and <code>cutout-retries-dlq</code>.</li>
-  <li><strong>Email:</strong> send-binding <code>EMAIL</code>.</li>
-  <li><strong>Analytics Engine:</strong> dataset <code>EVENTS</code> &rarr; <code>cutout_events</code> (optional &mdash; if absent, the dashboard hides aggregated stats).</li>
+  <li><strong>Required:</strong> <code>CF_ACCESS_TEAM</code> (your Access team domain) and <code>CF_ACCESS_AUD</code> (the Access application's AUD tag).</li>
+  <li><strong>Optional:</strong> <code>CF_API_TOKEN</code> (with <em>Account Analytics: Read</em> for stats panels and/or <em>Browser Rendering: Edit</em> for in-chat screenshots) + <code>CF_ACCOUNT_ID</code> (required alongside <code>CF_API_TOKEN</code>), <code>PUBLIC_BASE_URL</code> (origin for <code>/inbox</code> links in chat notifications), and <code>VIEWER_HMAC_KEY</code> (signs public token-mode viewer URLs).</li>
 </ul>
 
-<h2><span class="step-num">03</span> Set runtime variables and secrets</h2>
-<p>Under <strong>Workers &rsaquo; cutout &rsaquo; Settings &rsaquo; Variables and Secrets</strong>, add:</p>
-<ul>
-  <li><strong>Secrets (required):</strong> <code>CF_ACCESS_TEAM</code> (your Access team domain) and <code>CF_ACCESS_AUD</code> (AUD tag of the Access app guarding <code>/manage</code> and <code>/inbox</code>; set up in step 8).</li>
-  <li><strong>Secrets (optional):</strong> <code>CF_API_TOKEN</code> &mdash; with <em>Account Analytics: Read</em> for the stats panels and/or <em>Browser Rendering: Edit</em> for in-chat screenshots. Add <code>CF_ACCOUNT_ID</code> (your Cloudflare account ID) alongside it: the stats panels and the screenshots each need <em>both</em>, and stay off if either is missing. <code>PUBLIC_BASE_URL</code> (origin used in inbox links posted to Telegram/Discord; empty suppresses the link) and <code>VIEWER_HMAC_KEY</code> (signs public token-mode viewer URLs) are optional too.</li>
-</ul>
-<p>Use the <strong>Secret</strong> type for all of these. A plain-text <strong>Variable</strong> set only in the dashboard is not durable: <code>wrangler deploy</code> rewrites the Worker's variables from <code>wrangler.toml</code>, so the next build drops it.</p>
-<p><strong>Outbound email.</strong> The <code>EMAIL</code> binding handles both send paths, and there is no backend variable to set. <strong>Proxy mode</strong> is the default for email destinations and uses <code>send_email</code>: it can reach addresses you verify under <strong>Email &rsaquo; Email Routing &rsaquo; Destination Addresses</strong>, and onboarding your sending domain to <a href="https://developers.cloudflare.com/email-service/">Email Service</a> (step 7) lifts that restriction. Cloudflare requires the <code>From</code> address to be on a domain you control, which is why proxied mail shows your alias with the original sender in the display name. <strong>Direct mode</strong> is the per-destination opt-in that uses free <a href="https://developers.cloudflare.com/email-routing/">Email Routing</a> <code>forward()</code>; it preserves the original <code>From</code>/<code>Reply-To</code> but only delivers to verified addresses. Verify each direct destination: an unverified one falls back to <code>send_email</code>, which replaces <code>From</code> with your alias.</p>
-<p>The full reference is at the bottom of <a href="https://github.com/ananthb/cutout/blob/main/wrangler.toml">wrangler.toml</a>.</p>
-
-<h2><span class="step-num">04</span> Push to <code>main</code></h2>
-<p>Cloudflare Builds runs <code>npm run deploy</code>: it installs <code>worker-build</code>, applies any pending D1 migrations, then runs <code>wrangler deploy</code>. After it succeeds, your Worker is live at <code>cutout.&lt;your-workers-subdomain&gt;.workers.dev</code> (or a custom route you've added under <strong>Settings &rsaquo; Domains &amp; Routes</strong>).</p>
-
-<h2><span class="step-num">05</span> Enable Email Routing on each domain</h2>
-<p>For every domain you want Cutout to handle, in the Cloudflare dashboard:</p>
+<h2><span class="step-num">04</span> Configure Email Routing &amp; outbound sending</h2>
 <ol>
-  <li>Open <strong>Email &rsaquo; Email Routing</strong> and click <strong>Enable</strong>.</li>
-  <li>Under <strong>Routes</strong>, edit the <strong>catch-all address</strong>, set the action to <strong>Send to a Worker</strong>, and pick the <code>cutout</code> worker.</li>
+  <li><strong>Route inbound mail:</strong> On each domain you want Cutout to handle, open <strong>Email &rsaquo; Email Routing</strong>, enable it, and set the <strong>catch-all address</strong> action to <strong>Send to a Worker &rsaquo; cutout</strong>.</li>
+  <li><strong>Verify destination addresses:</strong> Under <strong>Email &rsaquo; Email Routing &rsaquo; Destination addresses</strong>, add and confirm each personal inbox you forward to (required for Direct mode, and required for Proxy mode unless you onboard Email Service).</li>
+  <li><strong>Onboard Email Service (required for external replies):</strong> Under <strong>Email &rsaquo; Email Sending &rsaquo; Onboard Domain</strong>, onboard your domain and accept the DNS records on <code>cf-bounce.&lt;yourdomain&gt;</code> so Proxy mode and outbound replies can reach any recipient. See <a href="how-it-works.html">How it works</a> for details on Proxy vs. Direct mode.</li>
 </ol>
 
-<h2><span class="step-num">06</span> Verify destination addresses</h2>
-<p>Without Email Service onboarded, Cloudflare delivers only to addresses you have verified, so do this for each email destination (your real Gmail, a teammate, and so on). In Direct mode this also decides whether the original <code>From</code> survives: an unverified destination falls back to <code>send_email</code> and shows your alias instead.</p>
-<ol>
-  <li>Dashboard &rsaquo; <strong>Email &rsaquo; Email Routing &rsaquo; Destination addresses</strong>.</li>
-  <li>Click <strong>Add destination address</strong> and enter the address.</li>
-  <li>Click the confirmation link sent to that address.</li>
-</ol>
-
-<h2><span class="step-num">07</span> Onboard a sending domain for Email Service</h2>
-<p>Skip this if every destination is verified under Email Routing. Onboarding a domain to Email Service lets Proxy mode reach any recipient.</p>
-<ol>
-  <li>Dashboard &rsaquo; <strong>Email &rsaquo; Email Sending &rsaquo; Onboard Domain</strong>.</li>
-  <li>Accept the DNS records (MX / SPF / DKIM / DMARC) on the <code>cf-bounce.&lt;yourdomain&gt;</code> subdomain.</li>
-</ol>
-
-<h2><span class="step-num">08</span> Protect the app with Cloudflare Access</h2>
-<p>The management UI and the inbox must not be public. Create an Access application whose policy covers <code>cutout.&lt;yourdomain&gt;/manage/*</code> and <code>cutout.&lt;yourdomain&gt;/inbox/*</code> (or whichever routes you mapped to the worker). Copy the application's <strong>AUD tag</strong> and your team domain into the <code>CF_ACCESS_AUD</code> and <code>CF_ACCESS_TEAM</code> Worker variables (step 3) &mdash; Cloudflare Builds preserves them across redeploys.</p>
-
-<h2><span class="step-num">09</span> Optional: enable Telegram and Discord destinations</h2>
-<p>Skip this step if you only want to forward to email. The <code>/manage</code> editor only offers a chat channel as a destination kind once the relevant bot secrets are set on the Worker. Add them under <strong>Workers &rsaquo; cutout &rsaquo; Settings &rsaquo; Variables and Secrets &rsaquo; Secrets</strong>:</p>
+<h2><span class="step-num">05</span> Optional: Telegram &amp; Discord bots</h2>
+<p>Add bot secrets under <strong>Variables and Secrets</strong> to unlock chat destinations in <code>/manage</code>:</p>
 
 <h3>Telegram</h3>
 <ol>
-  <li>Talk to <a href="https://t.me/BotFather">@BotFather</a> on Telegram and create a bot. Copy the <strong>HTTP API token</strong>.</li>
-  <li>Add it as the secret <code>TELEGRAM_BOT_TOKEN</code> in the dashboard.</li>
-  <li><em>Optional but recommended.</em> Add the secret <code>TELEGRAM_WEBHOOK_SECRET</code> (any random string) so only Telegram can post to your worker.</li>
-  <li>Register the webhook with Telegram (replace <code>&lt;TOKEN&gt;</code> and <code>&lt;HOST&gt;</code>; the <code>secret_token</code> param is only needed if you set <code>TELEGRAM_WEBHOOK_SECRET</code>):
+  <li>Create a bot via <a href="https://t.me/BotFather">@BotFather</a> and add the token as secret <code>TELEGRAM_BOT_TOKEN</code>.</li>
+  <li>Optional: set secret <code>TELEGRAM_WEBHOOK_SECRET</code> (any random string) to authenticate webhook calls.</li>
+  <li>Register the webhook:
     <pre><code>curl -X POST "https://api.telegram.org/bot&lt;TOKEN&gt;/setWebhook" \
   -d "url=https://&lt;HOST&gt;/telegram/webhook" \
   -d "secret_token=&lt;WEBHOOK_SECRET&gt;"</code></pre>
   </li>
-  <li>Add the bot to each chat or channel you want messages forwarded to. To find a chat's <code>chat_id</code>, post anything in the chat then visit <code>https://api.telegram.org/bot&lt;TOKEN&gt;/getUpdates</code>: the integer (negative for groups, positive for DMs) is what you put in a rule destination as <code>telegram:&lt;chat_id&gt;</code>.</li>
+  <li>Post a message to your bot or group, check <code>https://api.telegram.org/bot&lt;TOKEN&gt;/getUpdates</code> for the <code>chat_id</code>, and use <code>telegram:&lt;chat_id&gt;</code> as a rule destination.</li>
 </ol>
 
 <h3>Discord</h3>
 <ol>
-  <li>Open the <a href="https://discord.com/developers/applications">Discord Developer Portal</a> and create an application. Under <strong>Bot</strong>, reset and copy the <strong>token</strong>. Under <strong>General Information</strong>, copy the <strong>Application ID</strong> and <strong>Public Key</strong>.</li>
-  <li>Add all three as Worker secrets in the dashboard: <code>DISCORD_BOT_TOKEN</code>, <code>DISCORD_APP_ID</code>, <code>DISCORD_PUBLIC_KEY</code>.</li>
-  <li>Back in the developer portal, set the <strong>Interactions Endpoint URL</strong> (under <strong>General Information</strong>) to <code>https://&lt;your-cutout-host&gt;/discord/interactions</code>. Discord pings this URL with a verification request: with the public key in place, the worker responds correctly and the URL saves.</li>
-  <li>Invite the bot to your server via OAuth2 (scope <code>bot</code>, permission <strong>Send Messages</strong> for the target channels).</li>
-  <li>For each Discord channel you want forwarded messages in, copy its <strong>Channel ID</strong> (Discord <strong>Settings &rsaquo; Advanced &rsaquo; Developer Mode</strong>, then right-click channel <strong>&rsaquo; Copy Channel ID</strong>) and use it in a rule destination as <code>discord:&lt;channel_id&gt;</code>.</li>
+  <li>Create an app in the <a href="https://discord.com/developers/applications">Discord Developer Portal</a> and add secrets <code>DISCORD_BOT_TOKEN</code>, <code>DISCORD_APP_ID</code>, and <code>DISCORD_PUBLIC_KEY</code>.</li>
+  <li>Set the <strong>Interactions Endpoint URL</strong> under <strong>General Information</strong> to <code>https://&lt;your-cutout-host&gt;/discord/interactions</code>.</li>
+  <li>Invite the bot to your server (scope <code>bot</code>, permission <strong>Send Messages</strong>) and use <code>discord:&lt;channel_id&gt;</code> as a rule destination.</li>
 </ol>
-<p>Telegram replies (Telegram's native reply) and Discord replies (the Reply button on each forwarded message) route back through Cutout to the original email sender, so the chat client becomes a fully functional mailbox for that thread.</p>
 
-<h2><span class="step-num">10</span> Add routing rules</h2>
-<p>Visit <code>https://&lt;your-cutout-host&gt;/manage</code>. Add Forward rules using glob patterns on the local part and domain. For email destinations, <strong>Proxy</strong> is on by default: replies route back through your custom domain, but Cloudflare sends from your alias (the original sender stays in the display name) and attachments are dropped. Turn it off for <strong>Direct mode</strong>, which preserves the original <code>From</code>/<code>Reply-To</code> and the raw message, at the cost of revealing your address to the sender when you reply (see <a href="how-it-works.html">How it works</a>). The <strong>Store</strong> toggle keeps a copy, which lands in <code>/inbox</code> for the rule's readers.</p>
-
-<h2>Updating</h2>
-<p>Pull from upstream into your fork's <code>main</code> branch (or merge a PR): Cloudflare Builds re-runs on every push to <code>main</code>.</p>
+<h2><span class="step-num">06</span> Add routing rules</h2>
+<p>Open <code>https://&lt;your-cutout-host&gt;/manage</code> to configure glob rules on local part and domain, toggle <strong>Proxy</strong> vs. <strong>Direct</strong> per email destination (see <a href="how-it-works.html">How it works</a>), and enable <strong>Store</strong> on rules you want archived in <code>/inbox</code>. To update your instance later, pull upstream changes into your fork's <code>main</code> branch.</p>
 
 </main>
 

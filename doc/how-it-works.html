@@ -39,50 +39,46 @@
   <span class="l-eyebrow">REFERENCE</span>
 </div>
 <h1>How it works</h1>
-<p class="lede">Cutout sits between the outside world and your real inbox, acting as an invisible relay.</p>
+<p class="lede">Cutout sits between the outside world and your real inbox, routing inbound mail and outbound replies across email, Telegram, and Discord.</p>
 
 <h2>Inbound flow</h2>
 <ol>
-  <li>An email arrives at any address on a domain pointed at Cutout (e.g. <code>newsletter@yourdomain.com</code>).</li>
-  <li>Cloudflare Email Routing's catch-all rule triggers the worker.</li>
-  <li>The worker matches the recipient against your rules, top to bottom; the first match wins.</li>
-  <li>On a Forward match, Cutout mints one <code>reply+&lt;uuid&gt;@yourdomain.com</code> reverse alias and saves the mapping in <strong>D1</strong>. The same alias is shared across every destination on the rule, so any reply lands back on the original sender.</li>
-  <li>The worker fans the message out to each destination.</li>
+  <li><strong>Catch-all intake:</strong> Mail to any address on your domain triggers Cloudflare Email Routing's catch-all rule and invokes the Cutout Worker.</li>
+  <li><strong>Rule matching:</strong> Cutout evaluates your glob rules top to bottom (first match wins) across local part and domain.</li>
+  <li><strong>Reverse-alias minting:</strong> On a Forward match, Cutout mints a single <code>reply+&lt;uuid&gt;@yourdomain.com</code> reverse alias in <strong>D1</strong> shared across all destinations on the rule.</li>
+  <li><strong>Fan-out &amp; storage:</strong> The Worker dispatches the message to each configured destination (email, Telegram, Discord) and, if <strong>Store</strong> is enabled, saves the raw MIME message in <strong>R2</strong> for <code>/inbox</code>.</li>
 </ol>
 
 <h2>Forwarding modes</h2>
-<p>Each email destination picks one of two modes. Both inject an <code>X-Original-From</code> header carrying the real sender's address, for archival.</p>
+<p>Each email destination chooses between two forwarding modes per rule (no backend env var required). Both inject an <code>X-Original-From</code> header with the real sender's address.</p>
 <div class="card-grid">
   <div class="card">
     <h4>Proxy (default)</h4>
-    <p>Uses Email Service structured send. Cloudflare requires <code>From</code> to be on your onboarded sending domain, so the address is your alias while the original sender (name and address) is carried in the display name. <code>Reply-To</code> is the reverse alias, so replies route back through Cutout. Attachments and signed MIME are dropped.</p>
+    <p>Sends via Cloudflare Email Service (<code>send_email</code>). Sets <code>From</code> to your alias (with the original sender in the display name) and <code>Reply-To</code> to the <code>reply+&lt;uuid&gt;</code> reverse alias so replies route back through Cutout. Drops attachments and signed MIME.</p>
   </div>
   <div class="card">
     <h4>Direct (opt-in)</h4>
-    <p>Uses <code>EmailMessage.forward()</code>. Original bytes pass through untouched (PGP, attachments, formatting) and the original <code>From</code>/<code>Reply-To</code> survive; Cloudflare strips other added headers. Replies go straight to the sender and reveal your address. <code>From</code> is preserved only for destinations verified under <strong>Email Routing &rsaquo; Destination Addresses</strong>; an unverified one falls back to structured send, which replaces <code>From</code> with your alias.</p>
+    <p>Calls <code>EmailMessage.forward()</code>. Passes raw bytes through untouched (attachments, PGP, original <code>From</code>/<code>Reply-To</code>), so replying goes straight to the sender from your real address. Requires the destination to be verified under <strong>Email Routing &rsaquo; Destination Addresses</strong> (unverified addresses fall back to Proxy mode).</p>
   </div>
 </div>
-<p>There is no backend variable to set: the choice is per destination.</p>
-<p>Telegram destinations use <code>sendMessage</code>; Discord destinations use <code>createMessage</code> with a Reply button. Bot reply context is keyed by <code>tg:&lt;chat_id&gt;:&lt;message_id&gt;</code> or <code>dc:&lt;channel_id&gt;:&lt;message_id&gt;</code> in D1.</p>
 
 <h2>Replies</h2>
-<p>For proxied destinations, you reply from your real mailbox, or by replying to a bot message. Either way, the worker resolves the original sender from D1 and re-sends via <code>send_email</code>, with the alias as <code>From</code> and the original sender as <code>To</code>.</p>
+<p>When you reply from a proxied email or a bot thread, Cutout looks up the original sender and alias in D1 and sends the reply via <code>send_email</code> with your alias as <code>From</code>.</p>
 <ul>
-  <li><strong>Email replies</strong> are addressed to <code>reply+&lt;uuid&gt;@yourdomain.com</code>; Email Routing fires the worker again.</li>
-  <li><strong>Bot replies</strong> arrive as a Telegram webhook or Discord interaction event, both carrying the message ID used to look up the alias.</li>
+  <li><strong>Email:</strong> Replies go to <code>reply+&lt;uuid&gt;@yourdomain.com</code>, which re-triggers the Worker via Email Routing.</li>
+  <li><strong>Telegram &amp; Discord:</strong> Telegram uses native message replies; Discord uses a <strong>Reply</strong> button on forwarded messages. Cutout records <code>tg:&lt;chat_id&gt;:&lt;message_id&gt;</code> and <code>dc:&lt;channel_id&gt;:&lt;message_id&gt;</code> in D1 to map webhook/interaction replies back to the thread.</li>
 </ul>
 
 <h2>Components</h2>
 <ul>
-  <li><strong>Cloudflare Email Routing</strong>: inbound catch-all to worker, direct-mode <code>forward()</code>, and destination-address verification.</li>
-  <li><strong>Cloudflare Email Service</strong>: proxy-mode forwarding and outbound replies.</li>
-  <li><strong>Cloudflare D1</strong>: durable storage for reverse-alias mappings and bot reply contexts. Entries don't expire, so old threads stay replyable.</li>
-  <li><strong>Cloudflare KV</strong>: routing rule list, managed via <code>/manage</code>.</li>
-  <li><strong>Cloudflare Access</strong>: guards <code>/manage</code> and <code>/inbox</code>. <code>/health</code>, <code>/telegram/webhook</code>, and <code>/discord/interactions</code> are public; the bot endpoints authenticate via secret token and Ed25519 signature.</li>
-  <li><a href="https://github.com/ananthb/botrelay-rs"><strong>botrelay-rs</strong></a>: shared Rust crate for the Telegram and Discord bot clients, used across sibling projects.</li>
+  <li><strong>Cloudflare Email Routing:</strong> Inbound catch-all trigger, Direct-mode <code>forward()</code>, and destination address verification.</li>
+  <li><strong>Cloudflare Email Service:</strong> Proxy-mode forwarding and outbound replies via <code>send_email</code>.</li>
+  <li><strong>Cloudflare D1 (<code>DB</code>):</strong> Stores routing rules, permanent reverse-alias mappings, bot reply contexts, and pending dispatches.</li>
+  <li><strong>Cloudflare R2 (<code>EMAILS</code>) &amp; Queues (<code>RETRIES</code>):</strong> Raw email storage for <code>/inbox</code> and queued delivery retries with a dead-letter queue.</li>
+  <li><strong>Cloudflare KV (<code>KV</code>):</strong> Auxiliary key-value state.</li>
+  <li><strong>Cloudflare Access:</strong> Guards <code>/manage</code> and <code>/inbox</code>. Public endpoints (<code>/health</code>, <code>/telegram/webhook</code>, <code>/discord/interactions</code>) verify bot secret tokens or Ed25519 signatures.</li>
+  <li><strong><a href="https://github.com/ananthb/botrelay-rs">botrelay-rs</a>:</strong> Shared Rust crate for the Telegram and Discord bot clients.</li>
 </ul>
-
-<p>Any number of Cloudflare zones can point at the same worker; <code>domain</code> globs in your rules separate them, and reverse-aliases are derived from the domain the mail arrived on.</p>
 
 </main>
 

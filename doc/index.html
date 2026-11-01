@@ -11,16 +11,16 @@
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="style.css">
 <style>
-.hero { padding: 60px 32px 32px; text-align: center; }
+.hero { padding: 60px 32px 36px; text-align: center; }
 .hero h1 {
   margin: 16px 0 0;
-  font-size: clamp(36px, 5vw, 60px);
+  font-size: clamp(36px, 5vw, 58px);
   font-weight: 600;
   letter-spacing: -0.02em;
-  line-height: 1.05;
+  line-height: 1.06;
 }
 .hero h1 .accent { color: var(--accent); }
-.hero p { font-size: 16.5px; color: var(--fg-1); margin: 16px auto 0; max-width: 620px; }
+.hero p { font-size: 16px; color: var(--fg-1); margin: 16px auto 0; max-width: 580px; line-height: 1.55; }
 .hero .ctas { display: flex; gap: 10px; justify-content: center; margin-top: 22px; }
 
 .flow-section {
@@ -29,10 +29,8 @@
   border-bottom: 1px solid var(--line);
 }
 .flow-section .inner { padding: 40px 32px; }
-.flow-svg { display: block; width: 100%; height: 280px; }
-.flow-packet { transition: transform 0.7s cubic-bezier(.4, 0, .2, 1); }
-#packet-rect { transition: fill 0.4s ease; }
-.steps { display: grid; grid-template-columns: repeat(4, 1fr); gap: 14px; margin-top: 30px; }
+.flow-svg { display: block; width: 100%; height: 260px; }
+.steps { display: grid; grid-template-columns: repeat(4, 1fr); gap: 16px; margin-top: 28px; }
 .step .n {
   font-family: var(--font-mono);
   font-size: 11px;
@@ -43,7 +41,7 @@
 .step h4 { margin: 4px 0 0; font-size: 15px; font-weight: 600; }
 .step p { margin: 4px 0 0; font-size: 12.5px; color: var(--fg-1); line-height: 1.55; }
 
-.channels-section { padding: 50px 0; border-bottom: 1px solid var(--line); text-align: center; }
+.channels-section { padding: 52px 0; border-bottom: 1px solid var(--line); text-align: center; }
 .channels-section h2 { margin: 8px 0 24px; font-size: 28px; font-weight: 600; }
 .channels-grid {
   display: grid; grid-template-columns: repeat(3, 1fr);
@@ -54,7 +52,7 @@
   border: 1px solid var(--line-2);
   border-radius: 10px;
   padding: 20px;
-  display: flex; flex-direction: column; align-items: center; gap: 10px;
+  display: flex; flex-direction: column; align-items: center; gap: 8px;
 }
 .channel-card .icon-wrap {
   width: 44px; height: 44px; border-radius: 10px;
@@ -64,17 +62,17 @@
 .channel-card .icon-wrap.discord  { background: color-mix(in oklch, var(--ch-discord) 18%, transparent);  color: var(--ch-discord); }
 .channel-card .icon-wrap.telegram { background: color-mix(in oklch, var(--ch-telegram) 18%, transparent); color: var(--ch-telegram); }
 .channel-card .name { font-size: 15px; font-weight: 600; }
-.channel-card .desc { font-size: 12px; color: var(--fg-2); text-align: center; }
+.channel-card .desc { font-size: 12.5px; color: var(--fg-2); text-align: center; }
 
-.features-section { padding: 60px 0; }
-.features-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 28px; }
+.features-section { padding: 56px 0; }
+.features-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 24px; }
 .feature-card {
   padding: 24px;
   background: var(--bg-1);
   border: 1px solid var(--line-2);
   border-radius: 10px;
 }
-.feature-card h3 { margin: 8px 0 12px; font-size: 22px; font-weight: 600; }
+.feature-card h3 { margin: 8px 0 12px; font-size: 21px; font-weight: 600; }
 .feature-card ul {
   margin: 0; padding: 0; list-style: none;
   display: flex; flex-direction: column; gap: 10px;
@@ -87,15 +85,14 @@
 .feature-card li .marker.chev { font-family: var(--font-mono); }
 
 .deploy-section {
-  padding: 70px 0;
+  padding: 64px 0;
   background: var(--bg-1);
   border-top: 1px solid var(--line);
   text-align: center;
 }
-.deploy-section h2 { margin: 0; font-size: 36px; font-weight: 600; letter-spacing: -0.01em; }
-.deploy-section p { font-size: 14.5px; color: var(--fg-1); max-width: 540px; margin: 8px auto 22px; }
-.deploy-section .l-cta { height: 44px; padding: 0 20px; }
-.deploy-section .full-guide { display: block; margin-top: 14px; font-size: 12.5px; color: var(--fg-2); }
+.deploy-section h2 { margin: 0; font-size: 32px; font-weight: 600; letter-spacing: -0.01em; }
+.deploy-section p { font-size: 14.5px; color: var(--fg-1); max-width: 500px; margin: 8px auto 22px; }
+.deploy-section .l-cta { height: 42px; padding: 0 20px; }
 
 @media (max-width: 720px) {
   .steps { grid-template-columns: repeat(2, 1fr); }
@@ -129,89 +126,97 @@
   <span class="l-eyebrow">EMAIL ALIAS PROXY &middot; CLOUDFLARE WORKERS &middot; OPEN SOURCE</span>
   <h1>
     Unlimited email aliases.<br>
-    <span class="accent">Reply without leaking your real address.</span>
+    <span class="accent">Reply without leaking your address.</span>
   </h1>
-  <p>Cutout watches every email going to your domain, rewrites the headers, and forwards it to where you actually live: email, Discord, or Telegram. Reply, and it gets sent back as an email to the original sender. Clone the repo, run it on Cloudflare Workers, keep it forever.</p>
+  <p>Cutout receives mail for your domain, matches glob rules, and forwards to your inbox, Discord, or Telegram. Reply from any of them and Cutout sends it back from the alias.</p>
   <div class="ctas">
-    <a class="l-cta" href="deploy.html">Get started &#8599;</a>
-    <a class="l-cta ghost" href="#flow">See the flow</a>
+    <a class="l-cta" href="deploy.html">Deploy guide &#8599;</a>
+    <a class="l-cta ghost" href="how-it-works.html">How it works</a>
   </div>
 </section>
 
 <section id="flow" class="flow-section">
   <div class="l-container inner">
-    <svg class="flow-svg" viewBox="0 0 1000 280" aria-label="Email flow: sender to alias to Cutout, fanning out to email, Discord, Telegram">
-      <line x1="60" y1="140" x2="560" y2="140" stroke="var(--line-2)" stroke-width="1.5" stroke-dasharray="4 6"/>
+    <svg class="flow-svg" viewBox="0 0 1000 260" aria-label="Email flow: sender to alias to Cutout, fanning out to email, Discord, and Telegram, with replies routing back through the alias">
+      <defs>
+        <marker id="arrow-fwd" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="6" markerHeight="6" orient="auto">
+          <path d="M 0 1 L 7 4 L 0 7 Z" fill="var(--accent)"/>
+        </marker>
+        <marker id="arrow-reply" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="6" markerHeight="6" orient="auto">
+          <path d="M 0 1 L 7 4 L 0 7 Z" fill="var(--info)"/>
+        </marker>
+      </defs>
 
-      <path d="M 560 140 Q 700 140 820 80"  fill="none" stroke="var(--line-2)" stroke-width="1" stroke-dasharray="3 5"/>
-      <path d="M 560 140 Q 700 140 820 140" fill="none" stroke="var(--line-2)" stroke-width="1" stroke-dasharray="3 5"/>
-      <path d="M 560 140 Q 700 140 820 200" fill="none" stroke="var(--line-2)" stroke-width="1" stroke-dasharray="3 5"/>
+      <!-- Forward paths -->
+      <line x1="92" y1="125" x2="258" y2="125" stroke="var(--accent)" stroke-width="1.6" marker-end="url(#arrow-fwd)"/>
+      <line x1="336" y1="125" x2="518" y2="125" stroke="var(--accent)" stroke-width="1.6" marker-end="url(#arrow-fwd)"/>
+      <path d="M 596 125 Q 700 125 762 65"  fill="none" stroke="var(--accent)" stroke-width="1.5" marker-end="url(#arrow-fwd)"/>
+      <path d="M 596 125 L 762 125"         fill="none" stroke="var(--accent)" stroke-width="1.5" marker-end="url(#arrow-fwd)"/>
+      <path d="M 596 125 Q 700 125 762 185" fill="none" stroke="var(--accent)" stroke-width="1.5" marker-end="url(#arrow-fwd)"/>
 
-      <g transform="translate(60 140)">
-        <circle r="22" fill="var(--bg-1)" stroke="var(--fg-2)" stroke-width="1.6"/>
-        <text text-anchor="middle" y="5" font-size="12" font-family="var(--font-mono)" fill="var(--fg-2)">&#9679;</text>
-        <text text-anchor="middle" y="46" font-size="13" font-weight="600" fill="var(--fg)">sender</text>
-        <text text-anchor="middle" y="62" font-size="11" font-family="var(--font-mono)" fill="var(--fg-3)">github@&hellip;</text>
-      </g>
-      <g transform="translate(300 140)">
-        <circle r="30" fill="var(--bg-1)" stroke="var(--accent)" stroke-width="1.6"/>
-        <text text-anchor="middle" y="6" font-size="14" font-family="var(--font-mono)" fill="var(--accent)">&#9679;</text>
-        <text text-anchor="middle" y="56" font-size="13" font-weight="600" fill="var(--fg)">alias</text>
-        <text text-anchor="middle" y="72" font-size="11" font-family="var(--font-mono)" fill="var(--fg-3)">gh+rust@alias.dev</text>
-      </g>
-      <g transform="translate(560 140)">
-        <circle r="30" fill="var(--bg-1)" stroke="var(--accent)" stroke-width="1.6"/>
-        <text text-anchor="middle" y="6" font-size="14" font-family="var(--font-mono)" fill="var(--accent)">&#9679;</text>
-        <text text-anchor="middle" y="56" font-size="13" font-weight="600" fill="var(--fg)">Cutout</text>
-        <text text-anchor="middle" y="72" font-size="11" font-family="var(--font-mono)" fill="var(--fg-3)">rule r_a4lq</text>
-      </g>
+      <!-- Reply return arc -->
+      <path d="M 545 92 Q 310 32 82 94" fill="none" stroke="var(--info)" stroke-width="1.4" stroke-dasharray="4 4" marker-end="url(#arrow-reply)"/>
+      <text x="315" y="48" text-anchor="middle" font-size="11" font-family="var(--font-mono)" fill="var(--info)">reply via reverse alias (reply+&lt;uuid&gt;)</text>
 
-      <g transform="translate(820 80)">
-        <rect x="-50" y="-15" width="120" height="30" rx="6" fill="var(--bg-1)" stroke="var(--ch-email)" stroke-width="1.2"/>
-        <circle cx="-40" cy="0" r="3" fill="var(--ch-email)"/>
-        <text x="-30" y="5" font-size="11" font-family="var(--font-mono)" fill="var(--ch-email)" font-weight="600">email</text>
-      </g>
-      <g transform="translate(820 140)">
-        <rect x="-50" y="-15" width="120" height="30" rx="6" fill="var(--bg-1)" stroke="var(--ch-discord)" stroke-width="1.2"/>
-        <circle cx="-40" cy="0" r="3" fill="var(--ch-discord)"/>
-        <text x="-30" y="5" font-size="11" font-family="var(--font-mono)" fill="var(--ch-discord)" font-weight="600">discord</text>
-      </g>
-      <g transform="translate(820 200)">
-        <rect x="-50" y="-15" width="120" height="30" rx="6" fill="var(--bg-1)" stroke="var(--ch-telegram)" stroke-width="1.2"/>
-        <circle cx="-40" cy="0" r="3" fill="var(--ch-telegram)"/>
-        <text x="-30" y="5" font-size="11" font-family="var(--font-mono)" fill="var(--ch-telegram)" font-weight="600">telegram</text>
+      <!-- Nodes -->
+      <g transform="translate(65 125)">
+        <circle r="24" fill="var(--bg)" stroke="var(--fg-2)" stroke-width="1.6"/>
+        <circle r="4" fill="var(--fg-2)"/>
+        <text text-anchor="middle" y="44" font-size="13" font-weight="600" fill="var(--fg)">sender</text>
+        <text text-anchor="middle" y="60" font-size="11" font-family="var(--font-mono)" fill="var(--fg-2)">github@&hellip;</text>
       </g>
 
-      <g id="packet" class="flow-packet" style="transform: translate(60px, 140px);">
-        <rect id="packet-rect" x="-12" y="-8" width="24" height="16" rx="2" fill="var(--accent)"/>
-        <path d="M -12 -8 L 0 2 L 12 -8" fill="none" stroke="var(--accent-fg)" stroke-width="1.2"/>
+      <g transform="translate(298 125)">
+        <circle r="30" fill="var(--bg)" stroke="var(--accent)" stroke-width="1.6"/>
+        <circle r="4.5" fill="var(--accent)"/>
+        <text text-anchor="middle" y="52" font-size="13" font-weight="600" fill="var(--fg)">alias</text>
+        <text text-anchor="middle" y="68" font-size="11" font-family="var(--font-mono)" fill="var(--fg-2)">gh+rust@alias.dev</text>
       </g>
 
-      <text x="180" y="266" text-anchor="middle" font-size="10.5" font-family="var(--font-mono)" fill="var(--fg-3)">1. inbound mail</text>
-      <text x="430" y="266" text-anchor="middle" font-size="10.5" font-family="var(--font-mono)" fill="var(--fg-3)">2. match rule</text>
-      <text x="700" y="266" text-anchor="middle" font-size="10.5" font-family="var(--font-mono)" fill="var(--fg-3)">3. fan out, then reply via cutout</text>
+      <g transform="translate(560 125)">
+        <circle r="30" fill="var(--bg)" stroke="var(--accent)" stroke-width="1.6"/>
+        <circle r="4.5" fill="var(--accent)"/>
+        <text text-anchor="middle" y="52" font-size="13" font-weight="600" fill="var(--fg)">Cutout</text>
+        <text text-anchor="middle" y="68" font-size="11" font-family="var(--font-mono)" fill="var(--fg-2)">rule r_a4lq</text>
+      </g>
+
+      <g transform="translate(835 65)">
+        <rect x="-65" y="-15" width="130" height="30" rx="6" fill="var(--bg)" stroke="var(--ch-email)" stroke-width="1.2"/>
+        <circle cx="-50" cy="0" r="3.5" fill="var(--ch-email)"/>
+        <text x="-38" y="4" font-size="11.5" font-family="var(--font-mono)" fill="var(--ch-email)" font-weight="600">email</text>
+      </g>
+      <g transform="translate(835 125)">
+        <rect x="-65" y="-15" width="130" height="30" rx="6" fill="var(--bg)" stroke="var(--ch-discord)" stroke-width="1.2"/>
+        <circle cx="-50" cy="0" r="3.5" fill="var(--ch-discord)"/>
+        <text x="-38" y="4" font-size="11.5" font-family="var(--font-mono)" fill="var(--ch-discord)" font-weight="600">discord</text>
+      </g>
+      <g transform="translate(835 185)">
+        <rect x="-65" y="-15" width="130" height="30" rx="6" fill="var(--bg)" stroke="var(--ch-telegram)" stroke-width="1.2"/>
+        <circle cx="-50" cy="0" r="3.5" fill="var(--ch-telegram)"/>
+        <text x="-38" y="4" font-size="11.5" font-family="var(--font-mono)" fill="var(--ch-telegram)" font-weight="600">telegram</text>
+      </g>
     </svg>
 
     <div class="steps">
       <div class="step">
         <span class="n">STEP 01</span>
-        <h4>Point your domain</h4>
-        <p>at Cutout. Inbound mail starts arriving.</p>
+        <h4>Catch-all intake</h4>
+        <p>Email Routing sends inbound mail for your domain to the Cutout Worker.</p>
       </div>
       <div class="step">
         <span class="n">STEP 02</span>
-        <h4>Configure rules</h4>
-        <p>via the management UI: glob patterns plus actions.</p>
+        <h4>First-match rules</h4>
+        <p>Ordered glob rules match the recipient and select destinations.</p>
       </div>
       <div class="step">
         <span class="n">STEP 03</span>
-        <h4>Mail gets rewritten</h4>
-        <p>headers updated, forwarded to your real address.</p>
+        <h4>Multi-channel fan-out</h4>
+        <p>Forwards to your real inbox, Discord channels, or Telegram chats.</p>
       </div>
       <div class="step">
         <span class="n">STEP 04</span>
-        <h4>Replies route back</h4>
-        <p>through the alias. Your real address never leaks.</p>
+        <h4>Reverse-alias replies</h4>
+        <p>Replies route back through D1 mappings so your real address stays private.</p>
       </div>
     </div>
   </div>
@@ -219,29 +224,29 @@
 
 <section class="channels-section">
   <div class="l-container">
-    <span class="l-eyebrow">CHANNELS</span>
-    <h2>Forward anywhere you already chat.</h2>
+    <span class="l-eyebrow">DESTINATIONS</span>
+    <h2>Forward wherever you read messages.</h2>
     <div class="channels-grid">
       <div class="channel-card">
         <span class="icon-wrap email">
           <svg width="20" height="20" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6"><rect x="2.5" y="4" width="15" height="12" rx="2"/><path d="M 3 5.5 L 10 11 L 17 5.5"/></svg>
         </span>
-        <span class="name">Inbox</span>
-        <span class="desc">your real one, headers rewritten</span>
+        <span class="name">Email</span>
+        <span class="desc">Proxy with reverse-alias replies, or direct pass-through</span>
       </div>
       <div class="channel-card">
         <span class="icon-wrap discord">
           <svg width="20" height="20" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M 5 5 Q 10 3.5 15 5 L 16.5 13.5 Q 13.5 15.5 10 15.5 Q 6.5 15.5 3.5 13.5 Z"/><circle cx="7.5" cy="10" r="1" fill="currentColor"/><circle cx="12.5" cy="10" r="1" fill="currentColor"/></svg>
         </span>
         <span class="name">Discord</span>
-        <span class="desc">post to a channel via webhook</span>
+        <span class="desc">Channel messages with an interactive Reply button</span>
       </div>
       <div class="channel-card">
         <span class="icon-wrap telegram">
           <svg width="20" height="20" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M 2.5 9.5 L 17 3.5 L 14.5 16.5 L 9.5 12.5 L 13.5 6.5 L 7.5 11 L 2.5 9.5 Z"/></svg>
         </span>
         <span class="name">Telegram</span>
-        <span class="desc">DM, group, or bot chat</span>
+        <span class="desc">DMs or group chats with native reply support</span>
       </div>
     </div>
   </div>
@@ -250,23 +255,23 @@
 <section id="features" class="features-section">
   <div class="l-container features-grid">
     <div class="feature-card">
-      <span class="l-eyebrow">FOR YOU</span>
-      <h3>Stop giving away your real address.</h3>
+      <span class="l-eyebrow">PRIVACY</span>
+      <h3>Keep your real address off the web.</h3>
       <ul>
-        <li><span class="marker"><svg width="13" height="13" viewBox="0 0 13 13" fill="none" stroke="currentColor" stroke-width="2"><path d="M 2 7 L 5 10 L 11 3"/></svg></span>Make a fresh alias for any site or service</li>
-        <li><span class="marker"><svg width="13" height="13" viewBox="0 0 13 13" fill="none" stroke="currentColor" stroke-width="2"><path d="M 2 7 L 5 10 L 11 3"/></svg></span>Get the mail in your inbox, Discord, or Telegram</li>
-        <li><span class="marker"><svg width="13" height="13" viewBox="0 0 13 13" fill="none" stroke="currentColor" stroke-width="2"><path d="M 2 7 L 5 10 L 11 3"/></svg></span>Reply directly. They never see your real address</li>
-        <li><span class="marker"><svg width="13" height="13" viewBox="0 0 13 13" fill="none" stroke="currentColor" stroke-width="2"><path d="M 2 7 L 5 10 L 11 3"/></svg></span>Burn the alias when it leaks</li>
+        <li><span class="marker"><svg width="13" height="13" viewBox="0 0 13 13" fill="none" stroke="currentColor" stroke-width="2"><path d="M 2 7 L 5 10 L 11 3"/></svg></span>Invent aliases on the fly for any sign-up</li>
+        <li><span class="marker"><svg width="13" height="13" viewBox="0 0 13 13" fill="none" stroke="currentColor" stroke-width="2"><path d="M 2 7 L 5 10 L 11 3"/></svg></span>Route mail to email, Discord, Telegram, or the built-in web inbox</li>
+        <li><span class="marker"><svg width="13" height="13" viewBox="0 0 13 13" fill="none" stroke="currentColor" stroke-width="2"><path d="M 2 7 L 5 10 L 11 3"/></svg></span>Reply from your mailbox or chat client as the alias</li>
+        <li><span class="marker"><svg width="13" height="13" viewBox="0 0 13 13" fill="none" stroke="currentColor" stroke-width="2"><path d="M 2 7 L 5 10 L 11 3"/></svg></span>Drop noisy or leaked aliases with a single rule</li>
       </ul>
     </div>
     <div class="feature-card">
-      <span class="l-eyebrow">FOR HOSTERS</span>
-      <h3>One small binary. Yours.</h3>
+      <span class="l-eyebrow">ARCHITECTURE</span>
+      <h3>Single Rust Worker on your own account.</h3>
       <ul>
-        <li><span class="marker chev">&rsaquo;</span>Rust compiled to WASM, runs on Cloudflare Workers</li>
-        <li><span class="marker chev">&rsaquo;</span>Glob-based routing rules, ordered, first-match</li>
-        <li><span class="marker chev">&rsaquo;</span>Reverse aliases stored in D1 for permanent replyability</li>
-        <li><span class="marker chev">&rsaquo;</span>Admin UI gated by Cloudflare Access</li>
+        <li><span class="marker chev">&rsaquo;</span>Rust + Elm compiled to WASM on Cloudflare Workers</li>
+        <li><span class="marker chev">&rsaquo;</span>First-match glob rules across multiple domains</li>
+        <li><span class="marker chev">&rsaquo;</span>Durable reverse-alias mappings in D1 and raw message storage in R2</li>
+        <li><span class="marker chev">&rsaquo;</span>Management UI and web inbox protected by Cloudflare Access</li>
       </ul>
     </div>
   </div>
@@ -274,10 +279,9 @@
 
 <section id="deploy" class="deploy-section">
   <div class="l-container">
-    <h2>Run your own. In a minute.</h2>
-    <p>I'm not trying to sell you anything. AGPL-licensed. Yours forever.</p>
-    <a class="l-cta" href="deploy.html">Get started &#8599;</a>
-    <a class="full-guide" href="deploy.html">Read the full deploy guide</a>
+    <h2>Self-host on Cloudflare Workers.</h2>
+    <p>Free, open source, and AGPL-3.0 licensed. Deploy your own instance in a few minutes.</p>
+    <a class="l-cta" href="deploy.html">Read the deploy guide &#8599;</a>
   </div>
 </section>
 
@@ -286,45 +290,12 @@
     <span>Cutout &middot; open source &middot; AGPL-3.0</span>
     <span class="links">
       <a href="how-it-works.html">How it works</a>
+      <a href="deploy.html">Deploy</a>
       <a href="https://github.com/ananthb/cutout">GitHub</a>
       <a href="https://www.gnu.org/licenses/agpl-3.0.html">License</a>
     </span>
   </div>
 </footer>
-
-<script>
-(function () {
-  var packet = document.getElementById('packet');
-  var rect = document.getElementById('packet-rect');
-  if (!packet || !rect) return;
-  // Forward (orange): pause at each stop. Reply (blue): shoot through
-  // cutout and alias without stopping, halt only when the mail lands.
-  // [x, y, holdMs] — holdMs is dwell at this position before the next tick.
-  var steps = [
-    [60, 140, 1300],   // 0  sender
-    [300, 140, 1300],  // 1  alias
-    [560, 140, 1300],  // 2  cutout
-    [820, 80, 1300],   // 3  email
-    [820, 140, 1300],  // 4  discord
-    [820, 200, 1300],  // 5  telegram
-    [560, 105, 220],   // 6  reply: through cutout (no stop)
-    [300, 110, 220],   // 7  reply: through alias (no stop)
-    [60, 110, 1500],   // 8  reply: lands at sender
-  ];
-  var REPLY_FROM = 6;
-  if (window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches) return;
-  var i = 0;
-  function tick() {
-    var s = steps[i];
-    packet.style.transform = 'translate(' + s[0] + 'px, ' + s[1] + 'px)';
-    rect.setAttribute('fill', i >= REPLY_FROM ? 'var(--info)' : 'var(--accent)');
-    var hold = s[2];
-    i = (i + 1) % steps.length;
-    setTimeout(tick, hold);
-  }
-  tick();
-})();
-</script>
 
 </body>
 </html>
