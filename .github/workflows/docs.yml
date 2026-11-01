@@ -25,23 +25,25 @@ jobs:
       name: github-pages
       url: ${{ steps.deploy.outputs.page_url }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
-      - uses: DeterminateSystems/nix-installer-action@main
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+
+      - uses: actions/setup-node@v4
         with:
-          extra-conf: |
-            extra-substituters = https://cache.garnix.io
-            extra-trusted-public-keys = cache.garnix.io:CTFPyKSLcx5RMJKfLo5EEPUObbA78b0YQ2DTCJXqr9g=
+          node-version: '20'
+          cache: 'npm'
 
       # build.rs hashes public/app.js for the shell's integrity attributes, so
       # the frontend has to exist before the crate compiles at all -- including
-      # a docs build, which never reaches rustdoc without it. elm comes from
-      # the devShell, so no npm install is needed here.
+      # a docs build, which never reaches rustdoc without it.
       - name: Build frontend (required by build.rs)
-        run: nix develop -c ./scripts/build-frontend.sh
+        run: npm ci && npm run build:frontend
 
       - name: Build API documentation
-        run: nix develop -c cargo doc --no-deps
+        run: cargo doc --no-deps
 
       - name: Assemble site
         run: |

@@ -20,12 +20,14 @@ cd "$(dirname "$0")/.."
 # reason: it compiles the artifact that gets deployed, so an install that
 # omits dev packages — `NODE_ENV=production`, `npm ci --omit=dev` — must still
 # produce a working build.
-if command -v elm >/dev/null 2>&1; then
+if command -v elm >/dev/null 2>&1 && [ "$(elm --version 2>/dev/null)" = "0.19.2" ]; then
     ELM=elm
 elif [ -x node_modules/.bin/elm ]; then
     # Absolute: the compiler runs from frontend/ below, so a relative path
     # would resolve against the wrong directory.
     ELM="$PWD/node_modules/.bin/elm"
+elif command -v elm >/dev/null 2>&1; then
+    ELM=elm
 else
     # Deliberately not falling back to `npx elm`, which would fetch some
     # arbitrary version off the network mid-build. Fail with the fix instead.
