@@ -18,11 +18,12 @@ import Api
 import Browser.Events
 import Browser.Navigation as Nav
 import Format
-import Html exposing (Html, a, div, h1, iframe, p, pre, section, span, text)
-import Html.Attributes as A exposing (attribute, class, classList, href, type_)
-import Html.Events exposing (onClick)
+import Html exposing (Html, a, button, div, h1, input, section, span, text)
+import Html.Attributes as A exposing (autocomplete, class, classList, href, placeholder, spellcheck, title, type_, value)
+import Html.Events exposing (onClick, onInput)
 import Icons
 import Json.Decode as D
+import Page.Inbox.Reader as Reader
 import RemoteData exposing (RemoteData(..))
 import Ui exposing (ButtonVariant(..))
 
@@ -33,6 +34,9 @@ type alias Model =
     , selected : Maybe String
     , viewing : Api.Data Api.RenderedMessage
     , loadingMore : Bool
+    , refreshing : Bool
+    , search : String
+    , ruleFilter : Maybe String
     }
 
 
@@ -49,6 +53,9 @@ init key selected =
                 Nothing ->
                     NotAsked
       , loadingMore = False
+      , refreshing = False
+      , search = ""
+      , ruleFilter = Nothing
       }
     , Cmd.batch
         [ Api.getInbox { before = Nothing } GotInbox
@@ -116,6 +123,12 @@ keyDecoder =
                     "k" ->
                         Just (StepMessage -1)
 
+                    "Escape" ->
+                        Just CloseMessage
+
+                    "r" ->
+                        Just Refresh
+
                     _ ->
                         Nothing
         )
@@ -149,6 +162,11 @@ type Msg
     | GotMessage (Api.Data Api.RenderedMessage)
     | LoadMore
     | GotMore (Api.Data Api.InboxPayload)
+    | Refresh
+    | SetSearch String
+    | ClearSearch
+    | SetRuleFilter (Maybe String)
+    | CloseMessage
     | StepMessage Int
 
 
@@ -156,7 +174,7 @@ update : Msg -> Model -> ( Model, Cmd Msg )
 update msg model =
     case msg of
         GotInbox result ->
-            ( { model | data = result }, Cmd.none )
+            ( { model | data = result, refreshing = False }, Cmd.none )
 
         GotMessage result ->
             ( { model | viewing = result }, Cmd.none )
@@ -190,10 +208,48 @@ update msg model =
                 _ ->
                     ( { model | loadingMore = False }, Cmd.none )
 
+        Refresh ->
+            ( { model | refreshing = True }
+            , Cmd.batch
+                [ Api.getInbox { before = Nothing } GotInbox
+                , case model.selected of
+                    Just id ->
+                        Api.getInboxMessage id GotMessage
+
+                    Nothing ->
+                        Cmd.none
+                ]
+            )
+
+        SetSearch query ->
+            ( { model | search = query }, Cmd.none )
+
+        ClearSearch ->
+            ( { model | search = "" }, Cmd.none )
+
+        SetRuleFilter target ->
+            let
+                nextFilter =
+                    if model.ruleFilter == target then
+                        Nothing
+
+                    else
+                        target
+            in
+            ( { model | ruleFilter = nextFilter }, Cmd.none )
+
+        CloseMessage ->
+            ( model, Nav.pushUrl model.key "/inbox" )
+
         StepMessage delta ->
             case model.data of
                 Success payload ->
-                    case stepId delta model.selected (List.map .id payload.messages) of
+                    let
+                        ids =
+                            visibleMessages model payload
+                                |> List.map .id
+                    in
+                    case stepId delta model.selected ids of
                         Just nextId ->
                             ( model, Nav.pushUrl model.key ("/inbox/" ++ nextId) )
 
@@ -244,9 +300,70 @@ stepId delta selected ids =
                     List.head ids
 
 
+visibleMessages : Model -> Api.InboxPayload -> List Api.InboxItem
+visibleMessages model payload =
+    let
+        needle =
+            String.toLower (String.trim model.search)
+
+        matchesRule item =
+            case model.ruleFilter of
+                Nothing ->
+                    True
+
+                Just label ->
+                    item.ruleLabel == Just label
+
+        matchesSearch item =
+            if String.isEmpty needle then
+                True
+
+            else
+                let
+                    ruleText =
+                        Maybe.withDefault "" item.ruleLabel
+                in
+                String.contains needle (String.toLower item.sender)
+                    || String.contains needle (String.toLower item.subject)
+                    || String.contains needle (String.toLower ruleText)
+    in
+    payload.messages
+        |> List.filter (\item -> matchesRule item && matchesSearch item)
+
+
+isFiltered : Model -> Bool
+isFiltered model =
+    model.ruleFilter /= Nothing || not (String.isEmpty (String.trim model.search))
+
+
+distinctRuleLabels : List Api.InboxItem -> List String
+distinctRuleLabels items =
+    List.foldl
+        (\item acc ->
+            case item.ruleLabel of
+                Just label ->
+                    if List.member label acc then
+                        acc
+
+                    else
+                        acc ++ [ label ]
+
+                Nothing ->
+                    acc
+        )
+        []
+        items
+
+
 view : Model -> Html Msg
 view model =
-    section [ class "inbox-page" ]
+    section
+        [ classList
+            [ ( "inbox-page", True )
+            , ( "has-selection", model.selected /= Nothing )
+            , ( "no-selection", model.selected == Nothing )
+            ]
+        ]
         [ inboxListPane model
         , inboxReadPane model
         ]
@@ -255,31 +372,57 @@ view model =
 inboxListPane : Model -> Html Msg
 inboxListPane model =
     div [ class "inbox-list-pane" ]
-        [ div [ class "inbox-list-head" ]
-            [ h1 [] [ text "Inbox" ]
-            , case model.data of
-                Success payload ->
-                    span [ class "inbox-count" ] [ text (countLabel payload) ]
+        (div [ class "inbox-list-head" ]
+            [ div [ class "inbox-head-left" ]
+                [ h1 [] [ text "Inbox" ]
+                , case model.data of
+                    Success payload ->
+                        span [ class "inbox-count" ] [ text (headerCountLabel model payload) ]
 
-                _ ->
-                    text ""
+                    _ ->
+                        text ""
+                ]
+            , div [ class "inbox-head-actions" ]
+                [ Ui.iconButton
+                    { icon = Icons.refresh
+                    , label = "Refresh inbox (r)"
+                    , onClick = Refresh
+                    , variant = Ghost
+                    , disabled = model.refreshing || model.data == Loading
+                    , small = True
+                    }
+                ]
             ]
-        , case model.data of
-            Loading ->
-                Ui.spinner
+            :: (case model.data of
+                    Loading ->
+                        [ Ui.spinner ]
 
-            NotAsked ->
-                Ui.spinner
+                    NotAsked ->
+                        [ Ui.spinner ]
 
-            Failure Api.Unauthenticated ->
-                accessState
+                    Failure Api.Unauthenticated ->
+                        [ accessState ]
 
-            Failure err ->
-                Ui.banner Ui.Error (Api.errorMessage err)
+                    Failure err ->
+                        [ Ui.banner Ui.Error (Api.errorMessage err) ]
 
-            Success payload ->
-                inboxList model payload
-        ]
+                    Success payload ->
+                        inboxList model payload
+               )
+        )
+
+
+headerCountLabel : Model -> Api.InboxPayload -> String
+headerCountLabel model payload =
+    if isFiltered model then
+        let
+            visibleCount =
+                List.length (visibleMessages model payload)
+        in
+        String.fromInt visibleCount ++ " / " ++ countLabel payload
+
+    else
+        countLabel payload
 
 
 countLabel : Api.InboxPayload -> String
@@ -293,19 +436,30 @@ countLabel payload =
            )
 
 
-inboxList : Model -> Api.InboxPayload -> Html Msg
+inboxList : Model -> Api.InboxPayload -> List (Html Msg)
 inboxList model payload =
     if List.isEmpty payload.messages then
-        Ui.emptyState
+        [ Ui.emptyState
             { icon = Icons.mail
             , title = "Nothing here yet"
             , body = "Stored email you can read will appear here."
             , action = Nothing
             }
+        ]
 
     else
-        div [ class "inbox-list" ]
-            (List.map (messageRow model) payload.messages
+        let
+            visible =
+                visibleMessages model payload
+        in
+        [ inboxToolbar model payload
+        , div [ class "inbox-list" ]
+            ((if List.isEmpty visible then
+                [ div [ class "empty-inline" ] [ text "No messages match your filter." ] ]
+
+              else
+                List.map (messageRow model) visible
+             )
                 ++ (if payload.hasMore then
                         [ div [ class "load-more" ]
                             [ Ui.button
@@ -322,6 +476,66 @@ inboxList model payload =
                         []
                    )
             )
+        ]
+
+
+inboxToolbar : Model -> Api.InboxPayload -> Html Msg
+inboxToolbar model payload =
+    let
+        ruleLabels =
+            distinctRuleLabels payload.messages
+    in
+    div [ class "inbox-toolbar" ]
+        [ div [ class "inbox-search-wrap" ]
+            [ span [ class "inbox-search-icon" ] [ Icons.search ]
+            , input
+                [ class "inbox-search"
+                , type_ "text"
+                , placeholder "Search sender, subject, or rule…"
+                , value model.search
+                , onInput SetSearch
+                , autocomplete False
+                , spellcheck False
+                ]
+                []
+            , if not (String.isEmpty model.search) then
+                button
+                    [ class "inbox-search-clear"
+                    , type_ "button"
+                    , onClick ClearSearch
+                    , title "Clear search"
+                    ]
+                    [ Icons.close ]
+
+              else
+                text ""
+            ]
+        , if List.length ruleLabels >= 2 then
+            div [ class "inbox-rule-filters" ]
+                (filterChip "All" (model.ruleFilter == Nothing) (SetRuleFilter Nothing)
+                    :: List.map
+                        (\label ->
+                            filterChip label (model.ruleFilter == Just label) (SetRuleFilter (Just label))
+                        )
+                        ruleLabels
+                )
+
+          else
+            text ""
+        ]
+
+
+filterChip : String -> Bool -> Msg -> Html Msg
+filterChip label isActive onSelect =
+    button
+        [ classList
+            [ ( "inbox-filter-chip", True )
+            , ( "is-active", isActive )
+            ]
+        , type_ "button"
+        , onClick onSelect
+        ]
+        [ text label ]
 
 
 messageRow : Model -> Api.InboxItem -> Html Msg
@@ -330,79 +544,61 @@ messageRow model item =
         [ classList [ ( "inbox-row", True ), ( "is-active", model.selected == Just item.id ) ]
         , href ("/inbox/" ++ item.id)
         ]
-        [ span [ class "inbox-ts" ]
+        [ span [ class "inbox-from" ] [ text item.sender ]
+        , span [ class "inbox-ts" ]
             [ text (item.createdAt |> Maybe.map Format.dateShort |> Maybe.withDefault "—") ]
-        , span [ class "inbox-rule" ] [ text (Maybe.withDefault "—" item.ruleLabel) ]
-        , span [ class "inbox-from" ] [ text item.sender ]
-        , span [ class "inbox-subj" ] [ text item.subject ]
+        , span
+            [ classList
+                [ ( "inbox-subj", True )
+                , ( "is-empty", String.trim item.subject == "" )
+                ]
+            ]
+            [ text (Reader.displaySubject item.subject) ]
+        , case item.ruleLabel of
+            Just label ->
+                span [ class "inbox-rule" ] [ text label ]
+
+            Nothing ->
+                text ""
         ]
 
 
 inboxReadPane : Model -> Html Msg
 inboxReadPane model =
-    div [ class "inbox-read-pane" ]
-        (case model.selected of
-            Nothing ->
-                [ div [ class "inbox-read-empty" ]
-                    [ span [ class "inbox-read-mark" ] [ Icons.mail ]
-                    , p [] [ text "Pick an email to read." ]
-                    ]
-                ]
+    let
+        ( selectedItem, hasPrev, hasNext ) =
+            case ( model.selected, model.data ) of
+                ( Just currentId, Success payload ) ->
+                    let
+                        visible =
+                            visibleMessages model payload
 
-            Just _ ->
-                [ case model.viewing of
-                    Loading ->
-                        Ui.spinner
+                        ids =
+                            List.map .id visible
 
-                    NotAsked ->
-                        Ui.spinner
+                        found =
+                            payload.messages
+                                |> List.filter (\item -> item.id == currentId)
+                                |> List.head
+                    in
+                    ( found
+                    , stepId -1 (Just currentId) ids /= Nothing
+                    , stepId 1 (Just currentId) ids /= Nothing
+                    )
 
-                    Failure err ->
-                        Ui.banner Ui.Error (Api.errorMessage err)
-
-                    Success rendered ->
-                        renderedView rendered
-                ]
-        )
-
-
-renderedView : Api.RenderedMessage -> Html Msg
-renderedView rendered =
-    div [ class "inbox-read-body" ]
-        [ div [ class "embed-header" ]
-            [ embedRow "From" rendered.from
-            , embedRow "To" rendered.to
-            , case rendered.date of
-                Just d ->
-                    embedRow "Date" d
-
-                Nothing ->
-                    text ""
-            , embedRow "Subject" rendered.subject
-            ]
-        , case rendered.body of
-            Api.HtmlBody html ->
-                iframe
-                    [ class "email-body"
-                    , attribute "sandbox" "allow-popups allow-popups-to-escape-sandbox"
-                    , attribute "srcdoc" html
-                    ]
-                    []
-
-            Api.TextBody txt ->
-                pre [ class "email-text" ] [ text txt ]
-
-            Api.NoBody ->
-                p [ class "empty-inline" ] [ text "No renderable body." ]
-        ]
-
-
-embedRow : String -> String -> Html Msg
-embedRow k v =
-    div [ class "embed-row" ]
-        [ span [ class "embed-k" ] [ text k ]
-        , span [ class "embed-v" ] [ text v ]
-        ]
+                _ ->
+                    ( Nothing, False, False )
+    in
+    Reader.view
+        { selected = model.selected
+        , viewing = model.viewing
+        , selectedItem = selectedItem
+        , hasPrev = hasPrev
+        , hasNext = hasNext
+        , onClose = CloseMessage
+        , onPrev = StepMessage -1
+        , onNext = StepMessage 1
+        }
 
 
 accessState : Html Msg
