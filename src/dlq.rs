@@ -61,20 +61,18 @@ pub async fn handle(batch: MessageBatch<RetryMsg>, env: Env) -> Result<()> {
         }
 
         // Surface in the live feed so the operator sees the terminal state.
-        if let Ok(kv) = env.kv("KV") {
-            let event = events::Event {
-                ts: events::now_ms(),
-                kind: EventKind::Error,
-                from: pending.sender.clone(),
-                to: pending.recipient.clone(),
-                rule_id: pending.rule_id.clone(),
-                channels: Vec::new(),
-                size_bytes: 0,
-                error: Some(final_error),
-            };
-            if let Err(e) = events::record(&env, &kv, &event).await {
-                console_log!("dlq: event record failed: {e}");
-            }
+        let event = events::Event {
+            ts: events::now_ms(),
+            kind: EventKind::Error,
+            from: pending.sender.clone(),
+            to: pending.recipient.clone(),
+            rule_id: pending.rule_id.clone(),
+            channels: Vec::new(),
+            size_bytes: 0,
+            error: Some(final_error),
+        };
+        if let Err(e) = events::record(&env, &database, &event).await {
+            console_log!("dlq: event record failed: {e}");
         }
 
         msg.ack();

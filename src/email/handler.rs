@@ -29,7 +29,6 @@ pub async fn handle_email(
     raw_bytes: &[u8],
     env: &Env,
 ) -> Result<EmailOutcome> {
-    let kv_store = env.kv("KV")?;
     let database = env.d1("DB")?;
     let env_for_store = env;
 
@@ -82,8 +81,8 @@ pub async fn handle_email(
         });
     }
 
-    // Load and match routing rules from KV.
-    let rules = kv::get_rules(&kv_store).await?;
+    // Load and match routing rules from D1.
+    let rules = kv::get_rules(&database).await?;
     let matched_rule = routing::find_matching_rule(&rules, &local, &domain);
 
     match matched_rule {
@@ -158,15 +157,24 @@ async fn execute_action(
             // forwarding it.
             let persist = matches!(action, Action::ForwardStore { .. });
 
-            // Generate one reverse alias per inbound message: shared across
-            // all destinations. Save to D1 for durable mapping.
-            let reverse_addr = forward::generate_reverse_address(domain);
-            let id = reverse_addr
-                .strip_prefix("reply+")
-                .and_then(|s| s.strip_suffix(&format!("@{domain}")))
-                .unwrap_or(&reverse_addr);
-
-            db::save_reverse_mapping(database, id, to, from).await?;
+            // Only mint/reuse a reverse alias when at least one destination
+            // uses proxy mode; direct email and chat destinations never use
+            // `reverse_mappings`.
+            let needs_reverse_alias = destinations
+                .iter()
+                .any(|d| matches!(d, Destination::Email { proxy: true, .. }));
+            let reverse_addr = if needs_reverse_alias {
+                let candidate = forward::generate_reverse_address(domain);
+                let candidate_id = candidate
+                    .strip_prefix("reply+")
+                    .and_then(|s| s.strip_suffix(&format!("@{domain}")))
+                    .unwrap_or(&candidate);
+                let id =
+                    db::get_or_create_reverse_mapping(database, candidate_id, to, from).await?;
+                Some(format!("reply+{id}@{domain}"))
+            } else {
+                None
+            };
 
             // Parse the email content. We need this for all structured paths.
             let parsed = mime::parse_email(raw_bytes);
@@ -219,7 +227,7 @@ async fn execute_action(
                                 to,
                                 address,
                                 from,
-                                Some(&reverse_addr),
+                                reverse_addr.as_deref(),
                             ));
                         } else {
                             // Native forward preserves the original From and

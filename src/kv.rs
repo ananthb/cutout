@@ -1,21 +1,13 @@
 use serde::{Deserialize, Serialize};
-use serde_json::Value;
-use worker::kv::KvStore;
+use worker::d1::D1Database;
 use worker::Result;
 
-use crate::types::{ReverseAlias, Rule};
-
-const RULES_KEY: &str = "rules";
-const REVERSE_PREFIX: &str = "reverse:";
-/// Reverse alias TTL: 30 days in seconds.
-const REVERSE_TTL: u64 = 30 * 24 * 60 * 60;
+use crate::types::Rule;
 
 /// Versioned envelope for the rules list, used to give the manage UI
 /// optimistic-concurrency semantics (every editor session reads the
 /// version, sends it back on save, and gets a 409 if another operator
-/// has bumped it). Backward-compatible: if the KV value is a bare
-/// `Vec<Rule>` (pre-versioning shape) it parses as version 0 and the
-/// next save migrates the value forward.
+/// has bumped it).
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct RuleSet {
     pub version: u64,
@@ -42,91 +34,112 @@ pub enum SaveOutcome {
     Conflict { current_version: u64 },
 }
 
-/// Load the rule set + version from KV. Accepts both the new envelope
-/// shape and the legacy bare `Vec<Rule>` shape (version assumed 0).
-pub async fn get_rule_set(kv: &KvStore) -> Result<RuleSet> {
-    let raw = match kv.get(RULES_KEY).json::<Value>().await? {
-        Some(v) => v,
-        None => return Ok(RuleSet::empty()),
-    };
-    if raw.is_array() {
-        let rules: Vec<Rule> = serde_json::from_value(raw)
-            .map_err(|e| worker::Error::from(format!("decode legacy rules: {e}")))?;
-        return Ok(RuleSet { version: 0, rules });
+#[derive(Deserialize)]
+struct RulesStateRow {
+    version: u64,
+    rules_json: String,
+}
+
+#[derive(Deserialize)]
+struct VersionRow {
+    #[allow(dead_code)]
+    version: u64,
+}
+
+/// Load the rule set + version from D1.
+pub async fn get_rule_set(db: &D1Database) -> Result<RuleSet> {
+    let stmt = db.prepare("SELECT version, rules_json FROM rules_state WHERE id = 1");
+    let row = stmt.first::<RulesStateRow>(None).await?;
+    match row {
+        None => Ok(RuleSet::empty()),
+        Some(row) => {
+            let rules: Vec<Rule> = serde_json::from_str(&row.rules_json)
+                .map_err(|e| worker::Error::from(format!("decode rules_json: {e}")))?;
+            Ok(RuleSet {
+                version: row.version,
+                rules,
+            })
+        }
     }
-    serde_json::from_value::<RuleSet>(raw)
-        .map_err(|e| worker::Error::from(format!("decode rule set: {e}")))
 }
 
 /// Load just the ordered rule list. Used by the email hot path which
-/// doesn't care about the version. Equivalent to `get_rule_set` but
-/// drops the version on the floor.
-pub async fn get_rules(kv: &KvStore) -> Result<Vec<Rule>> {
-    Ok(get_rule_set(kv).await?.rules)
+/// doesn't care about the version.
+pub async fn get_rules(db: &D1Database) -> Result<Vec<Rule>> {
+    Ok(get_rule_set(db).await?.rules)
 }
 
-/// Compare-and-swap save: only writes if the current stored version
+/// Atomic compare-and-swap save in D1: only writes if the stored version
 /// matches `expected_version`. Returns [`SaveOutcome::Conflict`] with
 /// the current version when it doesn't, so the caller can surface a
 /// "another operator just saved" message.
-///
-/// KV has no native CAS; the read-then-write window is small (a few
-/// hundred ms in the worst case) but not zero. Two requests racing
-/// inside that window can both pass the check and both write. For the
-/// expected use (a small shared admin team) this collapses the race
-/// window from "duration of an edit" to "duration of one request,"
-/// which is the intended outcome.
 pub async fn save_rule_set_if_unchanged(
-    kv: &KvStore,
+    db: &D1Database,
     rules: &[Rule],
     expected_version: u64,
 ) -> Result<SaveOutcome> {
-    let current = get_rule_set(kv).await?;
-    if current.version != expected_version {
-        return Ok(SaveOutcome::Conflict {
-            current_version: current.version,
-        });
-    }
-    let next = RuleSet {
-        version: expected_version + 1,
-        rules: rules.to_vec(),
-    };
-    let json = serde_json::to_string(&next)
+    let rules_json = serde_json::to_string(rules)
         .map_err(|e| worker::Error::from(format!("JSON serialize: {e}")))?;
-    kv.put(RULES_KEY, json)?.execute().await?;
-    Ok(SaveOutcome::Saved {
-        new_version: next.version,
-    })
+    let next_version = expected_version + 1;
+
+    let updated = if expected_version == 0 {
+        let stmt = db.prepare(
+            "INSERT INTO rules_state (id, version, rules_json, updated_at)
+             VALUES (1, 1, ?1, CURRENT_TIMESTAMP)
+             ON CONFLICT(id) DO UPDATE SET
+                 version = 1,
+                 rules_json = excluded.rules_json,
+                 updated_at = CURRENT_TIMESTAMP
+             WHERE rules_state.version = 0
+             RETURNING version",
+        );
+        stmt.bind(&[rules_json.into()])?
+            .first::<VersionRow>(None)
+            .await?
+    } else {
+        let stmt = db.prepare(
+            "UPDATE rules_state
+             SET version = ?1, rules_json = ?2, updated_at = CURRENT_TIMESTAMP
+             WHERE id = 1 AND version = ?3
+             RETURNING version",
+        );
+        stmt.bind(&[
+            (next_version as f64).into(),
+            rules_json.into(),
+            (expected_version as f64).into(),
+        ])?
+        .first::<VersionRow>(None)
+        .await?
+    };
+
+    if updated.is_some() {
+        Ok(SaveOutcome::Saved {
+            new_version: next_version,
+        })
+    } else {
+        let current = get_rule_set(db).await?;
+        Ok(SaveOutcome::Conflict {
+            current_version: current.version,
+        })
+    }
 }
 
 /// Force-save the rule set without checking the current version. Use
 /// only for bootstrap operations (e.g. first-time catch-all insert) or
 /// when the caller has explicitly decided to override the conflict.
-pub async fn save_rule_set_force(kv: &KvStore, rules: &[Rule], version: u64) -> Result<()> {
-    let envelope = RuleSet {
-        version,
-        rules: rules.to_vec(),
-    };
-    let json = serde_json::to_string(&envelope)
+pub async fn save_rule_set_force(db: &D1Database, rules: &[Rule], version: u64) -> Result<()> {
+    let rules_json = serde_json::to_string(rules)
         .map_err(|e| worker::Error::from(format!("JSON serialize: {e}")))?;
-    kv.put(RULES_KEY, json)?.execute().await?;
-    Ok(())
-}
-
-/// Look up a reverse alias by its full address (e.g. `reply+uuid@domain`).
-pub async fn get_reverse_alias(kv: &KvStore, address: &str) -> Result<Option<ReverseAlias>> {
-    let key = format!("{REVERSE_PREFIX}{address}");
-    Ok(kv.get(&key).json::<ReverseAlias>().await?)
-}
-
-/// Save a reverse alias with a 30-day TTL.
-pub async fn save_reverse_alias(kv: &KvStore, address: &str, alias: &ReverseAlias) -> Result<()> {
-    let key = format!("{REVERSE_PREFIX}{address}");
-    let json = serde_json::to_string(alias)
-        .map_err(|e| worker::Error::from(format!("JSON serialize: {e}")))?;
-    kv.put(&key, json)?
-        .expiration_ttl(REVERSE_TTL)
-        .execute()
+    let stmt = db.prepare(
+        "INSERT INTO rules_state (id, version, rules_json, updated_at)
+         VALUES (1, ?1, ?2, CURRENT_TIMESTAMP)
+         ON CONFLICT(id) DO UPDATE SET
+             version = excluded.version,
+             rules_json = excluded.rules_json,
+             updated_at = CURRENT_TIMESTAMP",
+    );
+    stmt.bind(&[(version as f64).into(), rules_json.into()])?
+        .run()
         .await?;
     Ok(())
 }
