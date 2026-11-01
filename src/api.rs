@@ -120,8 +120,8 @@ pub async fn handle(mut req: Request, env: Env, path: &str, method: Method) -> R
 
 /// Ensure the rules list ends with a Drop catch-all, inserting one on first
 /// deploy. Returns the loaded set with its current version.
-async fn ensure_catch_all(kv_store: &worker::kv::KvStore) -> Result<kv::RuleSet> {
-    let mut set = kv::get_rule_set(kv_store).await?;
+async fn ensure_catch_all(database: &worker::d1::D1Database) -> Result<kv::RuleSet> {
+    let mut set = kv::get_rule_set(database).await?;
     if set.rules.is_empty() || !set.rules.last().is_some_and(|r| r.is_catch_all()) {
         set.rules.push(Rule {
             id: generate_id(),
@@ -131,7 +131,7 @@ async fn ensure_catch_all(kv_store: &worker::kv::KvStore) -> Result<kv::RuleSet>
             label: "Catch-all".into(),
             inbox_readers: Vec::new(),
         });
-        kv::save_rule_set_force(kv_store, &set.rules, set.version).await?;
+        kv::save_rule_set_force(database, &set.rules, set.version).await?;
     }
     Ok(set)
 }
@@ -139,8 +139,8 @@ async fn ensure_catch_all(kv_store: &worker::kv::KvStore) -> Result<kv::RuleSet>
 /// The full workbench state: everything the first frame needs, and the same
 /// shape every rule mutation returns so the frontend can just replace it.
 async fn state(env: &Env, operator: &str) -> Result<Response> {
-    let kv_store = env.kv("KV")?;
-    let set = ensure_catch_all(&kv_store).await?;
+    let database = env.d1("DB")?;
+    let set = ensure_catch_all(&database).await?;
     let enabled = EnabledChannels::from_env(env);
     let report = validation::validate(&set.rules, &enabled);
     let stats7d = stats::fetch_7d(env).await;
@@ -272,9 +272,9 @@ async fn create_rule(req: &mut Request, env: &Env, operator: &str) -> Result<Res
         Err(e) => return json_error(400, "invalid", &e),
     };
 
-    let kv_store = env.kv("KV")?;
+    let database = env.d1("DB")?;
     let expected = rules_version_from_form(&form);
-    let mut set = ensure_catch_all(&kv_store).await?;
+    let mut set = ensure_catch_all(&database).await?;
     if set.version != expected {
         return conflict(set.version);
     }
@@ -298,7 +298,7 @@ async fn create_rule(req: &mut Request, env: &Env, operator: &str) -> Result<Res
         return validation_error(&report);
     }
 
-    match kv::save_rule_set_if_unchanged(&kv_store, &set.rules, set.version).await? {
+    match kv::save_rule_set_if_unchanged(&database, &set.rules, set.version).await? {
         kv::SaveOutcome::Saved { .. } => state(env, operator).await,
         kv::SaveOutcome::Conflict { current_version } => conflict(current_version),
     }
@@ -316,9 +316,9 @@ async fn update_rule(
         Err(e) => return json_error(400, "invalid", &e),
     };
 
-    let kv_store = env.kv("KV")?;
+    let database = env.d1("DB")?;
     let expected = rules_version_from_form(&form);
-    let mut set = kv::get_rule_set(&kv_store).await?;
+    let mut set = kv::get_rule_set(&database).await?;
     if set.version != expected {
         return conflict(set.version);
     }
@@ -342,7 +342,7 @@ async fn update_rule(
         return validation_error(&report);
     }
 
-    match kv::save_rule_set_if_unchanged(&kv_store, &set.rules, set.version).await? {
+    match kv::save_rule_set_if_unchanged(&database, &set.rules, set.version).await? {
         kv::SaveOutcome::Saved { .. } => state(env, operator).await,
         kv::SaveOutcome::Conflict { current_version } => conflict(current_version),
     }
@@ -356,9 +356,9 @@ async fn delete_rule(
 ) -> Result<Response> {
     let form: Value = req.json().await.unwrap_or(Value::Null);
 
-    let kv_store = env.kv("KV")?;
+    let database = env.d1("DB")?;
     let expected = rules_version_from_form(&form);
-    let mut set = kv::get_rule_set(&kv_store).await?;
+    let mut set = kv::get_rule_set(&database).await?;
     if set.version != expected {
         return conflict(set.version);
     }
@@ -372,7 +372,7 @@ async fn delete_rule(
     }
 
     set.rules.retain(|r| r.id != rule_id);
-    match kv::save_rule_set_if_unchanged(&kv_store, &set.rules, set.version).await? {
+    match kv::save_rule_set_if_unchanged(&database, &set.rules, set.version).await? {
         kv::SaveOutcome::Saved { .. } => state(env, operator).await,
         kv::SaveOutcome::Conflict { current_version } => conflict(current_version),
     }
@@ -383,9 +383,9 @@ async fn reorder_rules(req: &mut Request, env: &Env, operator: &str) -> Result<R
     let rule_id = form.get("id").and_then(|v| v.as_str()).unwrap_or("");
     let direction = form.get("direction").and_then(|v| v.as_str()).unwrap_or("");
 
-    let kv_store = env.kv("KV")?;
+    let database = env.d1("DB")?;
     let expected = rules_version_from_form(&form);
-    let mut set = kv::get_rule_set(&kv_store).await?;
+    let mut set = kv::get_rule_set(&database).await?;
     if set.version != expected {
         return conflict(set.version);
     }
@@ -407,7 +407,7 @@ async fn reorder_rules(req: &mut Request, env: &Env, operator: &str) -> Result<R
         }
     }
 
-    match kv::save_rule_set_if_unchanged(&kv_store, &set.rules, set.version).await? {
+    match kv::save_rule_set_if_unchanged(&database, &set.rules, set.version).await? {
         kv::SaveOutcome::Saved { .. } => state(env, operator).await,
         kv::SaveOutcome::Conflict { current_version } => conflict(current_version),
     }
@@ -418,14 +418,14 @@ async fn reorder_rules(req: &mut Request, env: &Env, operator: &str) -> Result<R
 // ---------------------------------------------------------------------------
 
 async fn list_events(req: Request, env: &Env) -> Result<Response> {
-    let kv_store = env.kv("KV")?;
+    let database = env.d1("DB")?;
     let since = req.url().ok().and_then(|u| {
         u.query_pairs()
             .find(|(k, _)| k == "since")
             .map(|(_, v)| v.into_owned())
             .and_then(|s| s.parse::<i64>().ok())
     });
-    let events = events::recent(&kv_store, since).await?;
+    let events = events::recent(&database, since).await?;
     json_ok(&json!({ "events": events, "now": events::now_ms() }))
 }
 
@@ -501,20 +501,12 @@ async fn discard_pending(env: &Env, id: &str) -> Result<Response> {
 async fn retry_all_pending(env: &Env) -> Result<Response> {
     let database = env.d1("DB")?;
     let rows = db::list_pending(&database, 500).await?;
+    if rows.iter().any(|r| r.dead_lettered) {
+        db::reset_dead_lettered_all(&database).await?;
+    }
     let queue = env.queue("RETRIES")?;
     let mut count = 0u32;
     for row in &rows {
-        if row.dead_lettered {
-            database
-                .prepare(
-                    "UPDATE pending_dispatches \
-                     SET dead_lettered = 0, attempts = 0, updated_at = CURRENT_TIMESTAMP \
-                     WHERE id = ?",
-                )
-                .bind(&[row.id.clone().into()])?
-                .run()
-                .await?;
-        }
         queue
             .send(&crate::types::RetryMsg { id: row.id.clone() })
             .await?;
@@ -528,11 +520,12 @@ async fn retry_all_pending(env: &Env) -> Result<Response> {
 async fn discard_all_pending(env: &Env) -> Result<Response> {
     let database = env.d1("DB")?;
     let rows = db::list_pending(&database, 500).await?;
-    let mut count = 0u32;
-    for row in &rows {
-        db::delete_pending(&database, &row.id).await?;
-        crate::r2::delete(env, &row.r2_key).await.ok();
-        count += 1;
+    let count = rows.len() as u32;
+    if !rows.is_empty() {
+        db::delete_all_pending(&database).await?;
+        for row in &rows {
+            crate::r2::delete(env, &row.r2_key).await.ok();
+        }
     }
     json_ok(&json!({ "ok": true, "count": count }))
 }
@@ -597,11 +590,11 @@ fn rendered_json(rendered: viewer::RenderedEmail) -> Value {
 /// Stored emails the signed-in person is allowed to read. A person reads a
 /// rule's stored mail when they're in that rule's effective reader set: its
 /// email destinations (implicit recipients) plus any extra `inbox_readers`.
-/// The rule config lives in KV, so this loads it, resolves the allowed rule
-/// ids, then pages D1.
+/// The rule config lives in D1, so this loads it, resolves the allowed rule
+/// ids, then pages `messages`.
 async fn inbox(req: Request, env: &Env, operator: &str) -> Result<Response> {
-    let kv_store = env.kv("KV")?;
-    let set = kv::get_rule_set(&kv_store).await?;
+    let database = env.d1("DB")?;
+    let set = kv::get_rule_set(&database).await?;
 
     let allowed: Vec<&Rule> = set.rules.iter().filter(|r| r.is_reader(operator)).collect();
     let rule_ids: Vec<String> = allowed.iter().map(|r| r.id.clone()).collect();
@@ -617,7 +610,6 @@ async fn inbox(req: Request, env: &Env, operator: &str) -> Result<Response> {
             .filter(|s| !s.is_empty())
     });
 
-    let database = env.d1("DB")?;
     let items =
         db::list_messages_for_rules(&database, &rule_ids, INBOX_PAGE_SIZE, before.as_deref())
             .await?;
@@ -658,8 +650,7 @@ async fn inbox_message(env: &Env, operator: &str, id: &str) -> Result<Response> 
         return json_error(403, "forbidden", "That email has no rule.");
     };
 
-    let kv_store = env.kv("KV")?;
-    let set = kv::get_rule_set(&kv_store).await?;
+    let set = kv::get_rule_set(&database).await?;
     let rule = set.rules.iter().find(|r| r.id == rule_id);
     let allowed = rule.is_some_and(|r| r.is_reader(operator));
     if !allowed {

@@ -42,11 +42,11 @@
 <p class="lede">Deploy with the one-click Cloudflare button or connect a fork to Cloudflare Builds, then finish bindings, secrets, and Email Routing in the dashboard.</p>
 
 <h2><span class="step-num">01</span> Create the Worker &amp; connect Builds</h2>
-<p>Use the <strong>Deploy to Cloudflare</strong> button on the <a href="https://github.com/ananthb/cutout">repo README</a> to fork <code>ananthb/cutout</code>, provision D1/KV/R2/Queues from <code>wrangler.toml</code>, and connect <strong>Cloudflare Builds</strong>.</p>
+<p>Use the <strong>Deploy to Cloudflare</strong> button on the <a href="https://github.com/ananthb/cutout">repo README</a> to fork <code>ananthb/cutout</code>, provision D1/R2/Queues from <code>wrangler.toml</code>, and connect <strong>Cloudflare Builds</strong>.</p>
 <p>To set it up manually instead, fork <a href="https://github.com/ananthb/cutout">ananthb/cutout</a>, create a Worker named <code>cutout</code>, and connect the fork under <strong>Workers &rsaquo; cutout &rsaquo; Settings &rsaquo; Builds</strong>:</p>
 <ul>
   <li><strong>Build command:</strong> leave default (runs <code>npm install</code>).</li>
-  <li><strong>Deploy command:</strong> <code>npm run deploy</code> (runs <code>cargo install -q worker-build &amp;&amp; wrangler d1 migrations apply cutout-db --remote &amp;&amp; wrangler deploy</code>).</li>
+  <li><strong>Deploy command:</strong> <code>npm run deploy</code> (runs <code>cargo install -q worker-build &amp;&amp; wrangler d1 migrations apply cutout-db --remote &amp;&amp; node scripts/migrate-kv-to-d1.mjs &amp;&amp; wrangler deploy</code>).</li>
 </ul>
 <p>Every push to <code>main</code> runs D1 migrations and deploys the Worker.</p>
 
@@ -54,7 +54,6 @@
 <p>Under <strong>Workers &rsaquo; cutout &rsaquo; Settings &rsaquo; Bindings</strong>, ensure these bindings match <a href="https://github.com/ananthb/cutout/blob/main/wrangler.toml">wrangler.toml</a>:</p>
 <ul>
   <li><strong>D1:</strong> <code>DB</code> &rarr; database <code>cutout-db</code></li>
-  <li><strong>KV:</strong> <code>KV</code> &rarr; one namespace (any name)</li>
   <li><strong>R2:</strong> <code>EMAILS</code> &rarr; bucket <code>cutout-emails</code></li>
   <li><strong>Queues:</strong> producer <code>RETRIES</code> &rarr; <code>cutout-retries</code>; consumers <code>cutout-retries</code> (with DLQ <code>cutout-retries-dlq</code>) and <code>cutout-retries-dlq</code></li>
   <li><strong>Email:</strong> send-binding <code>EMAIL</code></li>

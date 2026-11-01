@@ -14,7 +14,7 @@
 //!
 //! ## Architecture
 //!
-//! - `kv`: routing rule storage in Cloudflare KV.
+//! - `kv`: routing rule storage in Cloudflare D1.
 //! - `db`: reverse-alias mappings and bot reply contexts in Cloudflare D1
 //!   (durable, no expiry).
 //! - `email`: inbound `EmailMessage.forward()` and outbound `send_email()`.
@@ -238,8 +238,8 @@ pub async fn email(
         size_bytes,
         error: error_text,
     };
-    if let Ok(kv) = worker_env.kv("KV") {
-        if let Err(e) = events::record(&worker_env, &kv, &event).await {
+    if let Ok(database) = worker_env.d1("DB") {
+        if let Err(e) = events::record(&worker_env, &database, &event).await {
             console_log!("event record failed: {e}");
         }
     }

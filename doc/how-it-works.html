@@ -73,9 +73,8 @@
 <ul>
   <li><strong>Cloudflare Email Routing:</strong> Inbound catch-all trigger, Direct-mode <code>forward()</code>, and destination address verification.</li>
   <li><strong>Cloudflare Email Service:</strong> Proxy-mode forwarding and outbound replies via <code>send_email</code>.</li>
-  <li><strong>Cloudflare D1 (<code>DB</code>):</strong> Stores routing rules, permanent reverse-alias mappings, bot reply contexts, and pending dispatches.</li>
+  <li><strong>Cloudflare D1 (<code>DB</code>):</strong> Stores routing rules, live-feed events, permanent reverse-alias mappings, bot reply contexts, stored message metadata, and pending dispatches.</li>
   <li><strong>Cloudflare R2 (<code>EMAILS</code>) &amp; Queues (<code>RETRIES</code>):</strong> Raw email storage for <code>/inbox</code> and queued delivery retries with a dead-letter queue.</li>
-  <li><strong>Cloudflare KV (<code>KV</code>):</strong> Auxiliary key-value state.</li>
   <li><strong>Cloudflare Access:</strong> Guards <code>/manage</code> and <code>/inbox</code>. Public endpoints (<code>/health</code>, <code>/telegram/webhook</code>, <code>/discord/interactions</code>) verify bot secret tokens or Ed25519 signatures.</li>
   <li><strong><a href="https://github.com/ananthb/botrelay-rs">botrelay-rs</a>:</strong> Shared Rust crate for the Telegram and Discord bot clients.</li>
 </ul>

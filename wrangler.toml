@@ -18,20 +18,14 @@ command = "./scripts/build-worker.sh"
 directory = "./public"
 
 # ============================================================================
-# D1 database for routing config and pending dispatches.
+# D1 database for routing rules, live events, reverse-alias mappings, stored
+# message metadata, and pending dispatches.
 # Forks: replace `database_id` with your own from `wrangler d1 create`.
 # ============================================================================
 [[d1_databases]]
 binding = "DB"
 database_name = "cutout-db"
 database_id = "2d32c0f5-f9c1-4b47-a275-c5a896d272b5"
-
-# ============================================================================
-# KV namespace for routing config (aliases → destination mappings).
-# `id` bound via dashboard / Deploy button.
-# ============================================================================
-[[kv_namespaces]]
-binding = "KV"
 
 # ============================================================================
 # Outbound email. The EMAIL binding is used for both send paths:

@@ -1,26 +1,25 @@
-//! Event recording: KV ring buffer for the live tail and Analytics Engine
+//! Event recording: D1 ring buffer for the live tail and Analytics Engine
 //! data points for aggregated stats.
 //!
 //! The two stores serve different needs:
-//! - **KV ring buffer** (`events:recent`, last [`MAX_EVENTS`] entries):
+//! - **D1 `events` table** (bounded to [`MAX_EVENTS`] rows):
 //!   feeds the dashboard's live feed pane; full event detail; refreshed
 //!   within seconds.
 //! - **Analytics Engine** dataset bound as `EVENTS`: feeds long-window
 //!   aggregates (matches per rule, totals over 7d, top senders); sampled
 //!   under load; ~2-5 min ingest lag.
 //!
-//! Writes happen on the email handler's hot path. KV writes are awaited
-//! inline (a few hundred ms in the worst case); AE writes are non-blocking.
+//! Writes happen on the email handler's hot path. D1 writes are awaited
+//! inline; AE writes are non-blocking.
 
 use serde::{Deserialize, Serialize};
-use worker::kv::KvStore;
+use worker::d1::D1Database;
+use worker::wasm_bindgen::JsValue;
 use worker::{AnalyticsEngineDataPointBuilder, Env};
 
-/// Maximum events retained in the KV ring buffer. The buffer is read and
-/// rewritten on each event, so this directly bounds the per-write cost.
+/// Maximum events retained in the D1 ring buffer.
 pub const MAX_EVENTS: usize = 200;
 
-const EVENTS_KEY: &str = "events:recent";
 const AE_BINDING: &str = "EVENTS";
 
 #[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Eq)]
@@ -53,6 +52,18 @@ impl EventKind {
             EventKind::Error => "error",
         }
     }
+
+    fn from_str(s: &str) -> Self {
+        match s {
+            "forward" => EventKind::Forward,
+            "drop" => EventKind::Drop,
+            "reply" => EventKind::Reply,
+            "reject" => EventKind::Reject,
+            "store" => EventKind::Store,
+            "error" => EventKind::Error,
+            _ => EventKind::Error,
+        }
+    }
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
@@ -74,37 +85,91 @@ pub struct Event {
     pub error: Option<String>,
 }
 
-/// Append `event` to the ring buffer, truncating to [`MAX_EVENTS`].
-///
-/// **Concurrency caveat:** under simultaneous writes to KV, last-write-wins
-/// can drop an event. Acceptable for self-hosted personal volume; revisit
-/// (Durable Object) if/when this becomes hosted multi-tenant.
-pub async fn record_kv(kv: &KvStore, event: &Event) -> worker::Result<()> {
-    let mut buffer: Vec<Event> = kv
-        .get(EVENTS_KEY)
-        .json::<Vec<Event>>()
-        .await?
-        .unwrap_or_default();
-    buffer.insert(0, event.clone());
-    truncate_buffer(&mut buffer, MAX_EVENTS);
-    let json =
-        serde_json::to_string(&buffer).map_err(|e| worker::Error::from(format!("encode: {e}")))?;
-    kv.put(EVENTS_KEY, json)?.execute().await?;
+#[derive(Deserialize)]
+struct EventRow {
+    ts: i64,
+    kind: String,
+    sender: String,
+    recipient: String,
+    rule_id: Option<String>,
+    channels_json: String,
+    size_bytes: u64,
+    error: Option<String>,
+}
+
+fn opt_str_to_js(opt: &Option<String>) -> JsValue {
+    match opt {
+        Some(s) => s.as_str().into(),
+        None => JsValue::null(),
+    }
+}
+
+/// Append `event` to the D1 `events` table, pruning rows beyond [`MAX_EVENTS`].
+pub async fn record_d1(db: &D1Database, event: &Event) -> worker::Result<()> {
+    let channels_json = serde_json::to_string(&event.channels)
+        .map_err(|e| worker::Error::from(format!("encode channels: {e}")))?;
+
+    let insert = db.prepare(
+        "INSERT INTO events (ts, kind, sender, recipient, rule_id, channels_json, size_bytes, error)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+    );
+    insert
+        .bind(&[
+            (event.ts as f64).into(),
+            event.kind.as_str().into(),
+            event.from.as_str().into(),
+            event.to.as_str().into(),
+            opt_str_to_js(&event.rule_id),
+            channels_json.into(),
+            (event.size_bytes as f64).into(),
+            opt_str_to_js(&event.error),
+        ])?
+        .run()
+        .await?;
+
+    let prune = db.prepare(
+        "DELETE FROM events
+         WHERE id <= (
+             SELECT id FROM events ORDER BY id DESC LIMIT 1 OFFSET ?1
+         )",
+    );
+    prune.bind(&[(MAX_EVENTS as f64).into()])?.run().await?;
+
     Ok(())
 }
 
-/// Read the ring buffer. If `since_ms` is set, only return events newer
+/// Read recent events from D1. If `since_ms` is set, only return events newer
 /// than that timestamp.
-pub async fn recent(kv: &KvStore, since_ms: Option<i64>) -> worker::Result<Vec<Event>> {
-    let buffer: Vec<Event> = kv
-        .get(EVENTS_KEY)
-        .json::<Vec<Event>>()
+pub async fn recent(db: &D1Database, since_ms: Option<i64>) -> worker::Result<Vec<Event>> {
+    let stmt = db.prepare(
+        "SELECT ts, kind, sender, recipient, rule_id, channels_json, size_bytes, error
+         FROM events
+         WHERE (?1 IS NULL OR ts > ?1)
+         ORDER BY ts DESC, id DESC
+         LIMIT ?2",
+    );
+    let since_val = since_ms
+        .map(|v| (v as f64).into())
+        .unwrap_or_else(JsValue::null);
+    let rows = stmt
+        .bind(&[since_val, (MAX_EVENTS as f64).into()])?
+        .all()
         .await?
-        .unwrap_or_default();
-    Ok(match since_ms {
-        Some(t) => buffer.into_iter().filter(|e| e.ts > t).collect(),
-        None => buffer,
-    })
+        .results::<EventRow>()?;
+
+    Ok(rows
+        .into_iter()
+        .map(|row| Event {
+            ts: row.ts,
+            kind: EventKind::from_str(&row.kind),
+            from: row.sender,
+            to: row.recipient,
+            rule_id: row.rule_id,
+            channels: serde_json::from_str(&row.channels_json).unwrap_or_default(),
+            size_bytes: row.size_bytes,
+            error: row.error,
+        })
+        .collect())
 }
 
 /// Write a data point to Analytics Engine. Schema:
@@ -133,13 +198,14 @@ pub fn record_ae(env: &Env, event: &Event) {
         .write_to(&dataset);
 }
 
-/// Record an event to both stores. KV write is awaited (slow path); AE
-/// write is fire-and-forget.
-pub async fn record(env: &Env, kv: &KvStore, event: &Event) -> worker::Result<()> {
+/// Record an event to both stores. D1 write is awaited; AE write is
+/// fire-and-forget.
+pub async fn record(env: &Env, db: &D1Database, event: &Event) -> worker::Result<()> {
     record_ae(env, event);
-    record_kv(kv, event).await
+    record_d1(db, event).await
 }
 
+#[cfg(test)]
 fn truncate_buffer(buffer: &mut Vec<Event>, max: usize) {
     if buffer.len() > max {
         buffer.truncate(max);

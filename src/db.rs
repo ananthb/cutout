@@ -27,6 +27,36 @@ pub async fn save_reverse_mapping(
     Ok(())
 }
 
+/// Return the existing reverse-alias UUID for `(alias, original_sender)` if
+/// one has already been minted, or insert `candidate_id` and return it.
+/// Keeps `reverse_mappings` bounded by unique (alias, sender) pairs rather
+/// than growing on every single inbound email.
+pub async fn get_or_create_reverse_mapping(
+    db: &D1Database,
+    candidate_id: &str,
+    alias: &str,
+    original_sender: &str,
+) -> Result<String> {
+    #[derive(Deserialize)]
+    struct IdRow {
+        id: String,
+    }
+    if let Some(existing) = db
+        .prepare(
+            "SELECT id FROM reverse_mappings \
+             WHERE alias_address = ?1 AND original_sender = ?2 \
+             LIMIT 1",
+        )
+        .bind(&[alias.into(), original_sender.into()])?
+        .first::<IdRow>(None)
+        .await?
+    {
+        return Ok(existing.id);
+    }
+    save_reverse_mapping(db, candidate_id, alias, original_sender).await?;
+    Ok(candidate_id.to_string())
+}
+
 pub async fn get_reverse_mapping(db: &D1Database, id: &str) -> Result<Option<ReverseAlias>> {
     let result = db
         .prepare("SELECT alias_address, original_sender FROM reverse_mappings WHERE id = ?")
@@ -161,17 +191,27 @@ pub async fn save_bot_ctx(
     inbound_message_id: Option<&str>,
     inbound_references: Option<&str>,
 ) -> Result<()> {
-    db.prepare("INSERT INTO bot_reply_contexts (key, alias_address, original_sender, subject, inbound_message_id, inbound_references) VALUES (?, ?, ?, ?, ?, ?) ON CONFLICT(key) DO UPDATE SET alias_address=excluded.alias_address")
-        .bind(&[
-            key.into(),
-            ctx.alias.clone().into(),
-            ctx.original_sender.clone().into(),
-            ctx.subject.clone().into(),
-            js_opt(inbound_message_id),
-            js_opt(inbound_references),
-        ])?
-        .run()
-        .await?;
+    db.prepare(
+        "INSERT INTO bot_reply_contexts \
+         (key, alias_address, original_sender, subject, inbound_message_id, inbound_references) \
+         VALUES (?, ?, ?, ?, ?, ?) \
+         ON CONFLICT(key) DO UPDATE SET \
+            alias_address = excluded.alias_address, \
+            original_sender = excluded.original_sender, \
+            subject = excluded.subject, \
+            inbound_message_id = excluded.inbound_message_id, \
+            inbound_references = excluded.inbound_references",
+    )
+    .bind(&[
+        key.into(),
+        ctx.alias.clone().into(),
+        ctx.original_sender.clone().into(),
+        ctx.subject.clone().into(),
+        js_opt(inbound_message_id),
+        js_opt(inbound_references),
+    ])?
+    .run()
+    .await?;
     Ok(())
 }
 
@@ -257,7 +297,7 @@ pub async fn list_messages_for_rule(
             "SELECT id, sender, subject, created_at \
              FROM messages \
              WHERE rule_id = ?1 AND (?2 IS NULL OR created_at < ?2) \
-             ORDER BY created_at DESC \
+             ORDER BY created_at DESC, id DESC \
              LIMIT ?3",
         )
         .bind(&[rule_id.into(), js_opt(before), (limit as f64).into()])?
@@ -358,7 +398,7 @@ pub async fn list_messages_for_rules(
         "SELECT id, sender, subject, rule_id, created_at \
          FROM messages \
          WHERE rule_id IN ({}) AND (?{before_idx} IS NULL OR created_at < ?{before_idx}) \
-         ORDER BY created_at DESC \
+         ORDER BY created_at DESC, id DESC \
          LIMIT ?{limit_idx}",
         placeholders.join(", ")
     );
@@ -485,6 +525,22 @@ pub async fn delete_pending(db: &D1Database, id: &str) -> Result<()> {
         .bind(&[id.into()])?
         .run()
         .await?;
+    Ok(())
+}
+
+pub async fn delete_all_pending(db: &D1Database) -> Result<()> {
+    db.prepare("DELETE FROM pending_dispatches").run().await?;
+    Ok(())
+}
+
+pub async fn reset_dead_lettered_all(db: &D1Database) -> Result<()> {
+    db.prepare(
+        "UPDATE pending_dispatches \
+         SET dead_lettered = 0, attempts = 0, updated_at = CURRENT_TIMESTAMP \
+         WHERE dead_lettered = 1",
+    )
+    .run()
+    .await?;
     Ok(())
 }
 
