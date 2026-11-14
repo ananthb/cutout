@@ -19,6 +19,13 @@
   padding: 20px 22px 32px;
 }
 
+/* Children keep their content height and the pane scrolls instead of crushing
+   the stat strip, whose overflow:hidden leaves it with no minimum height.
+   Mirrors `.inspector-body > *` below. */
+.overview-pane > * {
+  flex-shrink: 0;
+}
+
 .overview-grid {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
@@ -565,6 +572,7 @@
 .stat-strip {
   display: grid;
   grid-template-columns: repeat(4, 1fr);
+  flex-shrink: 0;
   border: 1px solid var(--line);
   border-radius: var(--r-md);
   background: var(--bg-1);
