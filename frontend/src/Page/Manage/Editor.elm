@@ -914,31 +914,38 @@ destinationsField editor enabled =
                 ]
             , if editor.destKind == "email" then
                 div [ class "dest-add-opts" ]
-                    [ Ui.toggle
-                        { id = "dest-proxy"
-                        , label = "Proxy replies through the worker (rewrite Reply-To)"
-                        , checked = editor.destProxy
-                        , onCheck = SetDestProxy
-                        }
-                    , Ui.segmented
-                        { name = "dest-digest"
-                        , options =
-                            [ ( "off", "Off" )
-                            , ( "6h", "6 hours" )
-                            , ( "daily", "Daily" )
-                            , ( "weekly", "Weekly" )
-                            ]
-                        , selected = Maybe.withDefault "off" editor.destDigest
-                        , onSelect =
-                            \v ->
-                                if v == "off" then
-                                    SetDestDigest Nothing
+                    ((if editor.destDigest == Nothing then
+                        [ Ui.toggle
+                            { id = "dest-proxy"
+                            , label = "Proxy replies through the worker (rewrite Reply-To)"
+                            , checked = editor.destProxy
+                            , onCheck = SetDestProxy
+                            }
+                        ]
 
-                                else
-                                    SetDestDigest (Just v)
-                        , disabled = []
-                        }
-                    ]
+                      else
+                        []
+                     )
+                        ++ [ Ui.segmented
+                                { name = "dest-digest"
+                                , options =
+                                    [ ( "off", "Off" )
+                                    , ( "6h", "6 hours" )
+                                    , ( "daily", "Daily" )
+                                    , ( "weekly", "Weekly" )
+                                    ]
+                                , selected = Maybe.withDefault "off" editor.destDigest
+                                , onSelect =
+                                    \v ->
+                                        if v == "off" then
+                                            SetDestDigest Nothing
+
+                                        else
+                                            SetDestDigest (Just v)
+                                , disabled = []
+                                }
+                           ]
+                    )
 
               else
                 text ""
