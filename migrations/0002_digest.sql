@@ -11,6 +11,8 @@ CREATE TABLE IF NOT EXISTS digest_items (
 );
 CREATE INDEX IF NOT EXISTS idx_digest_items_dest
     ON digest_items(rule_id, destination, created_at);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_digest_items_unique
+    ON digest_items(rule_id, destination, message_id);
 
 CREATE TABLE IF NOT EXISTS digest_state (
     rule_id TEXT NOT NULL,

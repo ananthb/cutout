@@ -590,9 +590,23 @@ isWebhookUrl raw =
     let
         lower =
             String.toLower raw
+
+        rest =
+            if String.startsWith "https://" lower then
+                String.dropLeft 8 lower
+
+            else if String.startsWith "http://" lower then
+                String.dropLeft 7 lower
+
+            else
+                ""
     in
-    not (String.isEmpty raw)
-        && (String.startsWith "http://" lower || String.startsWith "https://" lower)
+    not (String.isEmpty rest) && not (hasWhitespace rest)
+
+
+hasWhitespace : String -> Bool
+hasWhitespace s =
+    List.any (\ws -> String.contains ws s) [ " ", "\t", "\n", "\u{000D}" ]
 
 
 isInteger : String -> Bool
@@ -962,7 +976,13 @@ destChip index destination =
                 Api.Email { address, proxy, digest } ->
                     ( "email"
                     , address
-                    , [ proxyToggle index proxy, digestToggle index digest ]
+                    , (if digest == Nothing then
+                        [ proxyToggle index proxy ]
+
+                       else
+                        []
+                      )
+                        ++ [ digestToggle index digest ]
                         ++ (if digest == Nothing then
                                 []
 

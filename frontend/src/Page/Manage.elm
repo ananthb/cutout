@@ -1337,8 +1337,8 @@ anyProxy action =
     List.any
         (\d ->
             case d of
-                Api.Email { proxy } ->
-                    proxy
+                Api.Email { proxy, digest } ->
+                    proxy && digest == Nothing
 
                 _ ->
                     False
@@ -1493,7 +1493,7 @@ destinationCard stores destination =
                        else
                         []
                       )
-                        ++ (if proxy then
+                        ++ (if proxy && digest == Nothing then
                                 [ plainBadge "proxy" ]
 
                             else
@@ -1610,7 +1610,7 @@ messagesCard model _ =
             div [ class "empty-inline" ]
                 [ text
                     (Maybe.withDefault
-                        "No stored emails for this rule yet. They appear here when the rule stores mail or forwards to Telegram, Discord, or a webhook."
+                        "No stored emails for this rule yet. They appear here when the rule stores mail, forwards to Telegram or Discord, or has a digest destination (digests are always stored)."
                         messages.error
                     )
                 ]

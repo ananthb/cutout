@@ -15,7 +15,7 @@ use worker::*;
 
 use crate::db;
 use crate::email::send;
-use crate::types::{Action, Destination, DigestItem, OutboundEmail};
+use crate::types::{Action, Destination, DigestItem, DigestSchedule, OutboundEmail, Rule};
 
 pub async fn handle(env: Env) -> Result<()> {
     let database = env.d1("DB")?;
@@ -46,36 +46,71 @@ pub async fn handle(env: Env) -> Result<()> {
                 continue;
             };
 
-            let Some((oldest, _)) =
-                db::digest_pending_summary(&database, &rule.id, address).await?
-            else {
-                continue;
-            };
-            let reference = db::digest_last_sent(&database, &rule.id, address)
-                .await?
-                .unwrap_or(oldest);
-            if now - reference < schedule.interval_ms() {
-                continue;
-            }
-
-            let items = db::list_digest_items(&database, &rule.id, address).await?;
-            if items.is_empty() {
-                continue;
-            }
-
-            let outbound =
-                build_digest_email(&rule.display_label(), address, &items, base.as_deref());
-            match send::send_outbound(&env, &outbound).await {
-                Ok(()) => {
-                    db::delete_digest_items(&database, &rule.id, address).await?;
-                    db::set_digest_last_sent(&database, &rule.id, address, now).await?;
-                }
-                Err(e) => console_log!("digest: send to {address} failed: {e}"),
+            // A transient D1 failure for one destination must not skip every
+            // destination after it this tick; log and move on.
+            if let Err(e) = process_destination(
+                &env,
+                &database,
+                rule,
+                address,
+                schedule,
+                now,
+                base.as_deref(),
+            )
+            .await
+            {
+                console_log!("digest: rule {} destination {address} failed: {e}", rule.id);
             }
         }
     }
 
     Ok(())
+}
+
+/// Send one destination's digest if its schedule is due. Errors are reported
+/// to the caller, which logs them and continues with the next destination.
+async fn process_destination(
+    env: &Env,
+    database: &D1Database,
+    rule: &Rule,
+    address: &str,
+    schedule: &DigestSchedule,
+    now: i64,
+    base: Option<&str>,
+) -> Result<()> {
+    let Some((oldest, _)) = db::digest_pending_summary(database, &rule.id, address).await? else {
+        return Ok(());
+    };
+    let reference = db::digest_last_sent(database, &rule.id, address)
+        .await?
+        .unwrap_or(oldest);
+    if now - reference < schedule.interval_ms() {
+        return Ok(());
+    }
+
+    let items = db::list_digest_items(database, &rule.id, address).await?;
+    if items.is_empty() {
+        return Ok(());
+    }
+
+    // Bound the post-send delete to the rows we actually sent: anything
+    // enqueued while the send was in flight has a larger id and must survive
+    // for the next digest.
+    let up_to = digest_up_to(&items);
+    let outbound = build_digest_email(&rule.display_label(), address, &items, base);
+    match send::send_outbound(env, &outbound).await {
+        Ok(()) => {
+            db::delete_digest_items(database, &rule.id, address, up_to).await?;
+            db::set_digest_last_sent(database, &rule.id, address, now).await?;
+        }
+        Err(e) => console_log!("digest: send to {address} failed: {e}"),
+    }
+    Ok(())
+}
+
+/// Highest row id in a listed snapshot; the delete is bounded by it.
+fn digest_up_to(items: &[DigestItem]) -> i64 {
+    items.iter().map(|item| item.id).max().unwrap_or(0)
 }
 
 /// Build the single summary email for one destination.
@@ -115,7 +150,8 @@ fn build_digest_email(
     for item in items {
         let link = match base {
             Some(base) => format!(
-                "<a href=\"{base}/inbox/{}\">{}</a>",
+                "<a href=\"{}/inbox/{}\">{}</a>",
+                escape_html(base),
                 escape_html(&item.message_id),
                 escape_html(&item.subject)
             ),
@@ -156,12 +192,35 @@ mod tests {
 
     fn item(message_id: &str, sender: &str, subject: &str) -> DigestItem {
         DigestItem {
+            id: 0,
             message_id: message_id.into(),
             sender: sender.into(),
             recipient: "alias@cutout.test".into(),
             subject: subject.into(),
             created_at: 1,
         }
+    }
+
+    fn item_with_id(id: i64, message_id: &str) -> DigestItem {
+        DigestItem {
+            id,
+            message_id: message_id.into(),
+            sender: "a@example.com".into(),
+            recipient: "alias@cutout.test".into(),
+            subject: "Subject".into(),
+            created_at: 1,
+        }
+    }
+
+    #[test]
+    fn digest_up_to_is_the_snapshot_max_id() {
+        let items = vec![
+            item_with_id(3, "m3"),
+            item_with_id(7, "m7"),
+            item_with_id(5, "m5"),
+        ];
+        assert_eq!(digest_up_to(&items), 7);
+        assert_eq!(digest_up_to(&[]), 0);
     }
 
     #[test]
@@ -231,5 +290,21 @@ mod tests {
         assert!(html.contains("&lt;script&gt;"));
         assert!(html.contains("a&lt;b@example.com"));
         assert!(html.contains("m&amp;1"));
+    }
+
+    #[test]
+    fn build_digest_email_escapes_base_url_in_href() {
+        let items = vec![item("m1", "a@example.com", "First")];
+        let outbound = build_digest_email(
+            "News",
+            "me@home.test",
+            &items,
+            Some("https://cutout.test/?a=1&b=\"q\""),
+        );
+        let html = outbound.html.unwrap();
+        assert!(
+            html.contains("href=\"https://cutout.test/?a=1&amp;b=&quot;q&quot;/inbox/m1\""),
+            "{html}"
+        );
     }
 }

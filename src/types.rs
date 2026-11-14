@@ -174,6 +174,23 @@ pub fn valid_email_address(addr: &str) -> bool {
         .is_some_and(|tld| tld.len() >= 2 && tld.chars().all(|c| c.is_ascii_alphabetic()))
 }
 
+/// A pragmatic webhook-URL check: an `http://` or `https://` scheme
+/// (case-insensitive) followed by a non-empty remainder with no whitespace.
+///
+/// A scheme-only URL like `https://` passes a bare prefix test but can never
+/// deliver, so it is rejected here rather than at send time.
+pub fn valid_webhook_url(url: &str) -> bool {
+    let lower = url.to_ascii_lowercase();
+    let rest = if let Some(rest) = lower.strip_prefix("https://") {
+        rest
+    } else if let Some(rest) = lower.strip_prefix("http://") {
+        rest
+    } else {
+        return false;
+    };
+    !rest.is_empty() && !rest.chars().any(|c| c.is_ascii_whitespace())
+}
+
 #[derive(Serialize, Clone, Debug)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum Action {
@@ -287,6 +304,9 @@ impl DigestSchedule {
 /// line and link back to the stored message.
 #[derive(Clone, Debug)]
 pub struct DigestItem {
+    /// Row id in `digest_items`. Monotonic, so a snapshot's max id bounds the
+    /// post-send delete to exactly the rows that were included.
+    pub id: i64,
     pub message_id: String,
     pub sender: String,
     pub recipient: String,
@@ -445,8 +465,7 @@ impl Destination {
             }
             "webhook" | "wh" => {
                 let value = rest.to_string();
-                let lower = value.to_lowercase();
-                if !(lower.starts_with("http://") || lower.starts_with("https://")) {
+                if !valid_webhook_url(&value) {
                     return Err("webhook url must start with http:// or https://");
                 }
                 Ok(Some(Destination::Webhook { url: value }))
@@ -601,6 +620,7 @@ pub struct WebhookForward {
     #[serde(default)]
     pub message_id: String,
     pub rule_id: Option<String>,
+    #[serde(default)]
     pub received_at: i64,
 }
 
@@ -896,6 +916,27 @@ mod tests {
                 url: "HTTP://example.com/hook".into(),
             }
         );
+    }
+
+    #[test]
+    fn valid_webhook_url_requires_host_after_scheme() {
+        assert!(valid_webhook_url("https://example.com/hook"));
+        assert!(valid_webhook_url("http://example.com"));
+        assert!(valid_webhook_url("HTTPS://example.com"));
+        assert!(!valid_webhook_url("https://"));
+        assert!(!valid_webhook_url("http://"));
+        assert!(!valid_webhook_url("ftp://x"));
+        assert!(!valid_webhook_url("https://a b"));
+        assert!(!valid_webhook_url("example.com"));
+        assert!(!valid_webhook_url(""));
+    }
+
+    #[test]
+    fn rejects_scheme_only_webhook_destination() {
+        for input in ["webhook:https://", "wh:http://", "webhook:https://a b"] {
+            let err = Destination::parse_line(input).unwrap_err();
+            assert!(err.contains("webhook url"), "got: {err}");
+        }
     }
 
     #[test]

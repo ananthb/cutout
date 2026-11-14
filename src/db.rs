@@ -756,7 +756,7 @@ pub async fn enqueue_digest_item(
     created_at: i64,
 ) -> Result<()> {
     db.prepare(
-        "INSERT INTO digest_items \
+        "INSERT OR IGNORE INTO digest_items \
          (rule_id, destination, message_id, sender, recipient, subject, created_at) \
          VALUES (?, ?, ?, ?, ?, ?, ?)",
     )
@@ -827,6 +827,7 @@ pub async fn digest_last_sent(
 
 #[derive(Deserialize)]
 struct DigestItemRow {
+    id: i64,
     message_id: String,
     sender: String,
     recipient: String,
@@ -842,7 +843,7 @@ pub async fn list_digest_items(
 ) -> Result<Vec<DigestItem>> {
     let result = db
         .prepare(
-            "SELECT message_id, sender, recipient, subject, created_at \
+            "SELECT id, message_id, sender, recipient, subject, created_at \
              FROM digest_items WHERE rule_id = ?1 AND destination = ?2 \
              ORDER BY created_at DESC, id DESC",
         )
@@ -853,6 +854,7 @@ pub async fn list_digest_items(
     Ok(rows
         .into_iter()
         .map(|r| DigestItem {
+            id: r.id,
             message_id: r.message_id,
             sender: r.sender,
             recipient: r.recipient,
@@ -862,10 +864,19 @@ pub async fn list_digest_items(
         .collect())
 }
 
-/// Clear a destination's pending list after its digest was sent.
-pub async fn delete_digest_items(db: &D1Database, rule_id: &str, destination: &str) -> Result<()> {
-    db.prepare("DELETE FROM digest_items WHERE rule_id = ?1 AND destination = ?2")
-        .bind(&[rule_id.into(), destination.into()])?
+/// Clear the pending entries a digest actually included, after it was sent.
+///
+/// `up_to_id` is the highest `id` in the snapshot that was sent. Rows
+/// enqueued while the send was in flight have larger auto-increment ids and
+/// survive for the next digest rather than being silently dropped.
+pub async fn delete_digest_items(
+    db: &D1Database,
+    rule_id: &str,
+    destination: &str,
+    up_to_id: i64,
+) -> Result<()> {
+    db.prepare("DELETE FROM digest_items WHERE rule_id = ?1 AND destination = ?2 AND id <= ?3")
+        .bind(&[rule_id.into(), destination.into(), (up_to_id as f64).into()])?
         .run()
         .await?;
     Ok(())
