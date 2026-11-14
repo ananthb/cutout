@@ -461,6 +461,9 @@ hasChatDestination editor =
 
                 Api.Email _ ->
                     False
+
+                Api.Webhook _ ->
+                    False
         )
         editor.destinations
 
@@ -510,8 +513,25 @@ parseDestination enabled editor =
             else
                 Err "A Discord channel id is a positive integer"
 
+        "webhook" ->
+            if isWebhookUrl raw then
+                Ok (Api.Webhook { url = raw })
+
+            else
+                Err "Enter a URL like https://example.com/hook"
+
         _ ->
             Err "Unknown destination kind"
+
+
+isWebhookUrl : String -> Bool
+isWebhookUrl raw =
+    let
+        lower =
+            String.toLower raw
+    in
+    not (String.isEmpty raw)
+        && (String.startsWith "http://" lower || String.startsWith "https://" lower)
 
 
 isInteger : String -> Bool
@@ -780,6 +800,7 @@ destinationsField editor enabled =
 
                   else
                     Nothing
+                , Just ( "webhook", "Webhook" )
                 ]
     in
     div [ class "dest-builder" ]
@@ -874,6 +895,12 @@ destChip index destination =
                     , channelId
                     , [ storeBadge True ]
                     )
+
+                Api.Webhook { url } ->
+                    ( "webhook"
+                    , url
+                    , []
+                    )
     in
     span [ classList [ ( "dest-chip", True ), ( kind, True ) ] ]
         [ span [ class "dest-chip-kind" ] [ text kind ]
@@ -963,6 +990,9 @@ destPlaceholder kind =
 
         "discord" ->
             "987654321098765432"
+
+        "webhook" ->
+            "https://example.com/hook"
 
         _ ->
             "you@example.com"

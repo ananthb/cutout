@@ -8,7 +8,7 @@ use crate::db;
 use crate::events::EventKind;
 use crate::r2;
 use crate::types::*;
-use crate::{bots, types};
+use crate::{bots, types, webhooks};
 
 /// What `handle_email` decided to do with an inbound message, plus the
 /// metadata needed to record an event after the dispatch executes.
@@ -280,14 +280,31 @@ async fn execute_action(
                             inbound_references: parsed.as_ref().and_then(|p| p.references.clone()),
                         });
                     }
+                    Destination::Webhook { url } => {
+                        dispatch.webhook_forwards.push(WebhookForward {
+                            url: url.clone(),
+                            from: from.to_string(),
+                            to: to.to_string(),
+                            subject: parsed
+                                .as_ref()
+                                .map(|p| p.subject.clone())
+                                .unwrap_or_default(),
+                            text: parsed.as_ref().and_then(|p| p.text_body.clone()),
+                            html: parsed.as_ref().and_then(|p| p.html_body.clone()),
+                            message_id: stored_message_id.clone().unwrap_or_default(),
+                            rule_id: Some(rule_id.to_string()),
+                            received_at: crate::events::now_ms(),
+                        });
+                    }
                 }
             }
 
             console_log!(
-                "Forwarding from {from} via {to} (rule: {rule_label}): native={} send_emails={} bots={}",
+                "Forwarding from {from} via {to} (rule: {rule_label}): native={} send_emails={} bots={} webhooks={}",
                 dispatch.forward_emails.len(),
                 dispatch.send_emails.len(),
-                dispatch.bot_forwards.len()
+                dispatch.bot_forwards.len(),
+                dispatch.webhook_forwards.len()
             );
 
             if dispatch.is_empty() {
@@ -484,6 +501,12 @@ pub async fn execute_pending_actions(
                 };
                 if let Err(e) = bots::dispatch(env, forward).await {
                     errors.push(format!("bot {label}: {e}"));
+                    still_failing.push(action.clone());
+                }
+            }
+            PendingAction::Webhook(forward) => {
+                if let Err(e) = webhooks::dispatch(env, forward).await {
+                    errors.push(format!("webhook {}: {e}", forward.url));
                     still_failing.push(action.clone());
                 }
             }

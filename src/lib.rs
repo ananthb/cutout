@@ -8,7 +8,7 @@
 //! 1. You own a domain (e.g. `example.com`) with Cloudflare Email Routing.
 //! 2. Configure routing rules via the Elm management app at `/manage`.
 //! 3. Inbound mail matching a rule is forwarded to your destinations
-//!    (email, Discord, or Telegram) with headers rewritten.
+//!    (email, Discord, Telegram, or a webhook) with headers rewritten.
 //! 4. Replies route back through the worker and are re-sent as email from
 //!    the alias, so your real address is never exposed.
 //!
@@ -18,6 +18,7 @@
 //!   metadata, pending dispatches, and bot reply contexts in Cloudflare D1.
 //! - `email`: inbound `EmailMessage.forward()` and outbound `send_email()`.
 //! - `bots`: Telegram and Discord destinations plus reply webhooks.
+//! - `webhooks`: outbound webhook destinations (POST the email as JSON).
 //! - `api`: the JSON API the Elm app consumes.
 //! - `shell`, `frontend/`: the Elm single-page app behind Cloudflare Access.
 //! - `events`, `stats`: per-event log and Analytics Engine aggregations.
@@ -59,6 +60,7 @@ mod shell;
 mod stats;
 pub mod types;
 mod validation;
+mod webhooks;
 
 // --- Email event handler via wasm_bindgen ---
 
@@ -188,6 +190,16 @@ pub async fn email(
                     Err(e) => {
                         errors.push(format!("bot {label}: {e}"));
                         failed_actions.push(types::PendingAction::Bot(forward.clone()));
+                    }
+                }
+            }
+
+            for forward in &dispatch.webhook_forwards {
+                match webhooks::dispatch(&worker_env, forward).await {
+                    Ok(()) => push_unique(&mut succeeded_channels, "webhook"),
+                    Err(e) => {
+                        errors.push(format!("webhook {}: {e}", forward.url));
+                        failed_actions.push(types::PendingAction::Webhook(forward.clone()));
                     }
                 }
             }

@@ -44,6 +44,7 @@
   --ch-email: #3b82f6;
   --ch-telegram: #26a5e4;
   --ch-discord: #5865f2;
+  --ch-webhook: #a855f7;
 
   /* Shape. */
   --r-xs: 4px;
@@ -97,6 +98,7 @@
   --ch-email: #74a9ef;
   --ch-telegram: #59c0ef;
   --ch-discord: #8f97f7;
+  --ch-webhook: #c084fc;
 
   --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.4);
   --shadow-md: 0 8px 22px rgba(0, 0, 0, 0.5);
@@ -132,6 +134,7 @@
     --ch-email: #74a9ef;
     --ch-telegram: #59c0ef;
     --ch-discord: #8f97f7;
+    --ch-webhook: #c084fc;
     --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.4);
     --shadow-md: 0 8px 22px rgba(0, 0, 0, 0.5);
     --shadow-lg: 0 28px 70px rgba(0, 0, 0, 0.62), 0 8px 24px rgba(0, 0, 0, 0.4);

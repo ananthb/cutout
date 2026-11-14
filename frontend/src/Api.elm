@@ -84,6 +84,7 @@ type Destination
     = Email { address : String, proxy : Bool }
     | Telegram { chatId : String }
     | Discord { channelId : String }
+    | Webhook { url : String }
 
 
 type alias Enabled =
@@ -654,6 +655,9 @@ destinationDecoder =
                     "discord" ->
                         D.map (\channelId -> Discord { channelId = channelId }) (D.field "channel_id" D.string)
 
+                    "webhook" ->
+                        D.map (\url -> Webhook { url = url }) (D.field "url" D.string)
+
                     other ->
                         D.fail ("unknown destination kind: " ++ other)
             )
@@ -836,6 +840,12 @@ encodeDestination destination =
                 , ( "channel_id", E.string channelId )
                 ]
 
+        Webhook { url } ->
+            E.object
+                [ ( "kind", E.string "webhook" )
+                , ( "url", E.string url )
+                ]
+
 
 
 -- PRESENTATION HELPERS
@@ -947,33 +957,48 @@ channels destinations =
 
     else
         let
-            ( emails, telegrams, discords ) =
+            c =
                 counts destinations
         in
         String.join " + "
             (List.filterMap identity
-                [ plural emails "email"
-                , plural telegrams "telegram"
-                , plural discords "discord"
+                [ plural c.email "email"
+                , plural c.telegram "telegram"
+                , plural c.discord "discord"
+                , plural c.webhook "webhook"
                 ]
             )
 
 
-counts : List Destination -> ( Int, Int, Int )
+{-| Per-channel destination counts. Elm has no tuples wider than three, so
+four channels need a named record.
+-}
+type alias ChannelCount =
+    { email : Int
+    , telegram : Int
+    , discord : Int
+    , webhook : Int
+    }
+
+
+counts : List Destination -> ChannelCount
 counts destinations =
     List.foldl
-        (\d ( e, t, dc ) ->
+        (\d acc ->
             case d of
                 Email _ ->
-                    ( e + 1, t, dc )
+                    { acc | email = acc.email + 1 }
 
                 Telegram _ ->
-                    ( e, t + 1, dc )
+                    { acc | telegram = acc.telegram + 1 }
 
                 Discord _ ->
-                    ( e, t, dc + 1 )
+                    { acc | discord = acc.discord + 1 }
+
+                Webhook _ ->
+                    { acc | webhook = acc.webhook + 1 }
         )
-        ( 0, 0, 0 )
+        { email = 0, telegram = 0, discord = 0, webhook = 0 }
         destinations
 
 

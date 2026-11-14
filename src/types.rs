@@ -110,12 +110,13 @@ fn push_unique_addr(out: &mut Vec<String>, addr: &str) {
 /// Render a destination list as a compact channel summary.
 /// "Email", "Email + Telegram", "Email ×3 + Discord", etc.
 fn format_channels(destinations: &[Destination]) -> String {
-    let (mut email, mut telegram, mut discord) = (0usize, 0usize, 0usize);
+    let (mut email, mut telegram, mut discord, mut webhook) = (0usize, 0usize, 0usize, 0usize);
     for d in destinations {
         match d {
             Destination::Email { .. } => email += 1,
             Destination::Telegram { .. } => telegram += 1,
             Destination::Discord { .. } => discord += 1,
+            Destination::Webhook { .. } => webhook += 1,
         }
     }
     let mut parts: Vec<String> = Vec::new();
@@ -129,6 +130,7 @@ fn format_channels(destinations: &[Destination]) -> String {
     push(&mut parts, email, "Email");
     push(&mut parts, telegram, "Telegram");
     push(&mut parts, discord, "Discord");
+    push(&mut parts, webhook, "Webhook");
     parts.join(" + ")
 }
 
@@ -270,6 +272,8 @@ pub enum Destination {
     Telegram { chat_id: String },
     /// Forward to a Discord channel via bot `createMessage`.
     Discord { channel_id: String },
+    /// POST the parsed email as JSON to an HTTP endpoint.
+    Webhook { url: String },
 }
 
 impl Destination {
@@ -279,6 +283,7 @@ impl Destination {
             Destination::Email { .. } => "email",
             Destination::Telegram { .. } => "telegram",
             Destination::Discord { .. } => "discord",
+            Destination::Webhook { .. } => "webhook",
         }
     }
 
@@ -288,6 +293,7 @@ impl Destination {
             Destination::Email { address, .. } => address,
             Destination::Telegram { chat_id, .. } => chat_id,
             Destination::Discord { channel_id, .. } => channel_id,
+            Destination::Webhook { url, .. } => url,
         }
     }
 
@@ -346,6 +352,14 @@ impl Destination {
                 }
                 Ok(Some(Destination::Discord { channel_id: value }))
             }
+            "webhook" | "wh" => {
+                let value = rest.to_string();
+                let lower = value.to_lowercase();
+                if !(lower.starts_with("http://") || lower.starts_with("https://")) {
+                    return Err("webhook url must start with http:// or https://");
+                }
+                Ok(Some(Destination::Webhook { url: value }))
+            }
             other => Err(stringify_kind_err(other)),
         }
     }
@@ -380,6 +394,7 @@ impl Destination {
                 Destination::Email { address, .. } => format!("email:{address}"),
                 Destination::Telegram { chat_id } => format!("telegram:{chat_id}"),
                 Destination::Discord { channel_id } => format!("discord:{channel_id}"),
+                Destination::Webhook { url } => format!("webhook:{url}"),
             })
             .collect::<Vec<_>>()
             .join("\n")
@@ -390,7 +405,7 @@ impl Destination {
 // error string for call sites. Keep a small wrapper that returns a fixed
 // fallback: callers shouldn't rely on the echoed kind in the error.
 fn stringify_kind_err(_kind: &str) -> &'static str {
-    "unknown destination kind (use email, telegram, or discord)"
+    "unknown destination kind (use email, telegram, discord, or webhook)"
 }
 
 /// Reverse alias mapping stored in D1 (`reverse_mappings`).
@@ -470,6 +485,24 @@ pub enum BotChannel {
     Discord { channel_id: String },
 }
 
+/// Webhook-channel forward: POST the parsed email as JSON to an operator-supplied
+/// URL. Unlike bots, there is no reply path back through the worker.
+#[derive(Serialize, Deserialize, Clone, Debug)]
+pub struct WebhookForward {
+    pub url: String,
+    pub from: String,
+    pub to: String,
+    pub subject: String,
+    #[serde(default)]
+    pub text: Option<String>,
+    #[serde(default)]
+    pub html: Option<String>,
+    #[serde(default)]
+    pub message_id: String,
+    pub rule_id: Option<String>,
+    pub received_at: i64,
+}
+
 /// One outstanding destination on a queued retry. We do NOT carry the native
 /// `EmailMessage.forward()` path here because the queue consumer has no
 /// `IncomingEmailMessage` handle: instead, the original handler converts a
@@ -479,6 +512,7 @@ pub enum BotChannel {
 pub enum PendingAction {
     SendEmail(OutboundEmail),
     Bot(BotForward),
+    Webhook(WebhookForward),
 }
 
 /// Queue payload for `cutout-retries` and `cutout-retries-dlq`. Carries only
@@ -527,6 +561,8 @@ pub struct Dispatch {
     pub send_emails: Vec<OutboundEmail>,
     /// Telegram + Discord bot posts.
     pub bot_forwards: Vec<BotForward>,
+    /// Webhook POSTs carrying the parsed email as JSON.
+    pub webhook_forwards: Vec<WebhookForward>,
 }
 
 impl Dispatch {
@@ -534,6 +570,7 @@ impl Dispatch {
         self.forward_emails.is_empty()
             && self.send_emails.is_empty()
             && self.bot_forwards.is_empty()
+            && self.webhook_forwards.is_empty()
     }
 }
 
@@ -623,6 +660,45 @@ mod tests {
     }
 
     #[test]
+    fn parse_webhook_destination() {
+        for input in [
+            "webhook:https://example.com/hook",
+            "wh:https://example.com/hook",
+            "WEBHOOK:https://example.com/hook",
+        ] {
+            let d = Destination::parse_line(input).unwrap().unwrap();
+            assert_eq!(
+                d,
+                Destination::Webhook {
+                    url: "https://example.com/hook".into(),
+                }
+            );
+        }
+        // Plain http and an uppercase scheme are both accepted.
+        let d = Destination::parse_line("webhook:HTTP://example.com/hook")
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            d,
+            Destination::Webhook {
+                url: "HTTP://example.com/hook".into(),
+            }
+        );
+    }
+
+    #[test]
+    fn rejects_webhook_without_http_scheme() {
+        for input in [
+            "webhook:example.com/hook",
+            "webhook:ftp://example.com/hook",
+            "wh:not-a-url",
+        ] {
+            let err = Destination::parse_line(input).unwrap_err();
+            assert!(err.contains("webhook url"), "got: {err}");
+        }
+    }
+
+    #[test]
     fn format_round_trips_chat_destinations() {
         let dests = vec![
             Destination::Telegram {
@@ -631,11 +707,43 @@ mod tests {
             Destination::Discord {
                 channel_id: "555".into(),
             },
+            Destination::Webhook {
+                url: "https://example.com/hook".into(),
+            },
         ];
         let formatted = Destination::format_list(&dests);
-        assert_eq!(formatted, "telegram:-100\ndiscord:555");
+        assert_eq!(
+            formatted,
+            "telegram:-100\ndiscord:555\nwebhook:https://example.com/hook"
+        );
         let parsed = Destination::parse_list(&formatted).unwrap();
         assert_eq!(parsed, dests);
+    }
+
+    #[test]
+    fn auto_label_counts_webhooks() {
+        let rule = Rule {
+            id: "r".into(),
+            local_pattern: "news".into(),
+            domain_pattern: "*.org".into(),
+            action: Action::Forward {
+                destinations: vec![
+                    Destination::Email {
+                        address: "a@b.com".into(),
+                        proxy: true,
+                    },
+                    Destination::Webhook {
+                        url: "https://example.com/hook".into(),
+                    },
+                    Destination::Webhook {
+                        url: "https://example.com/other".into(),
+                    },
+                ],
+            },
+            label: String::new(),
+            inbox_readers: vec![],
+        };
+        assert_eq!(rule.auto_label(), "news@*.org → Email + Webhook ×2");
     }
 
     #[test]
@@ -690,6 +798,25 @@ mod tests {
     fn parse_list_reports_line_number_on_error() {
         let err = Destination::parse_list("email:a@b.com\nslack:c").unwrap_err();
         assert!(err.starts_with("line 2:"), "got: {err}");
+    }
+
+    #[test]
+    fn webhook_destination_serializes_with_kind_tag() {
+        let j = serde_json::to_value(&Destination::Webhook {
+            url: "https://example.com/hook".into(),
+        })
+        .unwrap();
+        assert_eq!(
+            j,
+            serde_json::json!({"kind": "webhook", "url": "https://example.com/hook"})
+        );
+        let back: Destination = serde_json::from_value(j).unwrap();
+        assert_eq!(
+            back,
+            Destination::Webhook {
+                url: "https://example.com/hook".into(),
+            }
+        );
     }
 
     #[test]

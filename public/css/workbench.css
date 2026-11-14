@@ -669,6 +669,11 @@
   color: var(--ch-discord);
 }
 
+.dest-card.webhook .dest-icon {
+  background: color-mix(in oklab, var(--ch-webhook) 16%, transparent);
+  color: var(--ch-webhook);
+}
+
 .dest-meta {
   min-width: 0;
   flex: 1;
@@ -980,6 +985,10 @@
   background: var(--ch-discord);
 }
 
+.lr-chdot.ch-webhook {
+  background: var(--ch-webhook);
+}
+
 .lr-size {
   text-align: right;
   color: var(--fg-2);
@@ -1039,6 +1048,11 @@
 .dest-chip.discord {
   background: color-mix(in oklab, var(--ch-discord) 16%, transparent);
   color: var(--ch-discord);
+}
+
+.dest-chip.webhook {
+  background: color-mix(in oklab, var(--ch-webhook) 16%, transparent);
+  color: var(--ch-webhook);
 }
 
 .dest-chip-kind {
