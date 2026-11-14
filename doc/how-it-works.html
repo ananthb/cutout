@@ -46,7 +46,7 @@
   <li><strong>Catch-all intake:</strong> Mail to any address on your domain triggers Cloudflare Email Routing's catch-all rule and invokes the Cutout Worker.</li>
   <li><strong>Rule matching:</strong> Cutout evaluates your glob rules top to bottom (first match wins) across local part and domain.</li>
   <li><strong>Reverse-alias minting:</strong> On a Forward match, Cutout mints a single <code>reply+&lt;uuid&gt;@yourdomain.com</code> reverse alias in <strong>D1</strong> shared across all destinations on the rule.</li>
-  <li><strong>Fan-out &amp; storage:</strong> The Worker dispatches the message to each configured destination (email, Telegram, Discord, webhook) and, if <strong>Store</strong> is enabled, saves the raw MIME message in <strong>R2</strong> for <code>/inbox</code>.</li>
+  <li><strong>Fan-out &amp; storage:</strong> The Worker dispatches the message to each configured destination (email, Telegram, Discord, webhook) and, if <strong>Store</strong> is enabled, saves the raw MIME message in <strong>R2</strong> for <code>/inbox</code>. An email destination can opt into a <strong>digest</strong> (<code>6h</code>, <code>daily</code>, or <code>weekly</code>) instead, which always stores the message and sends one summary email per period linking to each stored message.</li>
 </ol>
 
 <h2>Forwarding modes</h2>

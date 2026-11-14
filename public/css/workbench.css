@@ -1136,6 +1136,26 @@
   color: var(--info);
 }
 
+/* Digest is the "batch it for later" mode: warn-coloured like a schedule. */
+.dest-chip-mod.is-digest {
+  color: var(--warn);
+}
+
+.dest-chip-mod.is-digest.is-on {
+  background: color-mix(in oklab, var(--warn) 22%, transparent);
+}
+
+.dest-chip-mod.is-digest.is-off {
+  background: transparent;
+  border: 1px dashed color-mix(in oklab, var(--fg-3) 45%, transparent);
+  color: var(--fg-3);
+}
+
+.dest-chip-mod.is-digest.is-toggle:hover {
+  background: color-mix(in oklab, var(--warn) 16%, transparent);
+  color: var(--warn);
+}
+
 .dest-chip-remove {
   display: inline-flex;
   align-items: center;
@@ -1162,6 +1182,13 @@
 .dest-add-row {
   display: flex;
   gap: 8px;
+}
+
+.dest-add-opts {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px 14px;
 }
 
 .dest-input {

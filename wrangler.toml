@@ -93,6 +93,14 @@ max_batch_size = 5
 binding = "EVENTS"
 dataset = "cutout_events"
 
+# ============================================================================
+# Hourly tick for email digests. `digest::handle` reads each destination's
+# schedule (6h / daily / weekly) and last-sent watermark, so the trigger only
+# needs to be frequent enough to notice a due digest.
+# ============================================================================
+[triggers]
+crons = ["0 * * * *"]
+
 [vars]
 ENVIRONMENT = "production"
 
@@ -127,8 +135,8 @@ invocation_logs = true
 #                     stats panels stay hidden unless this AND CF_API_TOKEN
 #                     are set.
 #   PUBLIC_BASE_URL   Public origin used for inbox links in Telegram/Discord
-#                     posts (e.g. "https://cutout.example.com"). Empty
-#                     suppresses the link.
+#                     posts and in digest emails (e.g. "https://cutout.example.com").
+#                     Empty suppresses the link.
 #
 # Example Builds deploy command that keeps the readable values durable:
 #   npm run deploy -- --var CF_ACCOUNT_ID:<account-id> \

@@ -64,6 +64,7 @@ type alias Editor =
     , destKind : String
     , destValue : String
     , destProxy : Bool
+    , destDigest : Maybe String
     , destError : String
     , readers : List String
     , readerValue : String
@@ -87,6 +88,7 @@ empty =
     , destKind = "email"
     , destValue = ""
     , destProxy = True
+    , destDigest = Nothing
     , destError = ""
     , readers = []
     , readerValue = ""
@@ -158,7 +160,9 @@ type Msg
     | SetDestKind String
     | SetDestValue String
     | SetDestProxy Bool
+    | SetDestDigest (Maybe String)
     | ToggleDestProxy Int
+    | ToggleDestDigest Int
     | AddDest
     | RemoveDest Int
     | SetReaderValue String
@@ -228,8 +232,14 @@ update enabled msg editor =
         SetDestProxy v ->
             ( { editor | destProxy = v }, Cmd.none, NoOut )
 
+        SetDestDigest v ->
+            ( { editor | destDigest = v }, Cmd.none, NoOut )
+
         ToggleDestProxy index ->
             ( { editor | destinations = toggleProxyAt index editor.destinations }, Cmd.none, NoOut )
+
+        ToggleDestDigest index ->
+            ( { editor | destinations = toggleDigestAt index editor.destinations }, Cmd.none, NoOut )
 
         AddDest ->
             case parseDestination enabled editor of
@@ -417,6 +427,54 @@ toggleProxyAt index destinations =
         destinations
 
 
+toggleDigestAt : Int -> List Api.Destination -> List Api.Destination
+toggleDigestAt index destinations =
+    List.indexedMap
+        (\i d ->
+            if i == index then
+                case d of
+                    Api.Email email ->
+                        Api.Email { email | digest = cycleDigest email.digest }
+
+                    other ->
+                        other
+
+            else
+                d
+        )
+        destinations
+
+
+cycleDigest : Maybe String -> Maybe String
+cycleDigest current =
+    case current of
+        Nothing ->
+            Just "6h"
+
+        Just "6h" ->
+            Just "daily"
+
+        Just "daily" ->
+            Just "weekly"
+
+        _ ->
+            Nothing
+
+
+hasDigestDestination : Editor -> Bool
+hasDigestDestination editor =
+    List.any
+        (\d ->
+            case d of
+                Api.Email { digest } ->
+                    digest /= Nothing
+
+                _ ->
+                    False
+        )
+        editor.destinations
+
+
 editorAction : Editor -> Api.Action
 editorAction editor =
     case editor.actionType of
@@ -472,7 +530,10 @@ ruleStoresMessages : Editor -> Bool
 ruleStoresMessages editor =
     editor.actionType
         == "store"
-        || (editor.actionType == "forward" && (editor.storeForward || hasChatDestination editor))
+        || (editor.actionType
+                == "forward"
+                && (editor.storeForward || hasChatDestination editor || hasDigestDestination editor)
+           )
 
 
 parseDestination : Api.Enabled -> Editor -> Result String Api.Destination
@@ -488,7 +549,7 @@ parseDestination enabled editor =
                     String.toLower raw
             in
             if validEmail v then
-                Ok (Api.Email { address = v, proxy = editor.destProxy })
+                Ok (Api.Email { address = v, proxy = editor.destProxy, digest = editor.destDigest })
 
             else
                 Err "Enter an email address like you@example.com"
@@ -838,12 +899,32 @@ destinationsField editor enabled =
                     }
                 ]
             , if editor.destKind == "email" then
-                Ui.toggle
-                    { id = "dest-proxy"
-                    , label = "Proxy replies through the worker (rewrite Reply-To)"
-                    , checked = editor.destProxy
-                    , onCheck = SetDestProxy
-                    }
+                div [ class "dest-add-opts" ]
+                    [ Ui.toggle
+                        { id = "dest-proxy"
+                        , label = "Proxy replies through the worker (rewrite Reply-To)"
+                        , checked = editor.destProxy
+                        , onCheck = SetDestProxy
+                        }
+                    , Ui.segmented
+                        { name = "dest-digest"
+                        , options =
+                            [ ( "off", "Off" )
+                            , ( "6h", "6 hours" )
+                            , ( "daily", "Daily" )
+                            , ( "weekly", "Weekly" )
+                            ]
+                        , selected = Maybe.withDefault "off" editor.destDigest
+                        , onSelect =
+                            \v ->
+                                if v == "off" then
+                                    SetDestDigest Nothing
+
+                                else
+                                    SetDestDigest (Just v)
+                        , disabled = []
+                        }
+                    ]
 
               else
                 text ""
@@ -878,10 +959,16 @@ destChip index destination =
     let
         ( kind, labelText, badges ) =
             case destination of
-                Api.Email { address, proxy } ->
+                Api.Email { address, proxy, digest } ->
                     ( "email"
                     , address
-                    , [ proxyToggle index proxy ]
+                    , [ proxyToggle index proxy, digestToggle index digest ]
+                        ++ (if digest == Nothing then
+                                []
+
+                            else
+                                [ storeBadge True ]
+                           )
                     )
 
                 Api.Telegram { chatId } ->
@@ -979,6 +1066,43 @@ proxyToggle index on =
           else
             text ""
         , text "proxy"
+        ]
+
+
+digestToggle : Int -> Maybe String -> Html Msg
+digestToggle index current =
+    button
+        [ classList
+            [ ( "dest-chip-mod", True )
+            , ( "is-digest", True )
+            , ( "is-toggle", True )
+            , ( if current == Nothing then
+                    "is-off"
+
+                else
+                    "is-on"
+              , True
+              )
+            ]
+        , type_ "button"
+        , title
+            (if current == Nothing then
+                "Send one digest per schedule instead of forwarding each email"
+
+             else
+                "Digest mode. Click to change the schedule."
+            )
+        , onClick (ToggleDestDigest index)
+        ]
+        [ if current == Nothing then
+            text ""
+
+          else
+            Icons.check
+        , text
+            ("digest"
+                ++ Maybe.withDefault "" (Maybe.map (\s -> " · " ++ s) current)
+            )
         ]
 
 

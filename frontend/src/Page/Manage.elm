@@ -1481,11 +1481,14 @@ destinationCard stores destination =
     let
         ( kind, value_, badges ) =
             case destination of
-                Api.Email { address, proxy } ->
+                Api.Email { address, proxy, digest } ->
                     ( "email"
                     , address
                     , (if stores then
                         [ storeBadge False ]
+
+                       else if digest /= Nothing then
+                        [ storeBadge True ]
 
                        else
                         []
@@ -1495,6 +1498,13 @@ destinationCard stores destination =
 
                             else
                                 []
+                           )
+                        ++ (case digest of
+                                Just schedule ->
+                                    [ digestBadge schedule ]
+
+                                Nothing ->
+                                    []
                            )
                     )
 
@@ -1849,3 +1859,15 @@ storeBadge locked =
 plainBadge : String -> Html msg
 plainBadge label_ =
     span [ class "dest-chip-mod" ] [ text label_ ]
+
+
+digestBadge : String -> Html msg
+digestBadge schedule =
+    span
+        [ classList
+            [ ( "dest-chip-mod", True )
+            , ( "is-digest", True )
+            , ( "is-on", True )
+            ]
+        ]
+        [ text ("digest · " ++ schedule) ]

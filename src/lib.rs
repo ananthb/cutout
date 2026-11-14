@@ -47,6 +47,7 @@ use worker::*;
 mod api;
 mod bots;
 pub mod db;
+mod digest;
 mod dlq;
 mod email;
 mod events;
@@ -401,5 +402,19 @@ async fn queue(batch: MessageBatch<types::RetryMsg>, env: Env, _ctx: Context) ->
             console_log!("queue handler: unknown queue {other}");
             Ok(())
         }
+    }
+}
+
+/// Cron trigger (`0 * * * *`): the hourly tick decides which digest
+/// destinations are due and sends one summary email for each.
+///
+/// Returns `()`, not `Result`, because worker 0.8's `#[event(scheduled)]`
+/// glue discards the handler's return value; returning `Result` trips
+/// `unused_must_use` under `-D warnings`. Log instead.
+#[event(scheduled)]
+async fn scheduled(_event: ScheduledEvent, env: Env, _ctx: ScheduleContext) {
+    console_error_panic_hook::set_once();
+    if let Err(e) = digest::handle(env).await {
+        console_log!("digest: scheduled run failed: {e}");
     }
 }

@@ -81,7 +81,7 @@ type Action
 
 
 type Destination
-    = Email { address : String, proxy : Bool }
+    = Email { address : String, proxy : Bool, digest : Maybe String }
     | Telegram { chatId : String }
     | Discord { channelId : String }
     | Webhook { url : String }
@@ -645,9 +645,10 @@ destinationDecoder =
             (\k ->
                 case k of
                     "email" ->
-                        D.map2 (\address proxy -> Email { address = address, proxy = proxy })
+                        D.map3 (\address proxy digest -> Email { address = address, proxy = proxy, digest = digest })
                             (D.field "address" D.string)
                             (D.field "proxy" (D.oneOf [ D.bool, D.succeed True ]))
+                            (D.oneOf [ D.field "digest" (D.nullable D.string), D.succeed Nothing ])
 
                     "telegram" ->
                         D.map (\chatId -> Telegram { chatId = chatId }) (D.field "chat_id" D.string)
@@ -821,12 +822,20 @@ encodeAction action =
 encodeDestination : Destination -> E.Value
 encodeDestination destination =
     case destination of
-        Email { address, proxy } ->
+        Email { address, proxy, digest } ->
             E.object
-                [ ( "kind", E.string "email" )
-                , ( "address", E.string address )
-                , ( "proxy", E.bool proxy )
-                ]
+                ([ ( "kind", E.string "email" )
+                 , ( "address", E.string address )
+                 , ( "proxy", E.bool proxy )
+                 ]
+                    ++ (case digest of
+                            Just schedule ->
+                                [ ( "digest", E.string schedule ) ]
+
+                            Nothing ->
+                                []
+                       )
+                )
 
         Telegram { chatId } ->
             E.object

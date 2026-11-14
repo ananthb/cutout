@@ -101,7 +101,12 @@ pub async fn handle_email(
             let event_kind = match &result {
                 EmailResult::Dispatch(_) => EventKind::Forward,
                 EmailResult::Drop => {
-                    if matches!(rule.action, Action::Store { .. }) {
+                    // A Store rule drops the mail by design, and a digest
+                    // destination stores it and returns an empty dispatch.
+                    // Both are stored mail, not a discard.
+                    if matches!(rule.action, Action::Store { .. })
+                        || rule.action.has_digest_destination()
+                    {
                         EventKind::Store
                     } else {
                         EventKind::Drop
@@ -153,15 +158,32 @@ async fn execute_action(
             }
 
             // Store & Forward persists a copy of the message in addition to
-            // forwarding it.
-            let persist = matches!(action, Action::ForwardStore { .. });
+            // forwarding it. Digest destinations always imply storage, since
+            // the digest links back to the stored message.
+            let has_digest_destination = destinations.iter().any(|d| {
+                matches!(
+                    d,
+                    Destination::Email {
+                        digest: Some(_),
+                        ..
+                    }
+                )
+            });
+            let persist = matches!(action, Action::ForwardStore { .. }) || has_digest_destination;
 
             // Only mint/reuse a reverse alias when at least one destination
-            // uses proxy mode; direct email and chat destinations never use
-            // `reverse_mappings`.
-            let needs_reverse_alias = destinations
-                .iter()
-                .any(|d| matches!(d, Destination::Email { proxy: true, .. }));
+            // uses proxy mode. Direct email, digest, and chat destinations
+            // never use `reverse_mappings`.
+            let needs_reverse_alias = destinations.iter().any(|d| {
+                matches!(
+                    d,
+                    Destination::Email {
+                        proxy: true,
+                        digest: None,
+                        ..
+                    }
+                )
+            });
             let reverse_addr = if needs_reverse_alias {
                 let candidate = forward::generate_reverse_address(domain);
                 let candidate_id = candidate
@@ -215,8 +237,33 @@ async fn execute_action(
 
             for dest in destinations {
                 match dest {
-                    Destination::Email { address, proxy } => {
-                        if *proxy {
+                    Destination::Email {
+                        address,
+                        proxy,
+                        digest,
+                    } => {
+                        if digest.is_some() {
+                            // Digest destinations are not forwarded now: the
+                            // message is already stored, so remember it for the
+                            // next scheduled digest.
+                            if let Some(mid) = &stored_message_id {
+                                let subject = parsed
+                                    .as_ref()
+                                    .map(|p| p.subject.clone())
+                                    .unwrap_or_default();
+                                db::enqueue_digest_item(
+                                    database,
+                                    rule_id,
+                                    address,
+                                    mid,
+                                    from,
+                                    to,
+                                    &subject,
+                                    crate::events::now_ms(),
+                                )
+                                .await?;
+                            }
+                        } else if *proxy {
                             // Cloudflare's structured send requires `From` to
                             // be on an onboarded domain. Keep the original
                             // sender visible in the display name, and route

@@ -19,6 +19,8 @@ Transparent email alias proxy: similar to [SimpleLogin](https://simplelogin.io) 
 
 Email destinations default to **Proxy mode** (`send_email`), which rewrites `Reply-To` to a reverse alias so replies go through Cutout, or opt into **Direct mode** (`EmailMessage.forward()`), which passes the original message and `From` untouched. Verified addresses under **Email Routing → Destination Addresses** work out of the box for free; onboarding your domain to **Email Service** lets Proxy mode send to unverified recipients too.
 
+An email destination can also opt into a **digest** (`6h`, `daily`, or `weekly`): Cutout stores matching mail and sends one summary email per period with a link to each stored message, instead of forwarding every message immediately.
+
 ## Getting Started
 
 1. Click **Deploy to Cloudflare** (or fork and connect **Cloudflare Builds** with deploy command `npm run deploy`).

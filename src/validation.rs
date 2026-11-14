@@ -254,6 +254,7 @@ mod tests {
             destinations: vec![Destination::Email {
                 address: dest.into(),
                 proxy: false,
+                digest: None,
             }],
         }
     }
