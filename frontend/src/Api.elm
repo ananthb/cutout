@@ -76,12 +76,11 @@ import RemoteData exposing (RemoteData)
 type Action
     = Forward (List Destination)
     | ForwardStore (List Destination)
-    | Store { persist : Bool }
     | Drop
 
 
 type Destination
-    = Email { address : String, proxy : Bool, digest : Maybe String }
+    = Email { address : String, proxy : Bool, digest : Maybe String, store : Bool }
     | Telegram { chatId : String }
     | Discord { channelId : String }
     | Webhook { url : String }
@@ -626,10 +625,6 @@ actionDecoder =
                     "forward_store" ->
                         D.map ForwardStore (D.field "destinations" (D.list destinationDecoder))
 
-                    "store" ->
-                        D.map (\p -> Store { persist = p })
-                            (D.field "persist" (D.oneOf [ D.bool, D.succeed False ]))
-
                     "drop" ->
                         D.succeed Drop
 
@@ -645,10 +640,14 @@ destinationDecoder =
             (\k ->
                 case k of
                     "email" ->
-                        D.map3 (\address proxy digest -> Email { address = address, proxy = proxy, digest = digest })
+                        D.map4
+                            (\address proxy digest store ->
+                                Email { address = address, proxy = proxy, digest = digest, store = store }
+                            )
                             (D.field "address" D.string)
                             (D.field "proxy" (D.oneOf [ D.bool, D.succeed True ]))
                             (D.oneOf [ D.field "digest" (D.nullable D.string), D.succeed Nothing ])
+                            (D.oneOf [ D.field "store" D.bool, D.succeed False ])
 
                     "telegram" ->
                         D.map (\chatId -> Telegram { chatId = chatId }) (D.field "chat_id" D.string)
@@ -809,12 +808,6 @@ encodeAction action =
                 , ( "destinations", E.list encodeDestination destinations )
                 ]
 
-        Store { persist } ->
-            E.object
-                [ ( "type", E.string "store" )
-                , ( "persist", E.bool persist )
-                ]
-
         Drop ->
             E.object [ ( "type", E.string "drop" ) ]
 
@@ -822,12 +815,18 @@ encodeAction action =
 encodeDestination : Destination -> E.Value
 encodeDestination destination =
     case destination of
-        Email { address, proxy, digest } ->
+        Email { address, proxy, digest, store } ->
             E.object
                 ([ ( "kind", E.string "email" )
                  , ( "address", E.string address )
                  , ( "proxy", E.bool proxy )
                  ]
+                    ++ (if store then
+                            [ ( "store", E.bool True ) ]
+
+                        else
+                            []
+                       )
                     ++ (case digest of
                             Just schedule ->
                                 [ ( "digest", E.string schedule ) ]
@@ -871,9 +870,6 @@ actionSummary action =
         ForwardStore destinations ->
             "store & forward · " ++ channels destinations
 
-        Store _ ->
-            "store"
-
         Drop ->
             "drop"
 
@@ -884,7 +880,6 @@ shared handling stays in one place.
 -}
 type ActionKind
     = ForwardKind
-    | StoreKind
     | DropKind
 
 
@@ -896,9 +891,6 @@ actionKind action =
 
         ForwardStore _ ->
             ForwardKind
-
-        Store _ ->
-            StoreKind
 
         Drop ->
             DropKind

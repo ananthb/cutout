@@ -59,12 +59,11 @@ type alias Editor =
     , domain : String
     , actionType : String
     , destinations : List Api.Destination
-    , persist : Bool
-    , storeForward : Bool
     , destKind : String
     , destValue : String
     , destProxy : Bool
     , destDigest : Maybe String
+    , destStore : Bool
     , destError : String
     , readers : List String
     , readerValue : String
@@ -83,12 +82,11 @@ empty =
     , domain = "*"
     , actionType = "forward"
     , destinations = []
-    , persist = False
-    , storeForward = False
     , destKind = ""
     , destValue = ""
     , destProxy = True
     , destDigest = Nothing
+    , destStore = False
     , destError = ""
     , readers = []
     , readerValue = ""
@@ -105,16 +103,13 @@ fromRule rule =
         fields =
             case rule.action of
                 Api.Forward dests ->
-                    { actionType = "forward", destinations = dests, persist = False, storeForward = False }
+                    { actionType = "forward", destinations = dests }
 
                 Api.ForwardStore dests ->
-                    { actionType = "forward", destinations = dests, persist = False, storeForward = True }
-
-                Api.Store store ->
-                    { actionType = "store", destinations = [], persist = store.persist, storeForward = False }
+                    { actionType = "forward", destinations = dests }
 
                 Api.Drop ->
-                    { actionType = "drop", destinations = [], persist = False, storeForward = False }
+                    { actionType = "drop", destinations = [] }
     in
     { empty
         | id = Just rule.id
@@ -123,8 +118,6 @@ fromRule rule =
         , domain = rule.domainPattern
         , actionType = fields.actionType
         , destinations = fields.destinations
-        , persist = fields.persist
-        , storeForward = fields.storeForward
         , readers = rule.inboxReaders
     }
 
@@ -155,15 +148,14 @@ type Msg
     | FocusDomain
     | FocusResult (Result Dom.Error ())
     | SetActionType String
-    | SetPersist Bool
-    | SetStoreForward Bool
-    | ToggleStore
     | SetDestKind String
     | SetDestValue String
     | SetDestProxy Bool
     | SetDestDigest (Maybe String)
+    | SetDestStore Bool
     | ToggleDestProxy Int
     | ToggleDestDigest Int
+    | ToggleDestStore Int
     | AddDest
     | RemoveDest Int
     | SetReaderValue String
@@ -195,15 +187,6 @@ update enabled msg editor =
         SetActionType v ->
             ( { editor | actionType = v, formError = Nothing }, Cmd.none, NoOut )
 
-        SetPersist v ->
-            ( { editor | persist = v, formError = Nothing }, Cmd.none, NoOut )
-
-        SetStoreForward v ->
-            ( { editor | storeForward = v, formError = Nothing }, Cmd.none, NoOut )
-
-        ToggleStore ->
-            ( { editor | storeForward = not editor.storeForward, formError = Nothing }, Cmd.none, NoOut )
-
         SetDestKind v ->
             ( { editor
                 | destKind = v
@@ -211,6 +194,7 @@ update enabled msg editor =
                 , destError = ""
                 , destDigest = Nothing
                 , destProxy = True
+                , destStore = False
                 , formError = Nothing
               }
             , Cmd.none
@@ -249,11 +233,17 @@ update enabled msg editor =
         SetDestDigest v ->
             ( { editor | destDigest = v }, Cmd.none, NoOut )
 
+        SetDestStore v ->
+            ( { editor | destStore = v }, Cmd.none, NoOut )
+
         ToggleDestProxy index ->
             ( { editor | destinations = toggleProxyAt index editor.destinations }, Cmd.none, NoOut )
 
         ToggleDestDigest index ->
             ( { editor | destinations = toggleDigestAt index editor.destinations }, Cmd.none, NoOut )
+
+        ToggleDestStore index ->
+            ( { editor | destinations = toggleStoreAt index editor.destinations }, Cmd.none, NoOut )
 
         AddDest ->
             case parseDestination enabled editor of
@@ -272,6 +262,7 @@ update enabled msg editor =
                         , destValue = ""
                         , destDigest = Nothing
                         , destProxy = True
+                        , destStore = False
                         , destError = ""
                         , formError = Nothing
                       }
@@ -283,22 +274,7 @@ update enabled msg editor =
                     ( { editor | destError = err }, Cmd.none, NoOut )
 
         RemoveDest index ->
-            let
-                remaining =
-                    removeAt index editor.destinations
-            in
-            ( { editor
-                | destinations = remaining
-                , storeForward =
-                    if List.any isEmailDestination remaining then
-                        editor.storeForward
-
-                    else
-                        False
-              }
-            , Cmd.none
-            , NoOut
-            )
+            ( { editor | destinations = removeAt index editor.destinations }, Cmd.none, NoOut )
 
         SetReaderValue v ->
             ( { editor | readerValue = v, readerError = "" }, Cmd.none, NoOut )
@@ -477,6 +453,24 @@ toggleDigestAt index destinations =
         destinations
 
 
+toggleStoreAt : Int -> List Api.Destination -> List Api.Destination
+toggleStoreAt index destinations =
+    List.indexedMap
+        (\i d ->
+            if i == index then
+                case d of
+                    Api.Email email ->
+                        Api.Email { email | store = not email.store }
+
+                    other ->
+                        other
+
+            else
+                d
+        )
+        destinations
+
+
 cycleDigest : Maybe String -> Maybe String
 cycleDigest current =
     case current of
@@ -493,50 +487,36 @@ cycleDigest current =
             Nothing
 
 
-hasDigestDestination : Editor -> Bool
-hasDigestDestination editor =
-    List.any
-        (\d ->
-            case d of
-                Api.Email { digest } ->
-                    digest /= Nothing
+{-| A destination that keeps a copy in the Cutout inbox: an email with `store`
+on, or one in digest mode (a digest always stores).
+-}
+emailDestinationStores : Api.Destination -> Bool
+emailDestinationStores destination =
+    case destination of
+        Api.Email email ->
+            email.store || email.digest /= Nothing
 
-                _ ->
-                    False
-        )
-        editor.destinations
+        _ ->
+            False
+
+
+anyEmailStores : Editor -> Bool
+anyEmailStores editor =
+    List.any emailDestinationStores editor.destinations
 
 
 editorAction : Editor -> Api.Action
 editorAction editor =
     case editor.actionType of
-        "store" ->
-            Api.Store { persist = editor.persist }
-
         "drop" ->
             Api.Drop
 
         _ ->
-            if editor.storeForward || hasDigestDestination editor then
+            if anyEmailStores editor then
                 Api.ForwardStore editor.destinations
 
             else
                 Api.Forward editor.destinations
-
-
-hasEmailDestination : Editor -> Bool
-hasEmailDestination editor =
-    List.any isEmailDestination editor.destinations
-
-
-isEmailDestination : Api.Destination -> Bool
-isEmailDestination destination =
-    case destination of
-        Api.Email _ ->
-            True
-
-        _ ->
-            False
 
 
 hasChatDestination : Editor -> Bool
@@ -561,12 +541,7 @@ hasChatDestination editor =
 
 ruleStoresMessages : Editor -> Bool
 ruleStoresMessages editor =
-    editor.actionType
-        == "store"
-        || (editor.actionType
-                == "forward"
-                && (editor.storeForward || hasChatDestination editor || hasDigestDestination editor)
-           )
+    editor.actionType == "forward" && (anyEmailStores editor || hasChatDestination editor)
 
 
 parseDestination : Api.Enabled -> Editor -> Result String Api.Destination
@@ -582,7 +557,7 @@ parseDestination enabled editor =
                     String.toLower raw
             in
             if validEmail v then
-                Ok (Api.Email { address = v, proxy = editor.destProxy, digest = editor.destDigest })
+                Ok (Api.Email { address = v, proxy = editor.destProxy, digest = editor.destDigest, store = editor.destStore })
 
             else
                 Err "Enter an email address like you@example.com"
@@ -761,26 +736,12 @@ view enabled editor =
                 { name = "rule-action"
                 , options =
                     [ ( "forward", "Forward" ), ( "drop", "Drop" ) ]
-                        ++ (if editor.actionType == "store" then
-                                [ ( "store", "Store" ) ]
-
-                            else
-                                []
-                           )
                 , selected = editor.actionType
                 , onSelect = SetActionType
                 , disabled = []
                 }
             , if editor.actionType == "forward" then
                 div [ class "forward-fields" ] [ destinationsField editor enabled ]
-
-              else if editor.actionType == "store" then
-                Ui.toggle
-                    { id = "rule-persist"
-                    , label = "Persist the message body to the database"
-                    , checked = editor.persist
-                    , onCheck = SetPersist
-                    }
 
               else
                 p [ class "hint" ] [ text "Matching mail is silently discarded. No notification, no bounce." ]
@@ -896,7 +857,7 @@ destinationsField editor enabled =
             text ""
 
           else
-            div [ class "dest-chips" ] (List.indexedMap (destChip editor) editor.destinations)
+            div [ class "dest-chips" ] (List.indexedMap destChip editor.destinations)
         , destPicker editor enabled
         , if editor.destKind == "" then
             text ""
@@ -1051,7 +1012,7 @@ destOptions editor =
                     { id = "dest-store"
                     , icon = Icons.inbox
                     , label = "Store"
-                    , checked = editor.storeForward || digestLocked
+                    , checked = editor.destStore || digestLocked
                     , locked = digestLocked
                     , hint = "Keep a copy in the Cutout inbox"
                     , title =
@@ -1060,7 +1021,7 @@ destOptions editor =
 
                         else
                             ""
-                    , onCheck = SetStoreForward
+                    , onCheck = SetDestStore
                     }
                     :: destOptGroup
                         { icon = Icons.clock
@@ -1201,8 +1162,8 @@ chatSuggestion chat =
         ]
 
 
-destChip : Editor -> Int -> Api.Destination -> Html Msg
-destChip editor index destination =
+destChip : Int -> Api.Destination -> Html Msg
+destChip index destination =
     let
         ( kind, kindName ) =
             case destination of
@@ -1220,8 +1181,8 @@ destChip editor index destination =
 
         ( labelText, modifiers ) =
             case destination of
-                Api.Email { address, proxy, digest } ->
-                    ( address, emailModifiers editor index digest proxy )
+                Api.Email { address, proxy, digest, store } ->
+                    ( address, emailModifiers index store digest proxy )
 
                 Api.Telegram { chatId } ->
                     ( chatId, [ chatStoreBadge ] )
@@ -1262,31 +1223,27 @@ destChip editor index destination =
 
 
 {-| The modifier buttons on an email pill. A digest destination shows a locked
-Store indicator and no proxy; any email pill locks its Store toggle while a
-digest exists anywhere in the rule, because a digest always stores.
+Store indicator (a digest always stores) and no proxy. Any other email pill
+shows its own `store` flag as an independent toggle.
 -}
-emailModifiers : Editor -> Int -> Maybe String -> Bool -> List (Html Msg)
-emailModifiers editor index digest proxy =
+emailModifiers : Int -> Bool -> Maybe String -> Bool -> List (Html Msg)
+emailModifiers index store digest proxy =
     case digest of
         Just schedule ->
             [ storeLockedBadge, digestMod index (Just schedule) ]
 
         Nothing ->
-            [ if hasDigestDestination editor then
-                storeLockedBadge
-
-              else
-                storeToggle editor.storeForward
+            [ storeToggle index store
             , digestMod index Nothing
             , proxyMod index proxy
             ]
 
 
-{-| A rule-level Store toggle on an email pill. Clicking any of them flips the
-editor's single `storeForward` flag, so all email pills move together.
+{-| Store toggle for one email destination. It flips exactly that
+destination's `store` flag and leaves every other destination alone.
 -}
-storeToggle : Bool -> Html Msg
-storeToggle on =
+storeToggle : Int -> Bool -> Html Msg
+storeToggle index on =
     button
         [ classList
             [ ( "dest-chip-mod", True )
@@ -1310,7 +1267,7 @@ storeToggle on =
              else
                 "Keep a copy in the Cutout inbox"
             )
-        , onClick ToggleStore
+        , onClick (ToggleDestStore index)
         ]
         [ if on then
             Icons.check
@@ -1557,11 +1514,8 @@ editorAutoLabel editor =
                 "drop" ->
                     "drop"
 
-                "store" ->
-                    "store"
-
                 _ ->
-                    if (editor.storeForward || hasDigestDestination editor) && hasEmailDestination editor then
+                    if anyEmailStores editor then
                         "store & forward"
 
                     else if List.isEmpty editor.destinations then
