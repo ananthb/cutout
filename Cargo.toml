@@ -23,7 +23,7 @@ js-sys = "0.3"
 web-sys = { version = "0.3", features = ["Crypto", "SubtleCrypto", "CryptoKey", "ReadableStream", "Response", "Headers"] }
 urlencoding = "2"
 sha2 = "0.10"
-hmac = "0.12"
+hmac = "0.13"
 mail-parser = "0.9"
 base64 = "0.23"
 subtle = "2.6"
