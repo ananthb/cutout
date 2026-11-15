@@ -51,7 +51,6 @@ impl Rule {
                 };
                 let suffix = match action {
                     Action::Drop => "drop".to_string(),
-                    Action::Store { .. } => "store".to_string(),
                     Action::ForwardStore { destinations } => {
                         if destinations.is_empty() {
                             "store & forward (no destinations)".to_string()
@@ -202,11 +201,6 @@ pub enum Action {
     ForwardStore { destinations: Vec<Destination> },
     /// Silently drop.
     Drop,
-    /// Store message for later retrieval.
-    Store {
-        #[serde(default)]
-        persist: bool,
-    },
 }
 
 // Wire format for `Action`, including the legacy `replace_reply_to` field.
@@ -226,10 +220,6 @@ enum ActionWire {
         destinations: Vec<Destination>,
     },
     Drop,
-    Store {
-        #[serde(default)]
-        persist: bool,
-    },
 }
 
 impl<'de> Deserialize<'de> for Action {
@@ -250,7 +240,6 @@ impl<'de> Deserialize<'de> for Action {
             }
             ActionWire::ForwardStore { destinations } => Action::ForwardStore { destinations },
             ActionWire::Drop => Action::Drop,
-            ActionWire::Store { persist } => Action::Store { persist },
         })
     }
 }
@@ -335,6 +324,31 @@ impl Action {
             _ => false,
         }
     }
+
+    /// Normalise legacy `ForwardStore` data onto the per-destination `store`
+    /// flag. Older blobs carry the action-level "store & forward" intent with
+    /// email destinations that have no `store` field (so they deserialize as
+    /// `store = false`). When *no* email destination already carries
+    /// `store = true`, that legacy intent is promoted onto every email
+    /// destination so the rule keeps storing after an edit. When at least one
+    /// destination already has an explicit `store = true`, the per-destination
+    /// flags are authoritative and left untouched.
+    pub fn normalize_legacy_store(&mut self) {
+        let Action::ForwardStore { destinations } = self else {
+            return;
+        };
+        let any_explicit = destinations
+            .iter()
+            .any(|d| matches!(d, Destination::Email { store: true, .. }));
+        if any_explicit {
+            return;
+        }
+        for d in destinations.iter_mut() {
+            if let Destination::Email { store, .. } = d {
+                *store = true;
+            }
+        }
+    }
 }
 
 /// A single forward target. Multiple destinations of different kinds may be
@@ -366,6 +380,11 @@ pub enum Destination {
         /// scheduled handler sends one email linking to each stored message.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         digest: Option<DigestSchedule>,
+        /// Persist a copy of this destination's mail to the rule's stored
+        /// list (and the `/inbox` viewer). Independent per destination, so
+        /// toggling Store on one address never flips another.
+        #[serde(default)]
+        store: bool,
     },
     /// Forward to a Telegram chat via bot `sendMessage`.
     Telegram { chat_id: String },
@@ -415,22 +434,25 @@ impl Destination {
             "email" => {
                 // `email:<address>[:modifier[:modifier...]]`. Modifiers are
                 // order-independent: `direct`/`noproxy` opt out of proxy mode,
-                // `proxy` (the default) opts back in, and `6h`/`daily`/`weekly`
-                // select a digest schedule.
+                // `proxy` (the default) opts back in, `store` persists a copy
+                // of the message, and `6h`/`daily`/`weekly` select a digest
+                // schedule.
                 let mut parts = rest.split(':');
                 let value = parts.next().unwrap_or("").trim().to_string();
                 let mut proxy = true;
+                let mut store = false;
                 let mut digest = None;
                 for raw in parts {
                     let modifier = raw.trim();
                     match modifier.to_ascii_lowercase().as_str() {
                         "proxy" => proxy = true,
                         "direct" | "noproxy" => proxy = false,
+                        "store" => store = true,
                         _ => match DigestSchedule::parse(modifier) {
                             Some(schedule) => digest = Some(schedule),
                             None => {
                                 return Err(
-                                    "email modifier must be 'direct', 'proxy', '6h', 'daily', or 'weekly'",
+                                    "email modifier must be 'direct', 'proxy', 'store', '6h', 'daily', or 'weekly'",
                                 )
                             }
                         },
@@ -443,6 +465,7 @@ impl Destination {
                     address: value.to_lowercase(),
                     proxy,
                     digest,
+                    store,
                 }))
             }
             "telegram" | "tg" => {
@@ -492,7 +515,8 @@ impl Destination {
     /// Format a list of destinations as newline-separated `kind:value` lines,
     /// suitable for round-tripping through [`Destination::parse_list`]. An
     /// email destination appends `:direct` when it opts out of the default
-    /// proxy mode and `:<schedule>` when it is in digest mode.
+    /// proxy mode, `:store` when it persists a copy, and `:<schedule>` when
+    /// it is in digest mode.
     pub fn format_list(destinations: &[Destination]) -> String {
         destinations
             .iter()
@@ -501,10 +525,14 @@ impl Destination {
                     address,
                     proxy,
                     digest,
+                    store,
                 } => {
                     let mut line = format!("email:{address}");
                     if !proxy {
                         line.push_str(":direct");
+                    }
+                    if *store {
+                        line.push_str(":store");
                     }
                     if let Some(schedule) = digest {
                         line.push(':');
@@ -710,6 +738,7 @@ mod tests {
                 address: "foo@bar.com".into(),
                 proxy: true,
                 digest: None,
+                store: false,
             }
         );
     }
@@ -724,6 +753,7 @@ mod tests {
                     address: "foo@bar.com".into(),
                     proxy: false,
                     digest: None,
+                    store: false,
                 }
             );
         }
@@ -740,6 +770,7 @@ mod tests {
                 address: "foo@bar.com".into(),
                 proxy: true,
                 digest: None,
+                store: false,
             }
         );
     }
@@ -765,6 +796,7 @@ mod tests {
                     address: "foo@bar.com".into(),
                     proxy: true,
                     digest: Some(schedule),
+                    store: false,
                 }
             );
         }
@@ -781,6 +813,7 @@ mod tests {
                 address: "foo@bar.com".into(),
                 proxy: false,
                 digest: Some(DigestSchedule::Daily),
+                store: false,
             }
         );
         let d = Destination::parse_line("email:foo@bar.com:direct:daily")
@@ -792,6 +825,7 @@ mod tests {
                 address: "foo@bar.com".into(),
                 proxy: false,
                 digest: Some(DigestSchedule::Daily),
+                store: false,
             }
         );
     }
@@ -821,11 +855,13 @@ mod tests {
                 address: "a@b.com".into(),
                 proxy: true,
                 digest: Some(DigestSchedule::Daily),
+                store: false,
             },
             Destination::Email {
                 address: "c@d.com".into(),
                 proxy: false,
                 digest: Some(DigestSchedule::SixHours),
+                store: false,
             },
         ];
         assert_eq!(
@@ -843,6 +879,7 @@ mod tests {
                 address: "a@b.com".into(),
                 proxy: true,
                 digest: Some(DigestSchedule::Weekly),
+                store: false,
             }],
         };
         assert!(digest.has_digest_destination());
@@ -851,10 +888,10 @@ mod tests {
                 address: "a@b.com".into(),
                 proxy: true,
                 digest: None,
+                store: false,
             }],
         };
         assert!(!plain.has_digest_destination());
-        assert!(!Action::Store { persist: true }.has_digest_destination());
         assert!(!Action::Drop.has_digest_destination());
     }
 
@@ -985,6 +1022,7 @@ mod tests {
                         address: "a@b.com".into(),
                         proxy: true,
                         digest: None,
+                        store: false,
                     },
                     Destination::Webhook {
                         url: "https://example.com/hook".into(),
@@ -1080,6 +1118,7 @@ mod tests {
                 address: "a@b".into(),
                 proxy: true,
                 digest: None,
+                store: false,
             }],
         };
         let j = serde_json::to_value(&a).unwrap();
@@ -1087,6 +1126,7 @@ mod tests {
         assert_eq!(j["destinations"][0]["kind"], "email");
         assert_eq!(j["destinations"][0]["address"], "a@b");
         assert_eq!(j["destinations"][0]["proxy"], true);
+        assert_eq!(j["destinations"][0]["store"], false);
         assert!(j.get("replace_reply_to").is_none());
     }
 
@@ -1114,6 +1154,7 @@ mod tests {
                         address: "a@b.com".into(),
                         proxy: true,
                         digest: None,
+                        store: false,
                     }
                 );
                 assert_eq!(
@@ -1122,6 +1163,7 @@ mod tests {
                         address: "c@d.com".into(),
                         proxy: true,
                         digest: None,
+                        store: false,
                     }
                 );
                 assert!(matches!(destinations[2], Destination::Telegram { .. }));
@@ -1148,6 +1190,7 @@ mod tests {
                     address: "a@b.com".into(),
                     proxy: true,
                     digest: None,
+                    store: false,
                 }
             ),
             _ => panic!("expected forward"),
@@ -1161,11 +1204,13 @@ mod tests {
                 address: "a@b.com".into(),
                 proxy: true,
                 digest: None,
+                store: false,
             },
             Destination::Email {
                 address: "c@d.com".into(),
                 proxy: false,
                 digest: None,
+                store: false,
             },
         ];
         assert_eq!(
@@ -1215,6 +1260,7 @@ mod tests {
                         address: "Alice@Example.com".into(),
                         proxy: false,
                         digest: None,
+                        store: false,
                     },
                     Destination::Telegram {
                         chat_id: "42".into(),
@@ -1235,16 +1281,140 @@ mod tests {
     }
 
     #[test]
-    fn effective_readers_empty_for_store_rule_without_explicit() {
+    fn effective_readers_empty_for_forwardstore_rule_without_explicit() {
         let rule = Rule {
             id: "r".into(),
             local_pattern: "*".into(),
             domain_pattern: "*".into(),
-            action: Action::Store { persist: true },
+            action: Action::ForwardStore {
+                destinations: vec![],
+            },
             label: String::new(),
             inbox_readers: vec![],
         };
         assert!(rule.effective_readers().is_empty());
         assert!(!rule.is_reader("anyone@example.com"));
+    }
+
+    #[test]
+    fn parse_email_store_modifier() {
+        for (input, proxy) in [
+            ("email:foo@bar.com:store", true),
+            ("email:foo@bar.com:STORE", true),
+            ("email:foo@bar.com:store:direct", false),
+            ("email:foo@bar.com:direct:store", false),
+        ] {
+            let d = Destination::parse_line(input).unwrap().unwrap();
+            assert_eq!(
+                d,
+                Destination::Email {
+                    address: "foo@bar.com".into(),
+                    proxy,
+                    digest: None,
+                    store: true,
+                }
+            );
+        }
+    }
+
+    #[test]
+    fn format_emits_store_modifier() {
+        let dests = vec![
+            Destination::Email {
+                address: "a@b.com".into(),
+                proxy: true,
+                digest: None,
+                store: true,
+            },
+            Destination::Email {
+                address: "c@d.com".into(),
+                proxy: false,
+                digest: Some(DigestSchedule::Daily),
+                store: true,
+            },
+        ];
+        assert_eq!(
+            Destination::format_list(&dests),
+            "email:a@b.com:store\nemail:c@d.com:direct:store:daily"
+        );
+        let parsed = Destination::parse_list(&Destination::format_list(&dests)).unwrap();
+        assert_eq!(parsed, dests);
+    }
+
+    #[test]
+    fn normalize_legacy_store_promotes_all_false_to_true() {
+        let mut action = Action::ForwardStore {
+            destinations: vec![
+                Destination::Email {
+                    address: "a@b.com".into(),
+                    proxy: true,
+                    digest: None,
+                    store: false,
+                },
+                Destination::Email {
+                    address: "c@d.com".into(),
+                    proxy: false,
+                    digest: None,
+                    store: false,
+                },
+            ],
+        };
+        action.normalize_legacy_store();
+        let Action::ForwardStore { destinations } = action else {
+            panic!("expected forward_store");
+        };
+        assert!(destinations
+            .iter()
+            .all(|d| { matches!(d, Destination::Email { store: true, .. }) }));
+    }
+
+    #[test]
+    fn normalize_legacy_store_leaves_explicit_flags_unchanged() {
+        let mut action = Action::ForwardStore {
+            destinations: vec![
+                Destination::Email {
+                    address: "a@b.com".into(),
+                    proxy: true,
+                    digest: None,
+                    store: true,
+                },
+                Destination::Email {
+                    address: "c@d.com".into(),
+                    proxy: false,
+                    digest: None,
+                    store: false,
+                },
+            ],
+        };
+        action.normalize_legacy_store();
+        let Action::ForwardStore { destinations } = action else {
+            panic!("expected forward_store");
+        };
+        assert_eq!(
+            destinations
+                .iter()
+                .map(|d| matches!(d, Destination::Email { store: true, .. }))
+                .collect::<Vec<_>>(),
+            vec![true, false]
+        );
+    }
+
+    #[test]
+    fn normalize_legacy_store_ignores_non_forwardstore() {
+        let mut action = Action::Forward {
+            destinations: vec![Destination::Email {
+                address: "a@b.com".into(),
+                proxy: true,
+                digest: None,
+                store: false,
+            }],
+        };
+        action.normalize_legacy_store();
+        let Action::Forward { destinations } = action else {
+            panic!("expected forward");
+        };
+        assert!(destinations
+            .iter()
+            .all(|d| { matches!(d, Destination::Email { store: false, .. }) }));
     }
 }

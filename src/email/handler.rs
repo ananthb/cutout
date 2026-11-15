@@ -101,12 +101,9 @@ pub async fn handle_email(
             let event_kind = match &result {
                 EmailResult::Dispatch(_) => EventKind::Forward,
                 EmailResult::Drop => {
-                    // A Store rule drops the mail by design, and a digest
-                    // destination stores it and returns an empty dispatch.
-                    // Both are stored mail, not a discard.
-                    if matches!(rule.action, Action::Store { .. })
-                        || rule.action.has_digest_destination()
-                    {
+                    // A digest destination stores the message and returns an
+                    // empty dispatch; that is stored mail, not a discard.
+                    if rule.action.has_digest_destination() {
                         EventKind::Store
                     } else {
                         EventKind::Drop
@@ -158,8 +155,9 @@ async fn execute_action(
             }
 
             // Store & Forward persists a copy of the message in addition to
-            // forwarding it. Digest destinations always imply storage, since
-            // the digest links back to the stored message.
+            // forwarding it. A per-destination `store` flag or a digest
+            // destination also implies storage (the digest links back to the
+            // stored message).
             let has_digest_destination = destinations.iter().any(|d| {
                 matches!(
                     d,
@@ -169,7 +167,11 @@ async fn execute_action(
                     }
                 )
             });
-            let persist = matches!(action, Action::ForwardStore { .. }) || has_digest_destination;
+            let persist = matches!(action, Action::ForwardStore { .. })
+                || destinations
+                    .iter()
+                    .any(|d| matches!(d, Destination::Email { store: true, .. }))
+                || has_digest_destination;
 
             // Only mint/reuse a reverse alias when at least one destination
             // uses proxy mode. Direct email, digest, and chat destinations
@@ -241,6 +243,7 @@ async fn execute_action(
                         address,
                         proxy,
                         digest,
+                        ..
                     } => {
                         if digest.is_some() {
                             // Digest destinations are not forwarded now: the
@@ -359,24 +362,6 @@ async fn execute_action(
             } else {
                 Ok(EmailResult::Dispatch(dispatch))
             }
-        }
-
-        Action::Store { persist } => {
-            console_log!(
-                "Storing email from {from} to {to} (rule: {rule_label}, persist: {persist})"
-            );
-            if *persist {
-                let parsed = mime::parse_email(raw_bytes);
-                let subject = parsed
-                    .as_ref()
-                    .map(|p| p.subject.clone())
-                    .unwrap_or_default();
-                let id = uuid::Uuid::new_v4().to_string();
-                let key = r2::message_key(&id);
-                r2::put(env, &key, raw_bytes).await?;
-                db::save_message(database, &id, from, to, &subject, &key, Some(rule_id)).await?;
-            }
-            Ok(EmailResult::Drop)
         }
     }
 }
