@@ -8,7 +8,7 @@ crate-type = ["cdylib"]
 
 [build-dependencies]
 sha2 = "0.10"
-base64 = "0.22"
+base64 = "0.23"
 
 [dependencies]
 worker = { version = "0.8", features = ["d1", "queue"] }
@@ -25,7 +25,7 @@ urlencoding = "2"
 sha2 = "0.10"
 hmac = "0.12"
 mail-parser = "0.9"
-base64 = "0.22"
+base64 = "0.23"
 subtle = "2.6"
 botrelay = "0.2"
 
