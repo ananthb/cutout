@@ -1484,11 +1484,11 @@ destinationCard stores destination =
                 Api.Email { address, proxy, digest } ->
                     ( "email"
                     , address
-                    , (if stores then
-                        [ storeBadge False ]
-
-                       else if digest /= Nothing then
+                    , (if digest /= Nothing then
                         [ storeBadge True ]
+
+                       else if stores then
+                        [ storeBadge False ]
 
                        else
                         []
@@ -1851,7 +1851,7 @@ storeBadge locked =
             Icons.lock
 
           else
-            Icons.check
+            Icons.inbox
         , text "store"
         ]
 
@@ -1870,4 +1870,4 @@ digestBadge schedule =
             , ( "is-on", True )
             ]
         ]
-        [ text ("digest · " ++ schedule) ]
+        [ Icons.clock, text ("digest · " ++ schedule) ]
