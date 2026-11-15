@@ -1028,8 +1028,8 @@ deliveringLink rule =
 
 
 {-| Rules that deliver to `input`, treated as a destination: an email address,
-a Telegram chat id, or a Discord channel id. The `kind:value` forms the
-destination builder uses also match.
+a Telegram chat id, a Discord channel id, or a webhook URL. The `kind:value`
+forms the destination builder uses also match.
 -}
 rulesDeliveringTo : String -> List Api.Rule -> List Api.Rule
 rulesDeliveringTo input rules =
@@ -1060,6 +1060,9 @@ destinationValueMatches needle destination =
 
         Api.Discord { channelId } ->
             needle == channelId || needle == "discord:" ++ channelId || needle == "dc:" ++ channelId
+
+        Api.Webhook { url } ->
+            String.toLower (String.trim url) == needle || needle == "webhook:" ++ String.toLower (String.trim url)
 
 
 isEmailish : String -> Bool
@@ -1334,8 +1337,8 @@ anyProxy action =
     List.any
         (\d ->
             case d of
-                Api.Email { proxy } ->
-                    proxy
+                Api.Email { proxy, digest } ->
+                    proxy && digest == Nothing
 
                 _ ->
                     False
@@ -1378,12 +1381,12 @@ statStrip model rule =
             case Api.actionKind rule.action of
                 Api.ForwardKind ->
                     let
-                        ( e, t, d ) =
+                        c =
                             channelCounts (Api.destinationsOf rule.action)
                     in
                     String.join " · "
                         (List.filterMap identity
-                            [ maybeCount e "email", maybeCount t "tg", maybeCount d "dc" ]
+                            [ maybeCount c.email "email", maybeCount c.telegram "tg", maybeCount c.discord "dc", maybeCount c.webhook "webhook" ]
                         )
 
                 _ ->
@@ -1397,21 +1400,27 @@ statStrip model rule =
         ]
 
 
-channelCounts : List Api.Destination -> ( Int, Int, Int )
+{-| Per-channel destination counts. Elm has no tuples wider than three, so
+the four channels live in a record.
+-}
+channelCounts : List Api.Destination -> { email : Int, telegram : Int, discord : Int, webhook : Int }
 channelCounts destinations =
     List.foldl
-        (\d ( e, t, dc ) ->
+        (\d acc ->
             case d of
                 Api.Email _ ->
-                    ( e + 1, t, dc )
+                    { acc | email = acc.email + 1 }
 
                 Api.Telegram _ ->
-                    ( e, t + 1, dc )
+                    { acc | telegram = acc.telegram + 1 }
 
                 Api.Discord _ ->
-                    ( e, t, dc + 1 )
+                    { acc | discord = acc.discord + 1 }
+
+                Api.Webhook _ ->
+                    { acc | webhook = acc.webhook + 1 }
         )
-        ( 0, 0, 0 )
+        { email = 0, telegram = 0, discord = 0, webhook = 0 }
         destinations
 
 
@@ -1472,20 +1481,30 @@ destinationCard stores destination =
     let
         ( kind, value_, badges ) =
             case destination of
-                Api.Email { address, proxy } ->
+                Api.Email { address, proxy, digest } ->
                     ( "email"
                     , address
                     , (if stores then
                         [ storeBadge False ]
 
+                       else if digest /= Nothing then
+                        [ storeBadge True ]
+
                        else
                         []
                       )
-                        ++ (if proxy then
+                        ++ (if proxy && digest == Nothing then
                                 [ plainBadge "proxy" ]
 
                             else
                                 []
+                           )
+                        ++ (case digest of
+                                Just schedule ->
+                                    [ digestBadge schedule ]
+
+                                Nothing ->
+                                    []
                            )
                     )
 
@@ -1501,6 +1520,12 @@ destinationCard stores destination =
                     , [ storeBadge True ]
                     )
 
+                Api.Webhook { url } ->
+                    ( "webhook"
+                    , url
+                    , []
+                    )
+
         icon =
             case kind of
                 "email" ->
@@ -1509,8 +1534,11 @@ destinationCard stores destination =
                 "telegram" ->
                     Icons.telegram
 
-                _ ->
+                "discord" ->
                     Icons.discord
+
+                _ ->
+                    Icons.send
     in
     div [ classList [ ( "dest-card", True ), ( kind, True ) ] ]
         [ span [ class "dest-icon" ] [ icon ]
@@ -1582,7 +1610,7 @@ messagesCard model _ =
             div [ class "empty-inline" ]
                 [ text
                     (Maybe.withDefault
-                        "No stored emails for this rule yet. They appear here when the rule stores mail or forwards to Telegram or Discord."
+                        "No stored emails for this rule yet. They appear here when the rule stores mail, forwards to Telegram or Discord, or has a digest destination (digests are always stored)."
                         messages.error
                     )
                 ]
@@ -1831,3 +1859,15 @@ storeBadge locked =
 plainBadge : String -> Html msg
 plainBadge label_ =
     span [ class "dest-chip-mod" ] [ text label_ ]
+
+
+digestBadge : String -> Html msg
+digestBadge schedule =
+    span
+        [ classList
+            [ ( "dest-chip-mod", True )
+            , ( "is-digest", True )
+            , ( "is-on", True )
+            ]
+        ]
+        [ text ("digest · " ++ schedule) ]

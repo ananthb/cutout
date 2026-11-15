@@ -1,4 +1,4 @@
-use crate::types::{PendingAction, PendingDispatch, ReverseAlias, Rule};
+use crate::types::{DigestItem, PendingAction, PendingDispatch, ReverseAlias, Rule};
 use botrelay::reply::ReplyContext;
 use serde::{Deserialize, Serialize};
 use wasm_bindgen::JsValue;
@@ -737,4 +737,166 @@ pub async fn list_pending(db: &D1Database, limit: u32) -> Result<Vec<PendingDisp
         .await?;
     let rows: Vec<PendingRow> = result.results()?;
     rows.into_iter().map(row_to_pending).collect()
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+// digest_items / digest_state: per-destination pending digest entries and
+// the last-sent watermark that paces them.
+
+/// Record one stored message as pending for a destination's next digest.
+#[allow(clippy::too_many_arguments)]
+pub async fn enqueue_digest_item(
+    db: &D1Database,
+    rule_id: &str,
+    destination: &str,
+    message_id: &str,
+    sender: &str,
+    recipient: &str,
+    subject: &str,
+    created_at: i64,
+) -> Result<()> {
+    db.prepare(
+        "INSERT OR IGNORE INTO digest_items \
+         (rule_id, destination, message_id, sender, recipient, subject, created_at) \
+         VALUES (?, ?, ?, ?, ?, ?, ?)",
+    )
+    .bind(&[
+        rule_id.into(),
+        destination.into(),
+        message_id.into(),
+        sender.into(),
+        recipient.into(),
+        subject.into(),
+        (created_at as f64).into(),
+    ])?
+    .run()
+    .await?;
+    Ok(())
+}
+
+#[derive(Deserialize)]
+struct DigestSummaryRow {
+    oldest: Option<i64>,
+    count: i64,
+}
+
+/// Returns `(oldest created_at, pending count)` for one destination, or
+/// `None` when nothing is pending. The oldest timestamp anchors the first
+/// digest: it is sent one full interval after the first message arrived,
+/// not immediately.
+pub async fn digest_pending_summary(
+    db: &D1Database,
+    rule_id: &str,
+    destination: &str,
+) -> Result<Option<(i64, i64)>> {
+    let row = db
+        .prepare(
+            "SELECT MIN(created_at) AS oldest, COUNT(*) AS count \
+             FROM digest_items WHERE rule_id = ?1 AND destination = ?2",
+        )
+        .bind(&[rule_id.into(), destination.into()])?
+        .first::<DigestSummaryRow>(None)
+        .await?;
+    match row {
+        Some(row) if row.count > 0 => Ok(Some((row.oldest.unwrap_or(0), row.count))),
+        _ => Ok(None),
+    }
+}
+
+#[derive(Deserialize)]
+struct DigestLastSentRow {
+    last_sent_at: i64,
+}
+
+/// The last successful digest send for one destination, if any.
+pub async fn digest_last_sent(
+    db: &D1Database,
+    rule_id: &str,
+    destination: &str,
+) -> Result<Option<i64>> {
+    let row = db
+        .prepare(
+            "SELECT last_sent_at FROM digest_state \
+             WHERE rule_id = ?1 AND destination = ?2",
+        )
+        .bind(&[rule_id.into(), destination.into()])?
+        .first::<DigestLastSentRow>(None)
+        .await?;
+    Ok(row.map(|r| r.last_sent_at))
+}
+
+#[derive(Deserialize)]
+struct DigestItemRow {
+    id: i64,
+    message_id: String,
+    sender: String,
+    recipient: String,
+    subject: String,
+    created_at: i64,
+}
+
+/// Every pending digest entry for one destination, newest first.
+pub async fn list_digest_items(
+    db: &D1Database,
+    rule_id: &str,
+    destination: &str,
+) -> Result<Vec<DigestItem>> {
+    let result = db
+        .prepare(
+            "SELECT id, message_id, sender, recipient, subject, created_at \
+             FROM digest_items WHERE rule_id = ?1 AND destination = ?2 \
+             ORDER BY created_at DESC, id DESC",
+        )
+        .bind(&[rule_id.into(), destination.into()])?
+        .all()
+        .await?;
+    let rows: Vec<DigestItemRow> = result.results()?;
+    Ok(rows
+        .into_iter()
+        .map(|r| DigestItem {
+            id: r.id,
+            message_id: r.message_id,
+            sender: r.sender,
+            recipient: r.recipient,
+            subject: r.subject,
+            created_at: r.created_at,
+        })
+        .collect())
+}
+
+/// Clear the pending entries a digest actually included, after it was sent.
+///
+/// `up_to_id` is the highest `id` in the snapshot that was sent. Rows
+/// enqueued while the send was in flight have larger auto-increment ids and
+/// survive for the next digest rather than being silently dropped.
+pub async fn delete_digest_items(
+    db: &D1Database,
+    rule_id: &str,
+    destination: &str,
+    up_to_id: i64,
+) -> Result<()> {
+    db.prepare("DELETE FROM digest_items WHERE rule_id = ?1 AND destination = ?2 AND id <= ?3")
+        .bind(&[rule_id.into(), destination.into(), (up_to_id as f64).into()])?
+        .run()
+        .await?;
+    Ok(())
+}
+
+/// Advance a destination's digest watermark after a successful send.
+pub async fn set_digest_last_sent(
+    db: &D1Database,
+    rule_id: &str,
+    destination: &str,
+    ms: i64,
+) -> Result<()> {
+    db.prepare(
+        "INSERT INTO digest_state (rule_id, destination, last_sent_at) \
+         VALUES (?1, ?2, ?3) \
+         ON CONFLICT(rule_id, destination) DO UPDATE SET \
+            last_sent_at = excluded.last_sent_at",
+    )
+    .bind(&[rule_id.into(), destination.into(), (ms as f64).into()])?
+    .run()
+    .await?;
+    Ok(())
 }

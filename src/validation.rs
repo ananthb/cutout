@@ -116,6 +116,11 @@ pub fn validate(rules: &[Rule], enabled: &EnabledChannels) -> Report {
                             "email destination '{address}' looks invalid"
                         )));
                     }
+                    Destination::Webhook { url } if !crate::types::valid_webhook_url(url) => {
+                        report.issues[i].push(Issue::Error(format!(
+                            "webhook destination '{url}' must be an http(s) URL"
+                        )));
+                    }
                     _ => {}
                 }
             }
@@ -246,6 +251,7 @@ mod tests {
             destinations: vec![Destination::Email {
                 address: dest.into(),
                 proxy: false,
+                digest: None,
             }],
         }
     }
@@ -468,6 +474,64 @@ mod tests {
                         channel_id: "555".into(),
                     },
                 ],
+            },
+        )];
+        let report = validate(&rules, &all_enabled());
+        assert!(!report.has_errors(), "{:?}", report.lines());
+    }
+
+    #[test]
+    fn malformed_webhook_destination_is_error() {
+        let rules = vec![rule(
+            "a",
+            "shop",
+            "x.com",
+            Action::Forward {
+                destinations: vec![Destination::Webhook {
+                    url: "example.com/hook".into(),
+                }],
+            },
+        )];
+        let report = validate(&rules, &all_enabled());
+        assert!(report.has_errors());
+        assert!(report
+            .first_error()
+            .unwrap()
+            .1
+            .contains("must be an http(s) URL"));
+    }
+
+    #[test]
+    fn scheme_only_webhook_destination_is_error() {
+        let rules = vec![rule(
+            "a",
+            "shop",
+            "x.com",
+            Action::Forward {
+                destinations: vec![Destination::Webhook {
+                    url: "https://".into(),
+                }],
+            },
+        )];
+        let report = validate(&rules, &all_enabled());
+        assert!(report.has_errors());
+        assert!(report
+            .first_error()
+            .unwrap()
+            .1
+            .contains("must be an http(s) URL"));
+    }
+
+    #[test]
+    fn webhook_destination_passes_when_well_formed() {
+        let rules = vec![rule(
+            "a",
+            "shop",
+            "x.com",
+            Action::Forward {
+                destinations: vec![Destination::Webhook {
+                    url: "https://example.com/hook".into(),
+                }],
             },
         )];
         let report = validate(&rules, &all_enabled());

@@ -8,7 +8,7 @@ use crate::db;
 use crate::events::EventKind;
 use crate::r2;
 use crate::types::*;
-use crate::{bots, types};
+use crate::{bots, types, webhooks};
 
 /// What `handle_email` decided to do with an inbound message, plus the
 /// metadata needed to record an event after the dispatch executes.
@@ -101,7 +101,12 @@ pub async fn handle_email(
             let event_kind = match &result {
                 EmailResult::Dispatch(_) => EventKind::Forward,
                 EmailResult::Drop => {
-                    if matches!(rule.action, Action::Store { .. }) {
+                    // A Store rule drops the mail by design, and a digest
+                    // destination stores it and returns an empty dispatch.
+                    // Both are stored mail, not a discard.
+                    if matches!(rule.action, Action::Store { .. })
+                        || rule.action.has_digest_destination()
+                    {
                         EventKind::Store
                     } else {
                         EventKind::Drop
@@ -153,15 +158,32 @@ async fn execute_action(
             }
 
             // Store & Forward persists a copy of the message in addition to
-            // forwarding it.
-            let persist = matches!(action, Action::ForwardStore { .. });
+            // forwarding it. Digest destinations always imply storage, since
+            // the digest links back to the stored message.
+            let has_digest_destination = destinations.iter().any(|d| {
+                matches!(
+                    d,
+                    Destination::Email {
+                        digest: Some(_),
+                        ..
+                    }
+                )
+            });
+            let persist = matches!(action, Action::ForwardStore { .. }) || has_digest_destination;
 
             // Only mint/reuse a reverse alias when at least one destination
-            // uses proxy mode; direct email and chat destinations never use
-            // `reverse_mappings`.
-            let needs_reverse_alias = destinations
-                .iter()
-                .any(|d| matches!(d, Destination::Email { proxy: true, .. }));
+            // uses proxy mode. Direct email, digest, and chat destinations
+            // never use `reverse_mappings`.
+            let needs_reverse_alias = destinations.iter().any(|d| {
+                matches!(
+                    d,
+                    Destination::Email {
+                        proxy: true,
+                        digest: None,
+                        ..
+                    }
+                )
+            });
             let reverse_addr = if needs_reverse_alias {
                 let candidate = forward::generate_reverse_address(domain);
                 let candidate_id = candidate
@@ -215,8 +237,33 @@ async fn execute_action(
 
             for dest in destinations {
                 match dest {
-                    Destination::Email { address, proxy } => {
-                        if *proxy {
+                    Destination::Email {
+                        address,
+                        proxy,
+                        digest,
+                    } => {
+                        if digest.is_some() {
+                            // Digest destinations are not forwarded now: the
+                            // message is already stored, so remember it for the
+                            // next scheduled digest.
+                            if let Some(mid) = &stored_message_id {
+                                let subject = parsed
+                                    .as_ref()
+                                    .map(|p| p.subject.clone())
+                                    .unwrap_or_default();
+                                db::enqueue_digest_item(
+                                    database,
+                                    rule_id,
+                                    address,
+                                    mid,
+                                    from,
+                                    to,
+                                    &subject,
+                                    crate::events::now_ms(),
+                                )
+                                .await?;
+                            }
+                        } else if *proxy {
                             // Cloudflare's structured send requires `From` to
                             // be on an onboarded domain. Keep the original
                             // sender visible in the display name, and route
@@ -280,14 +327,31 @@ async fn execute_action(
                             inbound_references: parsed.as_ref().and_then(|p| p.references.clone()),
                         });
                     }
+                    Destination::Webhook { url } => {
+                        dispatch.webhook_forwards.push(WebhookForward {
+                            url: url.clone(),
+                            from: from.to_string(),
+                            to: to.to_string(),
+                            subject: parsed
+                                .as_ref()
+                                .map(|p| p.subject.clone())
+                                .unwrap_or_default(),
+                            text: parsed.as_ref().and_then(|p| p.text_body.clone()),
+                            html: parsed.as_ref().and_then(|p| p.html_body.clone()),
+                            message_id: stored_message_id.clone().unwrap_or_default(),
+                            rule_id: Some(rule_id.to_string()),
+                            received_at: crate::events::now_ms(),
+                        });
+                    }
                 }
             }
 
             console_log!(
-                "Forwarding from {from} via {to} (rule: {rule_label}): native={} send_emails={} bots={}",
+                "Forwarding from {from} via {to} (rule: {rule_label}): native={} send_emails={} bots={} webhooks={}",
                 dispatch.forward_emails.len(),
                 dispatch.send_emails.len(),
-                dispatch.bot_forwards.len()
+                dispatch.bot_forwards.len(),
+                dispatch.webhook_forwards.len()
             );
 
             if dispatch.is_empty() {
@@ -484,6 +548,12 @@ pub async fn execute_pending_actions(
                 };
                 if let Err(e) = bots::dispatch(env, forward).await {
                     errors.push(format!("bot {label}: {e}"));
+                    still_failing.push(action.clone());
+                }
+            }
+            PendingAction::Webhook(forward) => {
+                if let Err(e) = webhooks::dispatch(env, forward).await {
+                    errors.push(format!("webhook {}: {e}", forward.url));
                     still_failing.push(action.clone());
                 }
             }

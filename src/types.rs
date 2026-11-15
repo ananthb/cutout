@@ -110,12 +110,13 @@ fn push_unique_addr(out: &mut Vec<String>, addr: &str) {
 /// Render a destination list as a compact channel summary.
 /// "Email", "Email + Telegram", "Email ×3 + Discord", etc.
 fn format_channels(destinations: &[Destination]) -> String {
-    let (mut email, mut telegram, mut discord) = (0usize, 0usize, 0usize);
+    let (mut email, mut telegram, mut discord, mut webhook) = (0usize, 0usize, 0usize, 0usize);
     for d in destinations {
         match d {
             Destination::Email { .. } => email += 1,
             Destination::Telegram { .. } => telegram += 1,
             Destination::Discord { .. } => discord += 1,
+            Destination::Webhook { .. } => webhook += 1,
         }
     }
     let mut parts: Vec<String> = Vec::new();
@@ -129,6 +130,7 @@ fn format_channels(destinations: &[Destination]) -> String {
     push(&mut parts, email, "Email");
     push(&mut parts, telegram, "Telegram");
     push(&mut parts, discord, "Discord");
+    push(&mut parts, webhook, "Webhook");
     parts.join(" + ")
 }
 
@@ -170,6 +172,23 @@ pub fn valid_email_address(addr: &str) -> bool {
     }) && labels
         .last()
         .is_some_and(|tld| tld.len() >= 2 && tld.chars().all(|c| c.is_ascii_alphabetic()))
+}
+
+/// A pragmatic webhook-URL check: an `http://` or `https://` scheme
+/// (case-insensitive) followed by a non-empty remainder with no whitespace.
+///
+/// A scheme-only URL like `https://` passes a bare prefix test but can never
+/// deliver, so it is rejected here rather than at send time.
+pub fn valid_webhook_url(url: &str) -> bool {
+    let lower = url.to_ascii_lowercase();
+    let rest = if let Some(rest) = lower.strip_prefix("https://") {
+        rest
+    } else if let Some(rest) = lower.strip_prefix("http://") {
+        rest
+    } else {
+        return false;
+    };
+    !rest.is_empty() && !rest.chars().any(|c| c.is_ascii_whitespace())
 }
 
 #[derive(Serialize, Clone, Debug)]
@@ -241,6 +260,83 @@ fn proxy_default() -> bool {
     true
 }
 
+/// How often an email destination in digest mode receives its batch.
+#[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Eq)]
+pub enum DigestSchedule {
+    #[serde(rename = "6h")]
+    SixHours,
+    #[serde(rename = "daily")]
+    Daily,
+    #[serde(rename = "weekly")]
+    Weekly,
+}
+
+impl DigestSchedule {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            DigestSchedule::SixHours => "6h",
+            DigestSchedule::Daily => "daily",
+            DigestSchedule::Weekly => "weekly",
+        }
+    }
+
+    pub fn interval_ms(&self) -> i64 {
+        const HOUR_MS: i64 = 60 * 60 * 1000;
+        match self {
+            DigestSchedule::SixHours => 6 * HOUR_MS,
+            DigestSchedule::Daily => 24 * HOUR_MS,
+            DigestSchedule::Weekly => 7 * 24 * HOUR_MS,
+        }
+    }
+
+    pub fn parse(s: &str) -> Option<DigestSchedule> {
+        let lower = s.trim().to_ascii_lowercase();
+        match lower.as_str() {
+            "6h" => Some(DigestSchedule::SixHours),
+            "daily" => Some(DigestSchedule::Daily),
+            "weekly" => Some(DigestSchedule::Weekly),
+            _ => None,
+        }
+    }
+}
+
+/// A single panel entry in a pending digest: enough to render the summary
+/// line and link back to the stored message.
+#[derive(Clone, Debug)]
+pub struct DigestItem {
+    /// Row id in `digest_items`. Monotonic, so a snapshot's max id bounds the
+    /// post-send delete to exactly the rows that were included.
+    pub id: i64,
+    pub message_id: String,
+    pub sender: String,
+    pub recipient: String,
+    pub subject: String,
+    pub created_at: i64,
+}
+
+impl Action {
+    /// True when at least one email destination asks for a periodic digest.
+    /// Digest destinations are not forwarded inline, so the email handler
+    /// uses this to decide whether to persist the message and whether a
+    /// `Drop` result actually stored mail.
+    pub fn has_digest_destination(&self) -> bool {
+        match self {
+            Action::Forward { destinations } | Action::ForwardStore { destinations } => {
+                destinations.iter().any(|d| {
+                    matches!(
+                        d,
+                        Destination::Email {
+                            digest: Some(_),
+                            ..
+                        }
+                    )
+                })
+            }
+            _ => false,
+        }
+    }
+}
+
 /// A single forward target. Multiple destinations of different kinds may be
 /// attached to one rule.
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
@@ -265,11 +361,18 @@ pub enum Destination {
         address: String,
         #[serde(default = "proxy_default")]
         proxy: bool,
+        /// Opt into a periodic digest instead of one forward per message.
+        /// Digest destinations are stored (never forwarded inline) and the
+        /// scheduled handler sends one email linking to each stored message.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        digest: Option<DigestSchedule>,
     },
     /// Forward to a Telegram chat via bot `sendMessage`.
     Telegram { chat_id: String },
     /// Forward to a Discord channel via bot `createMessage`.
     Discord { channel_id: String },
+    /// POST the parsed email as JSON to an HTTP endpoint.
+    Webhook { url: String },
 }
 
 impl Destination {
@@ -279,6 +382,7 @@ impl Destination {
             Destination::Email { .. } => "email",
             Destination::Telegram { .. } => "telegram",
             Destination::Discord { .. } => "discord",
+            Destination::Webhook { .. } => "webhook",
         }
     }
 
@@ -288,6 +392,7 @@ impl Destination {
             Destination::Email { address, .. } => address,
             Destination::Telegram { chat_id, .. } => chat_id,
             Destination::Discord { channel_id, .. } => channel_id,
+            Destination::Webhook { url, .. } => url,
         }
     }
 
@@ -308,24 +413,36 @@ impl Destination {
         }
         match kind.trim().to_lowercase().as_str() {
             "email" => {
-                // Optional modifier: `:direct` opts out of proxy mode. An
-                // explicit `:proxy` is accepted for round-tripping with older
-                // lists, but proxy is already the default.
-                let (value, modifier) = match rest.rsplit_once(':') {
-                    Some((v, m)) if !m.trim().is_empty() => (v.trim().to_string(), m.trim()),
-                    _ => (rest.to_string(), ""),
-                };
+                // `email:<address>[:modifier[:modifier...]]`. Modifiers are
+                // order-independent: `direct`/`noproxy` opt out of proxy mode,
+                // `proxy` (the default) opts back in, and `6h`/`daily`/`weekly`
+                // select a digest schedule.
+                let mut parts = rest.split(':');
+                let value = parts.next().unwrap_or("").trim().to_string();
+                let mut proxy = true;
+                let mut digest = None;
+                for raw in parts {
+                    let modifier = raw.trim();
+                    match modifier.to_ascii_lowercase().as_str() {
+                        "proxy" => proxy = true,
+                        "direct" | "noproxy" => proxy = false,
+                        _ => match DigestSchedule::parse(modifier) {
+                            Some(schedule) => digest = Some(schedule),
+                            None => {
+                                return Err(
+                                    "email modifier must be 'direct', 'proxy', '6h', 'daily', or 'weekly'",
+                                )
+                            }
+                        },
+                    }
+                }
                 if !valid_email_address(&value) {
                     return Err("email address looks invalid (expected name@example.com)");
                 }
-                let proxy = match modifier.to_lowercase().as_str() {
-                    "" | "proxy" => true,
-                    "direct" | "noproxy" => false,
-                    _ => return Err("email modifier must be 'direct'"),
-                };
                 Ok(Some(Destination::Email {
                     address: value.to_lowercase(),
                     proxy,
+                    digest,
                 }))
             }
             "telegram" | "tg" => {
@@ -345,6 +462,13 @@ impl Destination {
                     return Err("discord channel_id must be a positive integer");
                 }
                 Ok(Some(Destination::Discord { channel_id: value }))
+            }
+            "webhook" | "wh" => {
+                let value = rest.to_string();
+                if !valid_webhook_url(&value) {
+                    return Err("webhook url must start with http:// or https://");
+                }
+                Ok(Some(Destination::Webhook { url: value }))
             }
             other => Err(stringify_kind_err(other)),
         }
@@ -368,18 +492,29 @@ impl Destination {
     /// Format a list of destinations as newline-separated `kind:value` lines,
     /// suitable for round-tripping through [`Destination::parse_list`]. An
     /// email destination appends `:direct` when it opts out of the default
-    /// proxy mode.
+    /// proxy mode and `:<schedule>` when it is in digest mode.
     pub fn format_list(destinations: &[Destination]) -> String {
         destinations
             .iter()
             .map(|d| match d {
                 Destination::Email {
                     address,
-                    proxy: false,
-                } => format!("email:{address}:direct"),
-                Destination::Email { address, .. } => format!("email:{address}"),
+                    proxy,
+                    digest,
+                } => {
+                    let mut line = format!("email:{address}");
+                    if !proxy {
+                        line.push_str(":direct");
+                    }
+                    if let Some(schedule) = digest {
+                        line.push(':');
+                        line.push_str(schedule.as_str());
+                    }
+                    line
+                }
                 Destination::Telegram { chat_id } => format!("telegram:{chat_id}"),
                 Destination::Discord { channel_id } => format!("discord:{channel_id}"),
+                Destination::Webhook { url } => format!("webhook:{url}"),
             })
             .collect::<Vec<_>>()
             .join("\n")
@@ -390,7 +525,7 @@ impl Destination {
 // error string for call sites. Keep a small wrapper that returns a fixed
 // fallback: callers shouldn't rely on the echoed kind in the error.
 fn stringify_kind_err(_kind: &str) -> &'static str {
-    "unknown destination kind (use email, telegram, or discord)"
+    "unknown destination kind (use email, telegram, discord, or webhook)"
 }
 
 /// Reverse alias mapping stored in D1 (`reverse_mappings`).
@@ -470,6 +605,25 @@ pub enum BotChannel {
     Discord { channel_id: String },
 }
 
+/// Webhook-channel forward: POST the parsed email as JSON to an operator-supplied
+/// URL. Unlike bots, there is no reply path back through the worker.
+#[derive(Serialize, Deserialize, Clone, Debug)]
+pub struct WebhookForward {
+    pub url: String,
+    pub from: String,
+    pub to: String,
+    pub subject: String,
+    #[serde(default)]
+    pub text: Option<String>,
+    #[serde(default)]
+    pub html: Option<String>,
+    #[serde(default)]
+    pub message_id: String,
+    pub rule_id: Option<String>,
+    #[serde(default)]
+    pub received_at: i64,
+}
+
 /// One outstanding destination on a queued retry. We do NOT carry the native
 /// `EmailMessage.forward()` path here because the queue consumer has no
 /// `IncomingEmailMessage` handle: instead, the original handler converts a
@@ -479,6 +633,7 @@ pub enum BotChannel {
 pub enum PendingAction {
     SendEmail(OutboundEmail),
     Bot(BotForward),
+    Webhook(WebhookForward),
 }
 
 /// Queue payload for `cutout-retries` and `cutout-retries-dlq`. Carries only
@@ -527,6 +682,8 @@ pub struct Dispatch {
     pub send_emails: Vec<OutboundEmail>,
     /// Telegram + Discord bot posts.
     pub bot_forwards: Vec<BotForward>,
+    /// Webhook POSTs carrying the parsed email as JSON.
+    pub webhook_forwards: Vec<WebhookForward>,
 }
 
 impl Dispatch {
@@ -534,6 +691,7 @@ impl Dispatch {
         self.forward_emails.is_empty()
             && self.send_emails.is_empty()
             && self.bot_forwards.is_empty()
+            && self.webhook_forwards.is_empty()
     }
 }
 
@@ -551,6 +709,7 @@ mod tests {
             Destination::Email {
                 address: "foo@bar.com".into(),
                 proxy: true,
+                digest: None,
             }
         );
     }
@@ -564,6 +723,7 @@ mod tests {
                 Destination::Email {
                     address: "foo@bar.com".into(),
                     proxy: false,
+                    digest: None,
                 }
             );
         }
@@ -579,6 +739,7 @@ mod tests {
             Destination::Email {
                 address: "foo@bar.com".into(),
                 proxy: true,
+                digest: None,
             }
         );
     }
@@ -587,6 +748,114 @@ mod tests {
     fn rejects_unknown_email_modifier() {
         let err = Destination::parse_line("email:foo@bar.com:token").unwrap_err();
         assert!(err.contains("email modifier"), "got: {err}");
+    }
+
+    #[test]
+    fn parse_email_digest_modifiers() {
+        for (input, schedule) in [
+            ("email:foo@bar.com:6h", DigestSchedule::SixHours),
+            ("email:foo@bar.com:daily", DigestSchedule::Daily),
+            ("email:foo@bar.com:weekly", DigestSchedule::Weekly),
+            ("email:foo@bar.com:WEEKLY", DigestSchedule::Weekly),
+        ] {
+            let d = Destination::parse_line(input).unwrap().unwrap();
+            assert_eq!(
+                d,
+                Destination::Email {
+                    address: "foo@bar.com".into(),
+                    proxy: true,
+                    digest: Some(schedule),
+                }
+            );
+        }
+    }
+
+    #[test]
+    fn email_modifiers_are_order_independent() {
+        let d = Destination::parse_line("email:foo@bar.com:daily:direct")
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            d,
+            Destination::Email {
+                address: "foo@bar.com".into(),
+                proxy: false,
+                digest: Some(DigestSchedule::Daily),
+            }
+        );
+        let d = Destination::parse_line("email:foo@bar.com:direct:daily")
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            d,
+            Destination::Email {
+                address: "foo@bar.com".into(),
+                proxy: false,
+                digest: Some(DigestSchedule::Daily),
+            }
+        );
+    }
+
+    #[test]
+    fn digest_schedule_helpers() {
+        assert_eq!(DigestSchedule::parse("6h"), Some(DigestSchedule::SixHours));
+        assert_eq!(DigestSchedule::parse("daily"), Some(DigestSchedule::Daily));
+        assert_eq!(
+            DigestSchedule::parse("weekly"),
+            Some(DigestSchedule::Weekly)
+        );
+        assert_eq!(DigestSchedule::parse("monthly"), None);
+        assert_eq!(DigestSchedule::SixHours.as_str(), "6h");
+        assert_eq!(DigestSchedule::SixHours.interval_ms(), 6 * 60 * 60 * 1000);
+        assert_eq!(DigestSchedule::Daily.interval_ms(), 24 * 60 * 60 * 1000);
+        assert_eq!(
+            DigestSchedule::Weekly.interval_ms(),
+            7 * 24 * 60 * 60 * 1000
+        );
+    }
+
+    #[test]
+    fn format_round_trips_digest_destinations() {
+        let dests = vec![
+            Destination::Email {
+                address: "a@b.com".into(),
+                proxy: true,
+                digest: Some(DigestSchedule::Daily),
+            },
+            Destination::Email {
+                address: "c@d.com".into(),
+                proxy: false,
+                digest: Some(DigestSchedule::SixHours),
+            },
+        ];
+        assert_eq!(
+            Destination::format_list(&dests),
+            "email:a@b.com:daily\nemail:c@d.com:direct:6h"
+        );
+        let parsed = Destination::parse_list(&Destination::format_list(&dests)).unwrap();
+        assert_eq!(parsed, dests);
+    }
+
+    #[test]
+    fn has_digest_destination_only_for_email_digests() {
+        let digest = Action::Forward {
+            destinations: vec![Destination::Email {
+                address: "a@b.com".into(),
+                proxy: true,
+                digest: Some(DigestSchedule::Weekly),
+            }],
+        };
+        assert!(digest.has_digest_destination());
+        let plain = Action::ForwardStore {
+            destinations: vec![Destination::Email {
+                address: "a@b.com".into(),
+                proxy: true,
+                digest: None,
+            }],
+        };
+        assert!(!plain.has_digest_destination());
+        assert!(!Action::Store { persist: true }.has_digest_destination());
+        assert!(!Action::Drop.has_digest_destination());
     }
 
     #[test]
@@ -623,6 +892,66 @@ mod tests {
     }
 
     #[test]
+    fn parse_webhook_destination() {
+        for input in [
+            "webhook:https://example.com/hook",
+            "wh:https://example.com/hook",
+            "WEBHOOK:https://example.com/hook",
+        ] {
+            let d = Destination::parse_line(input).unwrap().unwrap();
+            assert_eq!(
+                d,
+                Destination::Webhook {
+                    url: "https://example.com/hook".into(),
+                }
+            );
+        }
+        // Plain http and an uppercase scheme are both accepted.
+        let d = Destination::parse_line("webhook:HTTP://example.com/hook")
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            d,
+            Destination::Webhook {
+                url: "HTTP://example.com/hook".into(),
+            }
+        );
+    }
+
+    #[test]
+    fn valid_webhook_url_requires_host_after_scheme() {
+        assert!(valid_webhook_url("https://example.com/hook"));
+        assert!(valid_webhook_url("http://example.com"));
+        assert!(valid_webhook_url("HTTPS://example.com"));
+        assert!(!valid_webhook_url("https://"));
+        assert!(!valid_webhook_url("http://"));
+        assert!(!valid_webhook_url("ftp://x"));
+        assert!(!valid_webhook_url("https://a b"));
+        assert!(!valid_webhook_url("example.com"));
+        assert!(!valid_webhook_url(""));
+    }
+
+    #[test]
+    fn rejects_scheme_only_webhook_destination() {
+        for input in ["webhook:https://", "wh:http://", "webhook:https://a b"] {
+            let err = Destination::parse_line(input).unwrap_err();
+            assert!(err.contains("webhook url"), "got: {err}");
+        }
+    }
+
+    #[test]
+    fn rejects_webhook_without_http_scheme() {
+        for input in [
+            "webhook:example.com/hook",
+            "webhook:ftp://example.com/hook",
+            "wh:not-a-url",
+        ] {
+            let err = Destination::parse_line(input).unwrap_err();
+            assert!(err.contains("webhook url"), "got: {err}");
+        }
+    }
+
+    #[test]
     fn format_round_trips_chat_destinations() {
         let dests = vec![
             Destination::Telegram {
@@ -631,11 +960,44 @@ mod tests {
             Destination::Discord {
                 channel_id: "555".into(),
             },
+            Destination::Webhook {
+                url: "https://example.com/hook".into(),
+            },
         ];
         let formatted = Destination::format_list(&dests);
-        assert_eq!(formatted, "telegram:-100\ndiscord:555");
+        assert_eq!(
+            formatted,
+            "telegram:-100\ndiscord:555\nwebhook:https://example.com/hook"
+        );
         let parsed = Destination::parse_list(&formatted).unwrap();
         assert_eq!(parsed, dests);
+    }
+
+    #[test]
+    fn auto_label_counts_webhooks() {
+        let rule = Rule {
+            id: "r".into(),
+            local_pattern: "news".into(),
+            domain_pattern: "*.org".into(),
+            action: Action::Forward {
+                destinations: vec![
+                    Destination::Email {
+                        address: "a@b.com".into(),
+                        proxy: true,
+                        digest: None,
+                    },
+                    Destination::Webhook {
+                        url: "https://example.com/hook".into(),
+                    },
+                    Destination::Webhook {
+                        url: "https://example.com/other".into(),
+                    },
+                ],
+            },
+            label: String::new(),
+            inbox_readers: vec![],
+        };
+        assert_eq!(rule.auto_label(), "news@*.org → Email + Webhook ×2");
     }
 
     #[test]
@@ -693,11 +1055,31 @@ mod tests {
     }
 
     #[test]
+    fn webhook_destination_serializes_with_kind_tag() {
+        let j = serde_json::to_value(&Destination::Webhook {
+            url: "https://example.com/hook".into(),
+        })
+        .unwrap();
+        assert_eq!(
+            j,
+            serde_json::json!({"kind": "webhook", "url": "https://example.com/hook"})
+        );
+        let back: Destination = serde_json::from_value(j).unwrap();
+        assert_eq!(
+            back,
+            Destination::Webhook {
+                url: "https://example.com/hook".into(),
+            }
+        );
+    }
+
+    #[test]
     fn action_serializes_with_tag() {
         let a = Action::Forward {
             destinations: vec![Destination::Email {
                 address: "a@b".into(),
                 proxy: true,
+                digest: None,
             }],
         };
         let j = serde_json::to_value(&a).unwrap();
@@ -731,6 +1113,7 @@ mod tests {
                     Destination::Email {
                         address: "a@b.com".into(),
                         proxy: true,
+                        digest: None,
                     }
                 );
                 assert_eq!(
@@ -738,6 +1121,7 @@ mod tests {
                     Destination::Email {
                         address: "c@d.com".into(),
                         proxy: true,
+                        digest: None,
                     }
                 );
                 assert!(matches!(destinations[2], Destination::Telegram { .. }));
@@ -763,6 +1147,7 @@ mod tests {
                 Destination::Email {
                     address: "a@b.com".into(),
                     proxy: true,
+                    digest: None,
                 }
             ),
             _ => panic!("expected forward"),
@@ -775,10 +1160,12 @@ mod tests {
             Destination::Email {
                 address: "a@b.com".into(),
                 proxy: true,
+                digest: None,
             },
             Destination::Email {
                 address: "c@d.com".into(),
                 proxy: false,
+                digest: None,
             },
         ];
         assert_eq!(
@@ -827,6 +1214,7 @@ mod tests {
                     Destination::Email {
                         address: "Alice@Example.com".into(),
                         proxy: false,
+                        digest: None,
                     },
                     Destination::Telegram {
                         chat_id: "42".into(),

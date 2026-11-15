@@ -12,12 +12,14 @@ Transparent email alias proxy: similar to [SimpleLogin](https://simplelogin.io) 
 ## How it works
 
 - Point your domain's Email Routing catch-all at Cutout.
-- Match inbound addresses against ordered glob rules (`local@domain`) to **forward** (to email, Telegram, or Discord), **store** (to the built-in `/inbox`), or **drop**.
+- Match inbound addresses against ordered glob rules (`local@domain`) to **forward** (to email, Telegram, Discord, or a webhook), **store** (to the built-in `/inbox`), or **drop**.
 - Reply from your email client or directly inside Telegram/Discord; Cutout routes the reply back through your alias so your real address never leaks.
 
 ## Sending
 
 Email destinations default to **Proxy mode** (`send_email`), which rewrites `Reply-To` to a reverse alias so replies go through Cutout, or opt into **Direct mode** (`EmailMessage.forward()`), which passes the original message and `From` untouched. Verified addresses under **Email Routing → Destination Addresses** work out of the box for free; onboarding your domain to **Email Service** lets Proxy mode send to unverified recipients too.
+
+An email destination can also opt into a **digest** (`6h`, `daily`, or `weekly`): Cutout stores matching mail and sends one summary email per period with a link to each stored message, instead of forwarding every message immediately.
 
 ## Getting Started
 

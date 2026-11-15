@@ -96,6 +96,12 @@
   <li>Invite the bot to your server (scope <code>bot</code>, permission <strong>Send Messages</strong>) and use <code>discord:&lt;channel_id&gt;</code> as a rule destination.</li>
 </ol>
 
+<h3>Webhooks</h3>
+<ol>
+  <li>No secrets needed: a webhook is just a URL. Point it at any HTTPS endpoint you control and use <code>webhook:&lt;url&gt;</code> as a rule destination, e.g. <code>webhook:https://example.com/cutout</code>.</li>
+  <li>Each forward is a <code>POST</code> with a JSON body carrying <code>from</code>, <code>to</code>, <code>subject</code>, <code>text</code>, <code>html</code>, <code>message_id</code>, <code>rule_id</code>, and <code>received_at</code>. A non-2xx response is retried through the <code>cutout-retries</code> queue.</li>
+</ol>
+
 <h2><span class="step-num">06</span> Add routing rules</h2>
 <p>Open <code>https://&lt;your-cutout-host&gt;/manage</code> to configure glob rules on local part and domain, toggle <strong>Proxy</strong> vs. <strong>Direct</strong> per email destination (see <a href="how-it-works.html">How it works</a>), and enable <strong>Store</strong> on rules you want archived in <code>/inbox</code>. To update your instance later, pull upstream changes into your fork's <code>main</code> branch.</p>
 
