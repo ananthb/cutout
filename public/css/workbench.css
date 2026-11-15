@@ -302,11 +302,6 @@
   color: var(--accent);
 }
 
-.rc-store {
-  background: color-mix(in oklab, var(--info) 12%, var(--bg-1));
-  color: var(--info);
-}
-
 .rc-drop {
   background: color-mix(in oklab, var(--bad) 12%, var(--bg-1));
   color: var(--bad);

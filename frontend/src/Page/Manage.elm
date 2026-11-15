@@ -841,9 +841,6 @@ pipelineCard model movableCount index rule =
                     Api.ForwardKind ->
                         "rc-order rc-fwd"
 
-                    Api.StoreKind ->
-                        "rc-order rc-store"
-
                     Api.DropKind ->
                         "rc-order rc-drop"
     in
@@ -1288,9 +1285,6 @@ inspectorHead model rule =
                     else
                         Ui.chip { label = name, variant = "info", dot = False }
 
-                Api.StoreKind ->
-                    Ui.chip { label = "store", variant = "info", dot = False }
-
                 Api.DropKind ->
                     if rule.isCatchAll then
                         Ui.chip { label = "drop · catch-all", variant = "warn", dot = False }
@@ -1469,26 +1463,23 @@ destinationsCard rule =
                     div [ class "empty-inline" ] [ text "No destinations yet — this forward does nothing until you add one." ]
 
                   else
-                    div [ class "dest-grid" ] (List.map (destinationCard (Api.isForwardStore rule.action)) destinations)
+                    div [ class "dest-grid" ] (List.map destinationCard destinations)
                 ]
 
         _ ->
             text ""
 
 
-destinationCard : Bool -> Api.Destination -> Html Msg
-destinationCard stores destination =
+destinationCard : Api.Destination -> Html Msg
+destinationCard destination =
     let
         ( kind, value_, badges ) =
             case destination of
-                Api.Email { address, proxy, digest } ->
+                Api.Email { address, proxy, digest, store } ->
                     ( "email"
                     , address
-                    , (if digest /= Nothing then
-                        [ storeBadge True ]
-
-                       else if stores then
-                        [ storeBadge False ]
+                    , (if store || digest /= Nothing then
+                        [ storeBadge (digest /= Nothing) ]
 
                        else
                         []
@@ -1559,22 +1550,6 @@ actionCard rule =
         Api.ForwardStore _ ->
             text ""
 
-        Api.Store { persist } ->
-            Ui.card
-                [ div [ class "card-head" ] [ h3 [] [ text "Store" ] ]
-                , p [ class "card-text" ]
-                    [ text
-                        ("Inbound mail matching this rule is recorded as a store event. "
-                            ++ (if persist then
-                                    "The message body is persisted to the database."
-
-                                else
-                                    "The message body is not persisted."
-                               )
-                        )
-                    ]
-                ]
-
         Api.Drop ->
             Ui.card
                 [ div [ class "card-head" ] [ h3 [] [ text "Drop" ] ]
@@ -1610,7 +1585,7 @@ messagesCard model _ =
             div [ class "empty-inline" ]
                 [ text
                     (Maybe.withDefault
-                        "No stored emails for this rule yet. They appear here when the rule stores mail, forwards to Telegram or Discord, or has a digest destination (digests are always stored)."
+                        "No stored emails for this rule yet — they appear when an email destination has Store or a digest on, or when the rule forwards to Telegram or Discord."
                         messages.error
                     )
                 ]
