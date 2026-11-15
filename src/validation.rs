@@ -252,6 +252,7 @@ mod tests {
                 address: dest.into(),
                 proxy: false,
                 digest: None,
+                store: false,
             }],
         }
     }

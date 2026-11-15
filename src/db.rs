@@ -64,8 +64,14 @@ pub async fn get_rule_set(db: &D1Database) -> Result<RuleSet> {
     match row {
         None => Ok(RuleSet::empty()),
         Some(row) => {
-            let rules: Vec<Rule> = serde_json::from_str(&row.rules_json)
+            let mut rules: Vec<Rule> = serde_json::from_str(&row.rules_json)
                 .map_err(|e| Error::from(format!("decode rules_json: {e}")))?;
+            // Legacy `ForwardStore` blobs carry the store intent at the action
+            // level; promote it onto the per-destination `store` flags so old
+            // rules keep storing after an edit (see `Action::normalize_legacy_store`).
+            for rule in &mut rules {
+                rule.action.normalize_legacy_store();
+            }
             Ok(RuleSet {
                 version: row.version,
                 rules,

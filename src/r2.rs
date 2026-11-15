@@ -4,7 +4,7 @@
 //!
 //! Key prefixes:
 //! - `pending/<id>` — raw bytes of an inbound email queued for retry.
-//! - `messages/<id>` — raw bytes saved by the `Store` action.
+//! - `messages/<id>` — raw bytes saved when a destination is stored.
 
 use worker::*;
 
@@ -15,7 +15,7 @@ pub fn pending_key(id: &str) -> String {
     format!("pending/{id}")
 }
 
-/// Build the R2 key for a Store-action blob.
+/// Build the R2 key for a stored-message blob.
 pub fn message_key(id: &str) -> String {
     format!("messages/{id}")
 }
