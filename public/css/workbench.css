@@ -1075,6 +1075,14 @@
   height: 12px;
 }
 
+/* Keep long values (webhook URLs in particular) from stretching the pill. */
+.dest-chip-value {
+  max-width: 34ch;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .dest-chip-mods {
   display: inline-flex;
   gap: 3px;

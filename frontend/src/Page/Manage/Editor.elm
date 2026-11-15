@@ -247,19 +247,7 @@ update enabled msg editor =
             ( { editor | destProxy = v }, Cmd.none, NoOut )
 
         SetDestDigest v ->
-            ( { editor
-                | destDigest = v
-                , storeForward =
-                    case v of
-                        Just _ ->
-                            True
-
-                        Nothing ->
-                            editor.storeForward
-              }
-            , Cmd.none
-            , NoOut
-            )
+            ( { editor | destDigest = v }, Cmd.none, NoOut )
 
         ToggleDestProxy index ->
             ( { editor | destinations = toggleProxyAt index editor.destinations }, Cmd.none, NoOut )
@@ -1004,6 +992,7 @@ destFormCard editor =
                 , type_ "text"
                 , value editor.destValue
                 , placeholder (destPlaceholder editor.destKind)
+                , attribute "aria-label" ("Add a " ++ kindName ++ " destination")
                 , onInput SetDestValue
                 , onAddKeyDown (editor.destKind == "email") AddDest
                 , A.autocomplete False
