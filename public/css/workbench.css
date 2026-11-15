@@ -567,17 +567,6 @@
   gap: 8px;
 }
 
-.rule-store-toggle {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-  padding: 10px 12px;
-  border: 1px solid var(--line);
-  border-radius: var(--r-sm);
-  background: var(--bg);
-}
-
 .stat-strip {
   display: grid;
   grid-template-columns: repeat(4, 1fr);
@@ -1077,6 +1066,7 @@
 
 /* Keep long values (webhook URLs in particular) from stretching the pill. */
 .dest-chip-value {
+  min-width: 0;
   max-width: 34ch;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -1391,6 +1381,7 @@
   flex-direction: column;
   align-items: flex-start;
   gap: 6px;
+  cursor: default;
 }
 
 .dest-opt-head {
@@ -1409,39 +1400,6 @@
 
 .dest-input {
   flex: 1;
-}
-
-.dest-mod-toggle {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  font-size: 12.5px;
-  color: var(--fg-1);
-  cursor: pointer;
-}
-
-.dest-mod-toggle input {
-  accent-color: var(--accent);
-}
-
-.dest-mod-toggles {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-}
-
-.dest-auth {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-}
-
-.dest-auth-label {
-  font-family: var(--font-mono);
-  font-size: 10.5px;
-  text-transform: uppercase;
-  letter-spacing: 0.06em;
-  color: var(--fg-2);
 }
 
 .dest-suggest {

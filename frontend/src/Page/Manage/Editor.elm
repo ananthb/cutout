@@ -283,7 +283,22 @@ update enabled msg editor =
                     ( { editor | destError = err }, Cmd.none, NoOut )
 
         RemoveDest index ->
-            ( { editor | destinations = removeAt index editor.destinations }, Cmd.none, NoOut )
+            let
+                remaining =
+                    removeAt index editor.destinations
+            in
+            ( { editor
+                | destinations = remaining
+                , storeForward =
+                    if List.any isEmailDestination remaining then
+                        editor.storeForward
+
+                    else
+                        False
+              }
+            , Cmd.none
+            , NoOut
+            )
 
         SetReaderValue v ->
             ( { editor | readerValue = v, readerError = "" }, Cmd.none, NoOut )
@@ -511,16 +526,17 @@ editorAction editor =
 
 hasEmailDestination : Editor -> Bool
 hasEmailDestination editor =
-    List.any
-        (\d ->
-            case d of
-                Api.Email _ ->
-                    True
+    List.any isEmailDestination editor.destinations
 
-                _ ->
-                    False
-        )
-        editor.destinations
+
+isEmailDestination : Api.Destination -> Bool
+isEmailDestination destination =
+    case destination of
+        Api.Email _ ->
+            True
+
+        _ ->
+            False
 
 
 hasChatDestination : Editor -> Bool
@@ -993,6 +1009,7 @@ destFormCard editor =
                 , value editor.destValue
                 , placeholder (destPlaceholder editor.destKind)
                 , attribute "aria-label" ("Add a " ++ kindName ++ " destination")
+                , A.name "dest-value"
                 , onInput SetDestValue
                 , onAddKeyDown (editor.destKind == "email") AddDest
                 , A.autocomplete False
@@ -1456,7 +1473,7 @@ readersField editor =
             Api.emailRecipients (editorAction editor)
     in
     div [ class "readers-field" ]
-        [ label [] [ text "Inbox readers" ]
+        [ label [ A.for "reader-input" ] [ text "Inbox readers" ]
         , div [ class "readers-chips" ]
             (List.map implicitReaderChip implicit
                 ++ List.indexedMap explicitReaderChip editor.readers
@@ -1464,9 +1481,12 @@ readersField editor =
         , div [ class "dest-add-row" ]
             [ input
                 [ class "dest-input"
+                , id "reader-input"
                 , type_ "text"
                 , value editor.readerValue
                 , placeholder "teammate@example.com"
+                , attribute "aria-label" "Inbox reader email address"
+                , A.name "reader-input"
                 , onInput SetReaderValue
                 , onAddKeyDown True AddReader
                 , A.autocomplete False
