@@ -23,7 +23,7 @@ reader input when the operator submits the form directly.
 
 import Api
 import Browser.Dom as Dom
-import Html exposing (Html, button, div, h1, header, input, label, p, section, span, text)
+import Html exposing (Html, button, div, h1, h3, header, input, label, p, section, span, text)
 import Html.Attributes as A exposing (attribute, class, classList, id, placeholder, title, type_, value)
 import Html.Events as E exposing (onClick, onInput)
 import Icons
@@ -85,7 +85,7 @@ empty =
     , destinations = []
     , persist = False
     , storeForward = False
-    , destKind = "email"
+    , destKind = ""
     , destValue = ""
     , destProxy = True
     , destDigest = Nothing
@@ -157,6 +157,7 @@ type Msg
     | SetActionType String
     | SetPersist Bool
     | SetStoreForward Bool
+    | ToggleStore
     | SetDestKind String
     | SetDestValue String
     | SetDestProxy Bool
@@ -200,8 +201,21 @@ update enabled msg editor =
         SetStoreForward v ->
             ( { editor | storeForward = v, formError = Nothing }, Cmd.none, NoOut )
 
+        ToggleStore ->
+            ( { editor | storeForward = not editor.storeForward, formError = Nothing }, Cmd.none, NoOut )
+
         SetDestKind v ->
-            ( { editor | destKind = v, destValue = "", destError = "", formError = Nothing }, Cmd.none, NoOut )
+            ( { editor
+                | destKind = v
+                , destValue = ""
+                , destError = ""
+                , destDigest = Nothing
+                , destProxy = True
+                , formError = Nothing
+              }
+            , Cmd.none
+            , NoOut
+            )
 
         SetDestValue v ->
             if editor.destKind == "telegram" && enabled.telegram && List.any (\c -> c.chatId == v) editor.chats then
@@ -254,7 +268,10 @@ update enabled msg editor =
                     in
                     ( { editor
                         | destinations = nextDests
+                        , destKind = ""
                         , destValue = ""
+                        , destDigest = Nothing
+                        , destProxy = True
                         , destError = ""
                         , formError = Nothing
                       }
@@ -266,7 +283,22 @@ update enabled msg editor =
                     ( { editor | destError = err }, Cmd.none, NoOut )
 
         RemoveDest index ->
-            ( { editor | destinations = removeAt index editor.destinations }, Cmd.none, NoOut )
+            let
+                remaining =
+                    removeAt index editor.destinations
+            in
+            ( { editor
+                | destinations = remaining
+                , storeForward =
+                    if List.any isEmailDestination remaining then
+                        editor.storeForward
+
+                    else
+                        False
+              }
+            , Cmd.none
+            , NoOut
+            )
 
         SetReaderValue v ->
             ( { editor | readerValue = v, readerError = "" }, Cmd.none, NoOut )
@@ -485,7 +517,7 @@ editorAction editor =
             Api.Drop
 
         _ ->
-            if editor.storeForward && hasEmailDestination editor then
+            if editor.storeForward || hasDigestDestination editor then
                 Api.ForwardStore editor.destinations
 
             else
@@ -494,16 +526,17 @@ editorAction editor =
 
 hasEmailDestination : Editor -> Bool
 hasEmailDestination editor =
-    List.any
-        (\d ->
-            case d of
-                Api.Email _ ->
-                    True
+    List.any isEmailDestination editor.destinations
 
-                _ ->
-                    False
-        )
-        editor.destinations
+
+isEmailDestination : Api.Destination -> Bool
+isEmailDestination destination =
+    case destination of
+        Api.Email _ ->
+            True
+
+        _ ->
+            False
 
 
 hasChatDestination : Editor -> Bool
@@ -711,38 +744,35 @@ view enabled editor =
 
                 Nothing ->
                     text ""
-            , patternField editor
-            , Ui.field
-                { id = "rule-label"
-                , label = "Label (optional)"
-                , value = editor.label
-                , hint = "Leave blank to name it after the pattern and action."
-                , placeholder = editorAutoLabel editor
-                , type_ = "text"
-                , required = False
-                , onInput = SetLabel
-                }
+            , div [ class "rule-basics" ]
+                [ Ui.field
+                    { id = "rule-label"
+                    , label = "Label (optional)"
+                    , value = editor.label
+                    , hint = "Leave blank to name it after the pattern and action."
+                    , placeholder = editorAutoLabel editor
+                    , type_ = "text"
+                    , required = False
+                    , onInput = SetLabel
+                    }
+                , patternField editor
+                ]
             , Ui.segmented
                 { name = "rule-action"
-                , options = [ ( "forward", "Forward" ), ( "store", "Store" ), ( "drop", "Drop" ) ]
+                , options =
+                    [ ( "forward", "Forward" ), ( "drop", "Drop" ) ]
+                        ++ (if editor.actionType == "store" then
+                                [ ( "store", "Store" ) ]
+
+                            else
+                                []
+                           )
                 , selected = editor.actionType
                 , onSelect = SetActionType
                 , disabled = []
                 }
             , if editor.actionType == "forward" then
-                div [ class "forward-fields" ]
-                    [ destinationsField editor enabled
-                    , if hasEmailDestination editor then
-                        Ui.toggle
-                            { id = "rule-store-forward"
-                            , label = "Keep a copy in Cutout inbox (Store & Forward)"
-                            , checked = editor.storeForward
-                            , onCheck = SetStoreForward
-                            }
-
-                      else
-                        text ""
-                    ]
+                div [ class "forward-fields" ] [ destinationsField editor enabled ]
 
               else if editor.actionType == "store" then
                 Ui.toggle
@@ -861,72 +891,183 @@ onAddKeyDown allowComma msg =
 
 destinationsField : Editor -> Api.Enabled -> Html Msg
 destinationsField editor enabled =
-    let
-        kindOptions =
-            List.filterMap identity
-                [ Just ( "email", "Email" )
-                , if enabled.telegram then
-                    Just ( "telegram", "Telegram" )
-
-                  else
-                    Nothing
-                , if enabled.discord then
-                    Just ( "discord", "Discord" )
-
-                  else
-                    Nothing
-                , Just ( "webhook", "Webhook" )
-                ]
-    in
     div [ class "dest-builder" ]
         [ if List.isEmpty editor.destinations then
             text ""
 
           else
-            div [ class "dest-chips" ] (List.indexedMap destChip editor.destinations)
-        , div [ class "dest-add" ]
-            [ Ui.segmented
-                { name = "dest-kind"
-                , options = kindOptions
-                , selected = editor.destKind
-                , onSelect = SetDestKind
-                , disabled = []
-                }
-            , div [ class "dest-add-row" ]
-                [ input
-                    [ class "dest-input"
-                    , type_ "text"
-                    , value editor.destValue
-                    , placeholder (destPlaceholder editor.destKind)
-                    , onInput SetDestValue
-                    , onAddKeyDown (editor.destKind == "email") AddDest
-                    , A.autocomplete False
-                    , A.spellcheck False
-                    ]
-                    []
-                , Ui.button
-                    { label = "Add"
-                    , onClick = AddDest
-                    , variant = Secondary
-                    , busy = False
-                    , disabled = False
-                    }
-                ]
-            , if editor.destKind == "email" then
-                div [ class "dest-add-opts" ]
-                    ((if editor.destDigest == Nothing then
-                        [ Ui.toggle
-                            { id = "dest-proxy"
-                            , label = "Proxy replies through the worker (rewrite Reply-To)"
-                            , checked = editor.destProxy
-                            , onCheck = SetDestProxy
-                            }
-                        ]
+            div [ class "dest-chips" ] (List.indexedMap (destChip editor) editor.destinations)
+        , destPicker editor enabled
+        , if editor.destKind == "" then
+            text ""
 
-                      else
-                        []
-                     )
-                        ++ [ Ui.segmented
+          else
+            destFormCard editor
+        ]
+
+
+destPicker : Editor -> Api.Enabled -> Html Msg
+destPicker editor enabled =
+    div [ class "dest-picker" ]
+        [ destPick
+            { kind = "email"
+            , icon = Icons.mail
+            , label = "Email"
+            , available = True
+            , title = "Add an email destination"
+            , selected = editor.destKind == "email"
+            }
+        , destPick
+            { kind = "telegram"
+            , icon = Icons.telegram
+            , label = "Telegram"
+            , available = enabled.telegram
+            , title =
+                if enabled.telegram then
+                    "Add a Telegram destination"
+
+                else
+                    "Telegram isn't configured on this deployment"
+            , selected = editor.destKind == "telegram"
+            }
+        , destPick
+            { kind = "discord"
+            , icon = Icons.discord
+            , label = "Discord"
+            , available = enabled.discord
+            , title =
+                if enabled.discord then
+                    "Add a Discord destination"
+
+                else
+                    "Discord isn't configured on this deployment"
+            , selected = editor.destKind == "discord"
+            }
+        , destPick
+            { kind = "webhook"
+            , icon = Icons.send
+            , label = "Webhook"
+            , available = True
+            , title = "Add a webhook destination"
+            , selected = editor.destKind == "webhook"
+            }
+        ]
+
+
+destPick :
+    { kind : String
+    , icon : Html Msg
+    , label : String
+    , available : Bool
+    , title : String
+    , selected : Bool
+    }
+    -> Html Msg
+destPick config =
+    button
+        [ classList
+            [ ( "dest-pick", True )
+            , ( config.kind, True )
+            , ( "is-selected", config.selected )
+            ]
+        , type_ "button"
+        , A.disabled (not config.available)
+        , title config.title
+        , onClick (SetDestKind config.kind)
+        ]
+        [ span [ class "dest-pick-icon" ] [ config.icon ]
+        , span [ class "dest-pick-label" ] [ text config.label ]
+        ]
+
+
+destFormCard : Editor -> Html Msg
+destFormCard editor =
+    let
+        ( kindName, kindIcon ) =
+            case editor.destKind of
+                "telegram" ->
+                    ( "Telegram", Icons.telegram )
+
+                "discord" ->
+                    ( "Discord", Icons.discord )
+
+                "webhook" ->
+                    ( "Webhook", Icons.send )
+
+                _ ->
+                    ( "Email", Icons.mail )
+    in
+    div [ classList [ ( "dest-form-card", True ), ( editor.destKind, True ) ] ]
+        [ div [ class "dest-form-head" ]
+            [ span [ class "dest-form-icon" ] [ kindIcon ]
+            , h3 [] [ text kindName ]
+            ]
+        , div [ class "dest-add-row" ]
+            [ input
+                [ class "dest-input"
+                , type_ "text"
+                , value editor.destValue
+                , placeholder (destPlaceholder editor.destKind)
+                , attribute "aria-label" ("Add a " ++ kindName ++ " destination")
+                , A.name "dest-value"
+                , onInput SetDestValue
+                , onAddKeyDown (editor.destKind == "email") AddDest
+                , A.autocomplete False
+                , A.spellcheck False
+                ]
+                []
+            , Ui.button
+                { label = "Add"
+                , onClick = AddDest
+                , variant = Secondary
+                , busy = False
+                , disabled = False
+                }
+            ]
+        , if editor.destKind == "telegram" && not (List.isEmpty editor.chats) then
+            div [ class "dest-suggest" ] (List.map chatSuggestion editor.chats)
+
+          else
+            text ""
+        , if String.isEmpty editor.destError then
+            text ""
+
+          else
+            p [ class "dest-error" ] [ text editor.destError ]
+        , destOptions editor
+        ]
+
+
+destOptions : Editor -> Html Msg
+destOptions editor =
+    case editor.destKind of
+        "email" ->
+            let
+                digestLocked =
+                    editor.destDigest /= Nothing
+            in
+            div [ class "dest-opts" ]
+                (destOptToggle
+                    { id = "dest-store"
+                    , icon = Icons.inbox
+                    , label = "Store"
+                    , checked = editor.storeForward || digestLocked
+                    , locked = digestLocked
+                    , hint = "Keep a copy in the Cutout inbox"
+                    , title =
+                        if digestLocked then
+                            "Digest mode always stores a copy"
+
+                        else
+                            ""
+                    , onCheck = SetStoreForward
+                    }
+                    :: destOptGroup
+                        { icon = Icons.clock
+                        , label = "Digest"
+                        , hint = "Send one summary per schedule instead of forwarding each email. Digests always store a copy so entries can link back."
+                        , control =
+                            Ui.segmented
                                 { name = "dest-digest"
                                 , options =
                                     [ ( "off", "Off" )
@@ -944,22 +1085,107 @@ destinationsField editor enabled =
                                             SetDestDigest (Just v)
                                 , disabled = []
                                 }
-                           ]
-                    )
+                        }
+                    :: (if digestLocked then
+                            []
 
-              else
-                text ""
-            , if String.isEmpty editor.destError then
-                text ""
+                        else
+                            [ destOptToggle
+                                { id = "dest-proxy"
+                                , icon = Icons.shield
+                                , label = "Proxy"
+                                , checked = editor.destProxy
+                                , locked = False
+                                , hint = "Rewrite Reply-To and send through the worker"
+                                , title = ""
+                                , onCheck = SetDestProxy
+                                }
+                            ]
+                       )
+                )
 
-              else
-                p [ class "dest-error" ] [ text editor.destError ]
-            , if editor.destKind == "telegram" && not (List.isEmpty editor.chats) then
-                div [ class "dest-suggest" ] (List.map chatSuggestion editor.chats)
+        "telegram" ->
+            div [ class "dest-opts" ] [ chatStoreOption ]
 
-              else
-                text ""
+        "discord" ->
+            div [ class "dest-opts" ] [ chatStoreOption ]
+
+        _ ->
+            p [ class "dest-opt-hint" ] [ text "POSTs the email as JSON to this URL." ]
+
+
+chatStoreOption : Html Msg
+chatStoreOption =
+    destOptLocked
+        { icon = Icons.inbox
+        , label = "Store"
+        , hint = "Keep a copy in the Cutout inbox."
+        , title = "Chat destinations always keep a copy in the Cutout inbox"
+        }
+
+
+destOptToggle :
+    { id : String
+    , icon : Html msg
+    , label : String
+    , checked : Bool
+    , locked : Bool
+    , hint : String
+    , title : String
+    , onCheck : Bool -> msg
+    }
+    -> Html msg
+destOptToggle config =
+    label
+        [ classList
+            [ ( "dest-opt", True )
+            , ( "is-locked", config.locked )
             ]
+        , title config.title
+        ]
+        [ input
+            [ id config.id
+            , A.name config.id
+            , type_ "checkbox"
+            , A.checked config.checked
+            , A.disabled config.locked
+            , onInput (\_ -> config.onCheck (not config.checked))
+            ]
+            []
+        , span [ class "dest-opt-icon" ] [ config.icon ]
+        , span [] [ text config.label ]
+        , if config.locked then
+            span [ class "dest-opt-lock" ] [ Icons.lock ]
+
+          else
+            text ""
+        , span [ class "dest-opt-hint" ] [ text config.hint ]
+        ]
+
+
+destOptLocked :
+    { icon : Html msg, label : String, hint : String, title : String }
+    -> Html msg
+destOptLocked config =
+    div [ class "dest-opt is-locked", title config.title ]
+        [ span [ class "dest-opt-icon" ] [ config.icon ]
+        , span [] [ text config.label ]
+        , span [ class "dest-opt-lock" ] [ Icons.lock ]
+        , span [ class "dest-opt-hint" ] [ text config.hint ]
+        ]
+
+
+destOptGroup :
+    { icon : Html msg, label : String, hint : String, control : Html msg }
+    -> Html msg
+destOptGroup config =
+    div [ class "dest-opt dest-opt-group" ]
+        [ div [ class "dest-opt-head" ]
+            [ span [ class "dest-opt-icon" ] [ config.icon ]
+            , span [] [ text config.label ]
+            ]
+        , config.control
+        , span [ class "dest-opt-hint" ] [ text config.hint ]
         ]
 
 
@@ -975,51 +1201,55 @@ chatSuggestion chat =
         ]
 
 
-destChip : Int -> Api.Destination -> Html Msg
-destChip index destination =
+destChip : Editor -> Int -> Api.Destination -> Html Msg
+destChip editor index destination =
     let
-        ( kind, labelText, badges ) =
+        ( kind, kindName ) =
+            case destination of
+                Api.Email _ ->
+                    ( "email", "Email" )
+
+                Api.Telegram _ ->
+                    ( "telegram", "Telegram" )
+
+                Api.Discord _ ->
+                    ( "discord", "Discord" )
+
+                Api.Webhook _ ->
+                    ( "webhook", "Webhook" )
+
+        ( labelText, modifiers ) =
             case destination of
                 Api.Email { address, proxy, digest } ->
-                    ( "email"
-                    , address
-                    , (if digest == Nothing then
-                        [ proxyToggle index proxy ]
-
-                       else
-                        []
-                      )
-                        ++ [ digestToggle index digest ]
-                        ++ (if digest == Nothing then
-                                []
-
-                            else
-                                [ storeBadge True ]
-                           )
-                    )
+                    ( address, emailModifiers editor index digest proxy )
 
                 Api.Telegram { chatId } ->
-                    ( "telegram"
-                    , chatId
-                    , [ storeBadge True ]
-                    )
+                    ( chatId, [ chatStoreBadge ] )
 
                 Api.Discord { channelId } ->
-                    ( "discord"
-                    , channelId
-                    , [ storeBadge True ]
-                    )
+                    ( channelId, [ chatStoreBadge ] )
 
                 Api.Webhook { url } ->
-                    ( "webhook"
-                    , url
-                    , []
-                    )
+                    ( url, [] )
+
+        kindIcon =
+            case kind of
+                "email" ->
+                    Icons.mail
+
+                "telegram" ->
+                    Icons.telegram
+
+                "discord" ->
+                    Icons.discord
+
+                _ ->
+                    Icons.send
     in
     span [ classList [ ( "dest-chip", True ), ( kind, True ) ] ]
-        [ span [ class "dest-chip-kind" ] [ text kind ]
+        [ span [ class "dest-chip-icon", title kindName ] [ kindIcon ]
         , span [ class "dest-chip-value" ] [ text labelText ]
-        , span [ class "dest-chip-mods" ] badges
+        , span [ class "dest-chip-mods" ] modifiers
         , button
             [ class "dest-chip-remove"
             , type_ "button"
@@ -1031,43 +1261,37 @@ destChip index destination =
         ]
 
 
-storeBadge : Bool -> Html msg
-storeBadge locked =
-    span
-        [ classList
-            [ ( "dest-chip-mod", True )
-            , ( "is-store", True )
-            , ( if locked then
-                    "is-locked"
+{-| The modifier buttons on an email pill. A digest destination shows a locked
+Store indicator and no proxy; any email pill locks its Store toggle while a
+digest exists anywhere in the rule, because a digest always stores.
+-}
+emailModifiers : Editor -> Int -> Maybe String -> Bool -> List (Html Msg)
+emailModifiers editor index digest proxy =
+    case digest of
+        Just schedule ->
+            [ storeLockedBadge, digestMod index (Just schedule) ]
 
-                else
-                    "is-on"
-              , True
-              )
+        Nothing ->
+            [ if hasDigestDestination editor then
+                storeLockedBadge
+
+              else
+                storeToggle editor.storeForward
+            , digestMod index Nothing
+            , proxyMod index proxy
             ]
-        , title
-            (if locked then
-                "Always stored"
-
-             else
-                "Stored"
-            )
-        ]
-        [ if locked then
-            Icons.lock
-
-          else
-            Icons.check
-        , text "store"
-        ]
 
 
-proxyToggle : Int -> Bool -> Html Msg
-proxyToggle index on =
+{-| A rule-level Store toggle on an email pill. Clicking any of them flips the
+editor's single `storeForward` flag, so all email pills move together.
+-}
+storeToggle : Bool -> Html Msg
+storeToggle on =
     button
         [ classList
             [ ( "dest-chip-mod", True )
-            , ( "is-proxy", True )
+            , ( "is-store", True )
+            , ( "is-icon", True )
             , ( "is-toggle", True )
             , ( if on then
                     "is-on"
@@ -1078,6 +1302,72 @@ proxyToggle index on =
               )
             ]
         , type_ "button"
+        , attribute "aria-label" "Store a copy in the Cutout inbox"
+        , title
+            (if on then
+                "Stored. Click to stop keeping a copy."
+
+             else
+                "Keep a copy in the Cutout inbox"
+            )
+        , onClick ToggleStore
+        ]
+        [ if on then
+            Icons.check
+
+          else
+            Icons.inbox
+        ]
+
+
+{-| A locked Store indicator: a chat destination, or a digest, always stores.
+-}
+storeLockedBadge : Html msg
+storeLockedBadge =
+    span
+        [ classList
+            [ ( "dest-chip-mod", True )
+            , ( "is-store", True )
+            , ( "is-icon", True )
+            , ( "is-locked", True )
+            ]
+        , title "Digest mode always stores a copy in the Cutout inbox"
+        ]
+        [ Icons.inbox ]
+
+
+chatStoreBadge : Html msg
+chatStoreBadge =
+    span
+        [ classList
+            [ ( "dest-chip-mod", True )
+            , ( "is-store", True )
+            , ( "is-icon", True )
+            , ( "is-locked", True )
+            ]
+        , title "Chat destinations always keep a copy in the Cutout inbox"
+        ]
+        [ Icons.inbox ]
+
+
+proxyMod : Int -> Bool -> Html Msg
+proxyMod index on =
+    button
+        [ classList
+            [ ( "dest-chip-mod", True )
+            , ( "is-proxy", True )
+            , ( "is-icon", True )
+            , ( "is-toggle", True )
+            , ( if on then
+                    "is-on"
+
+                else
+                    "is-off"
+              , True
+              )
+            ]
+        , type_ "button"
+        , attribute "aria-label" "Proxy replies through the worker"
         , title
             (if on then
                 "Proxying replies. Click to stop."
@@ -1087,21 +1377,16 @@ proxyToggle index on =
             )
         , onClick (ToggleDestProxy index)
         ]
-        [ if on then
-            Icons.check
-
-          else
-            text ""
-        , text "proxy"
-        ]
+        [ Icons.shield ]
 
 
-digestToggle : Int -> Maybe String -> Html Msg
-digestToggle index current =
+digestMod : Int -> Maybe String -> Html Msg
+digestMod index current =
     button
         [ classList
             [ ( "dest-chip-mod", True )
             , ( "is-digest", True )
+            , ( "is-icon", True )
             , ( "is-toggle", True )
             , ( if current == Nothing then
                     "is-off"
@@ -1112,25 +1397,57 @@ digestToggle index current =
               )
             ]
         , type_ "button"
+        , attribute "aria-label" "Send a digest instead of forwarding each email"
         , title
-            (if current == Nothing then
-                "Send one digest per schedule instead of forwarding each email"
+            (case current of
+                Nothing ->
+                    "Send one digest per schedule instead of forwarding each email"
 
-             else
-                "Digest mode. Click to change the schedule."
+                Just schedule ->
+                    "Digest · " ++ digestName schedule ++ ". Click to change the schedule."
             )
         , onClick (ToggleDestDigest index)
         ]
-        [ if current == Nothing then
-            text ""
+        [ Icons.clock
+        , case current of
+            Nothing ->
+                text ""
 
-          else
-            Icons.check
-        , text
-            ("digest"
-                ++ Maybe.withDefault "" (Maybe.map (\s -> " · " ++ s) current)
-            )
+            Just schedule ->
+                text (digestShort schedule)
         ]
+
+
+digestShort : String -> String
+digestShort schedule =
+    case schedule of
+        "6h" ->
+            "6h"
+
+        "daily" ->
+            "1d"
+
+        "weekly" ->
+            "1w"
+
+        _ ->
+            schedule
+
+
+digestName : String -> String
+digestName schedule =
+    case schedule of
+        "6h" ->
+            "6 hours"
+
+        "daily" ->
+            "Daily"
+
+        "weekly" ->
+            "Weekly"
+
+        _ ->
+            schedule
 
 
 destPlaceholder : String -> String
@@ -1156,7 +1473,7 @@ readersField editor =
             Api.emailRecipients (editorAction editor)
     in
     div [ class "readers-field" ]
-        [ label [] [ text "Inbox readers" ]
+        [ label [ A.for "reader-input" ] [ text "Inbox readers" ]
         , div [ class "readers-chips" ]
             (List.map implicitReaderChip implicit
                 ++ List.indexedMap explicitReaderChip editor.readers
@@ -1164,9 +1481,12 @@ readersField editor =
         , div [ class "dest-add-row" ]
             [ input
                 [ class "dest-input"
+                , id "reader-input"
                 , type_ "text"
                 , value editor.readerValue
                 , placeholder "teammate@example.com"
+                , attribute "aria-label" "Inbox reader email address"
+                , A.name "reader-input"
                 , onInput SetReaderValue
                 , onAddKeyDown True AddReader
                 , A.autocomplete False
@@ -1241,7 +1561,7 @@ editorAutoLabel editor =
                     "store"
 
                 _ ->
-                    if editor.storeForward && hasEmailDestination editor then
+                    if (editor.storeForward || hasDigestDestination editor) && hasEmailDestination editor then
                         "store & forward"
 
                     else if List.isEmpty editor.destinations then

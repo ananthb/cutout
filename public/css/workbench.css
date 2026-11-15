@@ -545,6 +545,15 @@
   box-shadow: var(--shadow-sm);
 }
 
+/* Label before pattern: two columns when the pane is wide, stacked when it
+   isn't. `auto-fit` does it without a viewport media query. */
+.rule-basics {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+  gap: 12px;
+  align-items: start;
+}
+
 .editor-footer {
   flex-shrink: 0;
   position: sticky;
@@ -556,17 +565,6 @@
   display: flex;
   justify-content: flex-end;
   gap: 8px;
-}
-
-.rule-store-toggle {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-  padding: 10px 12px;
-  border: 1px solid var(--line);
-  border-radius: var(--r-sm);
-  background: var(--bg);
 }
 
 .stat-strip {
@@ -1055,11 +1053,24 @@
   color: var(--ch-webhook);
 }
 
-.dest-chip-kind {
-  text-transform: uppercase;
-  font-size: 9.5px;
-  letter-spacing: 0.05em;
-  opacity: 0.75;
+.dest-chip-icon {
+  display: inline-flex;
+  align-items: center;
+  opacity: 0.8;
+}
+
+.dest-chip-icon svg {
+  width: 12px;
+  height: 12px;
+}
+
+/* Keep long values (webhook URLs in particular) from stretching the pill. */
+.dest-chip-value {
+  min-width: 0;
+  max-width: 34ch;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .dest-chip-mods {
@@ -1082,6 +1093,17 @@
 .dest-chip-mod svg {
   width: 10px;
   height: 10px;
+}
+
+/* Icon-only modifier buttons (store / digest / proxy): square-ish targets
+   that keep the pill compact. `button` is reset in base.css. */
+.dest-chip-mod.is-icon {
+  padding: 0 4px;
+}
+
+.dest-chip-mod.is-icon svg {
+  width: 12px;
+  height: 12px;
 }
 
 /* Store reads in the "kept" colour rather than the destination channel's. On:
@@ -1173,59 +1195,211 @@
   background: color-mix(in oklab, currentColor 20%, transparent);
 }
 
-.dest-add {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-}
-
 .dest-add-row {
   display: flex;
   gap: 8px;
 }
 
-.dest-add-opts {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 10px 14px;
+/* Kind picker: choose the destination type before its form opens. */
+.dest-picker {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(130px, 1fr));
+  gap: 8px;
+  max-width: 560px;
 }
 
-.dest-input {
-  flex: 1;
-}
-
-.dest-mod-toggle {
+.dest-pick {
   display: flex;
   align-items: center;
   gap: 8px;
+  padding: 8px 10px;
+  border: 1px solid var(--line);
+  border-radius: var(--r-sm);
+  background: var(--bg-1);
+  font-size: 12.5px;
+  font-weight: 550;
+  color: var(--fg-2);
+  transition: border-color var(--dur), background var(--dur), color var(--dur);
+}
+
+.dest-pick:hover:not(:disabled) {
+  border-color: var(--line-2);
+  background: var(--bg-2);
+  color: var(--fg);
+}
+
+.dest-pick.is-selected {
+  border-color: var(--accent);
+  background: color-mix(in oklab, var(--accent) 12%, transparent);
+  color: var(--accent);
+}
+
+.dest-pick:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.dest-pick-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  border-radius: var(--r-xs);
+  font-size: 13px;
+}
+
+.dest-pick.email .dest-pick-icon {
+  background: color-mix(in oklab, var(--ch-email) 16%, transparent);
+  color: var(--ch-email);
+}
+
+.dest-pick.telegram .dest-pick-icon {
+  background: color-mix(in oklab, var(--ch-telegram) 16%, transparent);
+  color: var(--ch-telegram);
+}
+
+.dest-pick.discord .dest-pick-icon {
+  background: color-mix(in oklab, var(--ch-discord) 16%, transparent);
+  color: var(--ch-discord);
+}
+
+.dest-pick.webhook .dest-pick-icon {
+  background: color-mix(in oklab, var(--ch-webhook) 16%, transparent);
+  color: var(--ch-webhook);
+}
+
+.dest-pick-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Contained card for the open destination form. */
+.dest-form-card {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  max-width: 560px;
+  padding: 14px;
+  border: 1px solid var(--line);
+  border-radius: var(--r-md);
+  background: var(--bg-1);
+}
+
+.dest-form-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.dest-form-head h3 {
+  font-size: 13px;
+  margin: 0;
+}
+
+.dest-form-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  border-radius: var(--r-xs);
+  font-size: 12px;
+}
+
+.dest-form-card.email .dest-form-icon {
+  background: color-mix(in oklab, var(--ch-email) 16%, transparent);
+  color: var(--ch-email);
+}
+
+.dest-form-card.telegram .dest-form-icon {
+  background: color-mix(in oklab, var(--ch-telegram) 16%, transparent);
+  color: var(--ch-telegram);
+}
+
+.dest-form-card.discord .dest-form-icon {
+  background: color-mix(in oklab, var(--ch-discord) 16%, transparent);
+  color: var(--ch-discord);
+}
+
+.dest-form-card.webhook .dest-form-icon {
+  background: color-mix(in oklab, var(--ch-webhook) 16%, transparent);
+  color: var(--ch-webhook);
+}
+
+.dest-opts {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+  gap: 10px 14px;
+}
+
+.dest-opt {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 7px;
   font-size: 12.5px;
   color: var(--fg-1);
   cursor: pointer;
 }
 
-.dest-mod-toggle input {
+.dest-opt input[type="checkbox"] {
+  width: 15px;
+  height: 15px;
   accent-color: var(--accent);
 }
 
-.dest-mod-toggles {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
+.dest-opt.is-locked {
+  cursor: default;
+  color: var(--fg-2);
 }
 
-.dest-auth {
+.dest-opt-icon {
+  display: inline-flex;
+  color: var(--fg-2);
+}
+
+.dest-opt-icon svg {
+  width: 13px;
+  height: 13px;
+}
+
+.dest-opt-lock {
+  display: inline-flex;
+  color: var(--fg-3);
+}
+
+.dest-opt-lock svg {
+  width: 11px;
+  height: 11px;
+}
+
+/* The digest control spans the whole grid and stacks its label above it. */
+.dest-opt-group {
+  grid-column: 1 / -1;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 6px;
+  cursor: default;
+}
+
+.dest-opt-head {
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: 6px;
+  font-size: 12.5px;
 }
 
-.dest-auth-label {
-  font-family: var(--font-mono);
-  font-size: 10.5px;
-  text-transform: uppercase;
-  letter-spacing: 0.06em;
+.dest-opt-hint {
+  width: 100%;
+  font-size: 11px;
   color: var(--fg-2);
+  line-height: 1.4;
+}
+
+.dest-input {
+  flex: 1;
 }
 
 .dest-suggest {
