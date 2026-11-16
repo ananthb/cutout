@@ -51,7 +51,7 @@ jobs:
           cp doc/*.html doc/*.svg doc/*.css site/
           mv target/doc site/api
 
-      - uses: actions/configure-pages@v4
+      - uses: actions/configure-pages@v6
 
       - uses: actions/upload-pages-artifact@v3
         with:
