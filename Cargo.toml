@@ -7,7 +7,7 @@ edition = "2021"
 crate-type = ["cdylib"]
 
 [build-dependencies]
-sha2 = "0.10"
+sha2 = "0.11"
 base64 = "0.23"
 
 [dependencies]
@@ -22,7 +22,7 @@ wasm-bindgen-futures = "0.4"
 js-sys = "0.3"
 web-sys = { version = "0.3", features = ["Crypto", "SubtleCrypto", "CryptoKey", "ReadableStream", "Response", "Headers"] }
 urlencoding = "2"
-sha2 = "0.10"
+sha2 = "0.11"
 hmac = "0.12"
 mail-parser = "0.9"
 base64 = "0.23"
